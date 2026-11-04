@@ -557,6 +557,7 @@
     { "path": "./packages/workflow/workflow-ptc" },
     { "path": "./packages/workflow/tool-workflow" },
     { "path": "./packages/experimental/tool-ralph" },
+    { "path": "./packages/experimental/web-search-xai" },
     { "path": "./packages/experimental/webhook" },
     { "path": "./packages/experimental/webhook-github" },
     { "path": "./packages/todo/tool-todo" },
