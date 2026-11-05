@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Credenciales en el llavero del sistema",
+    "description": "Guarda claves de API y otras credenciales en el llavero del sistema operativo en lugar de un archivo de texto plano."
+  }
+}

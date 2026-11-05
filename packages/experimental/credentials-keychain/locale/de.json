@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "OS-Schlüsselbund für Zugangsdaten",
+    "description": "Speichert API-Schlüssel und andere Zugangsdaten im Schlüsselbund des Betriebssystems statt in einer Klartextdatei."
+  }
+}

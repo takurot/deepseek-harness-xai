@@ -831,6 +831,22 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-cordis-host-runner -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-credentials-keychain -->
+<a id="deepseek-aidsh-credentials-keychain"></a>
+
+## `@deepseek-ai/dsh-credentials-keychain`
+
+- `source`: [`packages/experimental/credentials-keychain/src/index.ts:51`](../packages/experimental/credentials-keychain/src/index.ts)
+
+```ts config-catalog
+/** Plugin config. */
+export interface Config {
+  /** Keychain service name shared by every item; defaults to `dsh`. */
+  service?: string
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-credentials-keychain -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-credentials-local -->
 <a id="deepseek-aidsh-credentials-local"></a>
 

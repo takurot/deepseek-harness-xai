@@ -397,6 +397,7 @@
     { "path": "./packages/settings/settings" },
     { "path": "./packages/credentials/credentials" },
     { "path": "./packages/credentials/credentials-local" },
+    { "path": "./packages/experimental/credentials-keychain" },
     { "path": "./packages/credentials/authorization" },
     { "path": "./packages/experimental/tool-session-query" },
     { "path": "./packages/storage/storage" },

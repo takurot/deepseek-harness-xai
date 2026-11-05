@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Credenciais no chaveiro do sistema",
+    "description": "Guarda chaves de API e outras credenciais no chaveiro do sistema operacional em vez de um arquivo de texto simples."
+  }
+}

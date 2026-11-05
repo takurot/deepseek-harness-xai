@@ -1,0 +1,52 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/credentials-keychain/README.md
+/:
+  en: b91dfb322348b478
+  zh: 15962ca3ef7dd103
+/deepseek-ai-dsh-credentials-keychain:
+  en: 206aba6de7e62d09
+  zh: a58d08edb7491230
+/deepseek-ai-dsh-credentials-keychain/summary:
+  en: 8748184f5371657a
+  zh: f32e8fd8a63e947c
+/deepseek-ai-dsh-credentials-keychain/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-credentials-keychain/use-this-package:
+  en: c6f2bb83a494c109
+  zh: ecb2350da9ae376a
+/deepseek-ai-dsh-credentials-keychain/use-this-package/where-keys-come-from:
+  en: 6879efc6deaa5de9
+  zh: fe2133ab1f74a6a4
+/deepseek-ai-dsh-credentials-keychain/use-this-package/platforms:
+  en: b989c591d2ac4613
+  zh: 0fa739633d9afe8d
+/deepseek-ai-dsh-credentials-keychain/use-this-package/moving-existing-keys:
+  en: 3a1131cdfa5da482
+  zh: 0706a681898cb0f6
+/deepseek-ai-dsh-credentials-keychain/understand-the-implementation:
+  en: 7395d18dda625b6d
+  zh: 18e9edb64309f0af
+/deepseek-ai-dsh-credentials-keychain/further-exploration:
+  en: 3944d7ce772d5fed
+  zh: 098d521b5cac071c
+/deepseek-ai-dsh-credentials-keychain/model-experience:
+  en: 0349ffbfc06db166
+  zh: 9c428bb4692cdf44
+/deepseek-ai-dsh-credentials-keychain/model-experience/kv-cache-effect:
+  en: 8bcc2bd23e28c4cd
+  zh: 49bedb0374521d89
+/deepseek-ai-dsh-credentials-keychain/known-limitations-and-deferred-work:
+  en: 7618aea16630a0d1
+  zh: 93876ae91776233b
+/deepseek-ai-dsh-credentials-keychain/known-limitations-and-deferred-work/dev-note:
+  en: 7f775cc79dbce94b
+  zh: b9dbe001c71ffb28
+/deepseek-ai-dsh-credentials-keychain/known-limitations-and-deferred-work/dev-note/command-line-clients-versus-a-native-binding:
+  en: 659c81748e3a5002
+  zh: 50adbb5ed04fcf18
+/deepseek-ai-dsh-credentials-keychain/known-limitations-and-deferred-work/dev-note/graduating-out-of-experimental:
+  en: 9c1cc84e3bc11a7e
+  zh: e34494b0447d4f15

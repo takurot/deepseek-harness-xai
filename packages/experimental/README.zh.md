@@ -97,6 +97,7 @@ kind: "package-group"
 | [`forge-session`](forge-session/README.zh.md) | 把变更请求绑定到创建、推送或跟踪它们的 Session | `ctx.forgeSession` |
 | [`client-ui-forge`](client-ui-forge/README.zh.md) | 展示 Session 的 Git 检出、worktree 与已绑定 pull request 的 GUI 面板 | `ctx.forgePanel` |
 | [`forge-bundle`](forge-bundle/README.zh.md) | 默认禁用的 pull request 与 worktree 面板组合 | — |
+| [`credentials-keychain`](credentials-keychain/README.zh.md) | OS 钥匙串凭据提供方（macOS 钥匙串、Linux Secret Service） | `ctx.credentials` |
 
 -----
 
