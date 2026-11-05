@@ -10,7 +10,7 @@ import { WebError } from '@deepseek-ai/dsh-web'
 import type { WebFetchBody, WebFetchProvider, WebFetchRequest, WebFetchResult } from '@deepseek-ai/dsh-web'
 import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { Response } from 'undici'
-import { classifyContentType, decoderForCharset, isSameOrigin, parseCharset, validateFetchUrl } from './policy.ts'
+import { classifyContentType, decoderForCharset, decoderForHtml, isSameOrigin, parseCharset, validateFetchUrl } from './policy.ts'
 
 /** Resolved provider limits (the plugin's schemastery Config supplies defaults). */
 export interface HttpFetchLimits {
@@ -132,15 +132,20 @@ export class HttpFetchProvider implements WebFetchProvider {
       throw new WebError(`unsupported content type "${contentType ?? 'unknown'}"`, 'WEB_UNSUPPORTED_CONTENT_TYPE')
     }
 
-    // Reject unsupported declarations before reading, releasing the response stream.
-    let decoder: TextDecoder
-    try {
-      decoder = decoderForCharset(parseCharset(contentType))
-    } catch (error: unknown) {
-      await response.body?.cancel()
-      throw error
+    // A header charset is checked before reading so an unsupported one releases the stream early.
+    // HTML without one is decided from its own bytes after the read.
+    const headerCharset = parseCharset(contentType)
+    let decoder: TextDecoder | undefined
+    if (headerCharset !== undefined || kind !== 'html') {
+      try {
+        decoder = decoderForCharset(headerCharset)
+      } catch (error: unknown) {
+        await response.body?.cancel()
+        throw error
+      }
     }
     const { bytes, truncatedByBytes } = await this.readCapped(response, signal)
+    decoder ??= decoderForHtml(bytes)
     let decoded: string
     try {
       // Only a real byte-cap truncation permits an incomplete UTF-8 suffix.
