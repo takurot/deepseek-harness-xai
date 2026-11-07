@@ -1,0 +1,79 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/web-search-xai/README.md
+/:
+  en: e4e0857a26db58ec
+  zh: 50e4f5cacba948b8
+/deepseek-ai-dsh-web-search-xai:
+  en: 9b4ee310b0ba9dbe
+  zh: 4e0a6365bd6677c4
+/deepseek-ai-dsh-web-search-xai/summary:
+  en: 8024774c69ee9883
+  zh: 17ce59f059d7be75
+/deepseek-ai-dsh-web-search-xai/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-web-search-xai/use-this-package:
+  en: 9293fa57cd19fbf5
+  zh: fa9e0ddd85deecb3
+/deepseek-ai-dsh-web-search-xai/use-this-package/what-a-search-returns:
+  en: d29ef8e681fa596b
+  zh: 861b73cd1759de24
+/deepseek-ai-dsh-web-search-xai/use-this-package/failures-and-recovery:
+  en: a70e4340a5b56e09
+  zh: 17703eacf022aa22
+/deepseek-ai-dsh-web-search-xai/understand-the-implementation:
+  en: afddee606e8fa915
+  zh: 3bdb397521069b9b
+/deepseek-ai-dsh-web-search-xai/further-exploration:
+  en: bb9c34e0e8d3bd6a
+  zh: 4b89bc7af531d32a
+/deepseek-ai-dsh-web-search-xai/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-web-search-xai/model-experience/auxiliary-xai-search-request:
+  en: 4e547c97cb349e7d
+  zh: 3125377070d06db5
+/deepseek-ai-dsh-web-search-xai/model-experience/auxiliary-xai-search-request/what-the-model-sees:
+  en: 63c0a4a79aebfe92
+  zh: beb602a5a97c4e99
+/deepseek-ai-dsh-web-search-xai/model-experience/auxiliary-xai-search-request/token-effect:
+  en: 0cc81618086d36fc
+  zh: f0f7c39a3c099a64
+/deepseek-ai-dsh-web-search-xai/model-experience/auxiliary-xai-search-request/kv-cache-effect:
+  en: 7e493dc92c346b39
+  zh: f4d0be490819a30a
+/deepseek-ai-dsh-web-search-xai/model-experience/conversation-tool-result-indirectly:
+  en: 666f5753c99783ab
+  zh: b44328e99bcc45c9
+/deepseek-ai-dsh-web-search-xai/model-experience/conversation-tool-result-indirectly/what-the-model-sees:
+  en: 4837fb005b381763
+  zh: eb6ddd29131c4eee
+/deepseek-ai-dsh-web-search-xai/model-experience/conversation-tool-result-indirectly/token-effect:
+  en: 68b7ef25c1c510a7
+  zh: 6acd41c39ed0f9d1
+/deepseek-ai-dsh-web-search-xai/model-experience/conversation-tool-result-indirectly/kv-cache-effect:
+  en: 19f4d26f590d11ac
+  zh: b0120d7bc9768408
+/deepseek-ai-dsh-web-search-xai/model-experience/conversation-tool-list-indirectly:
+  en: ddcce72a4a4e0def
+  zh: 338aa339f5708d7d
+/deepseek-ai-dsh-web-search-xai/model-experience/conversation-tool-list-indirectly/what-the-model-sees:
+  en: a357c48260d13698
+  zh: 6ceb7da97a6a306d
+/deepseek-ai-dsh-web-search-xai/model-experience/conversation-tool-list-indirectly/token-effect:
+  en: 90929518c406a8b5
+  zh: 7ad133fc97d2ab8d
+/deepseek-ai-dsh-web-search-xai/model-experience/conversation-tool-list-indirectly/kv-cache-effect:
+  en: 5770f5874dd6be65
+  zh: 8bb52165b1d7625e
+/deepseek-ai-dsh-web-search-xai/known-limitations-and-deferred-work:
+  en: 6b47399e7e847b6c
+  zh: 65c837a583496626
+/deepseek-ai-dsh-web-search-xai/known-limitations-and-deferred-work/dev-note:
+  en: 7f775cc79dbce94b
+  zh: 5e10034a436bfddf
+/deepseek-ai-dsh-web-search-xai/known-limitations-and-deferred-work/dev-note/other-search-backends-on-the-same-template:
+  en: 028bf3667b0353f1
+  zh: 8870b74ed20edbd4

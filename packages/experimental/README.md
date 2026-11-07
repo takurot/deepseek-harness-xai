@@ -57,6 +57,7 @@ Promotion requires a named product role, documented public behavior and limitati
 | [`session-title-all-prompts-llm`](session-title-all-prompts-llm/README.md) | Session titles from all human prompts | — |
 | [`tool-terminal`](tool-terminal/README.md) | Persistent terminal tools | — |
 | [`tool-ralph`](tool-ralph/README.md) | Bounded repeated delegated tasks | — |
+| [`web-search-xai`](web-search-xai/README.md) | xAI Responses API web and X search provider | — |
 | [`skill-badge`](skill-badge/README.md) | The powered-by-dsh badge skill | — |
 | [`translator`](translator/README.md) | Anonymous Google and Bing text translation | `ctx.translator` |
 | [`client-ui-cot-translation`](client-ui-cot-translation/README.md) | Expanded reasoning translation and original-text controls | `ctx.cotTranslation` |
