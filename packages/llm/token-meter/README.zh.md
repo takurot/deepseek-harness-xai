@@ -65,7 +65,7 @@ token-meter 通过必需的 `ctx.sessionProjections` 服务注册三个客户端
 
 ### 解读数字
 
-占用是参考数字，不是计费记录：harness 中没有任何机制依据它做决定，压缩读取的是 `measure()`。UI 用测量压力除以所选模型独立解析的容量来计算占用。`contextBreakdown` 数字是估算值，其总和不会等于 `projectedTokens`；后者的提供方锚点恰好携带启发式误差——CJK 文本与 JSON schema 在每 token 四字符下严重低估。
+占用是参考数字，不是计费记录：harness 中没有任何机制依据它做决定，压缩读取的是 `measure()`。UI 用测量压力除以所选模型独立解析的容量来计算占用。`contextBreakdown` 数字是估算值，其总和不会等于 `projectedTokens`；后者的提供方锚点恰好携带启发式误差——JSON schema 在每 token 四字符下会被低估。
 
 -----
 
@@ -88,7 +88,7 @@ token-meter 通过必需的 `ctx.sessionProjections` 服务注册三个客户端
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | `TokenMeter` 服务：回放状态、fold、`measure()` 与 `estimateMessage()` |
-| [`src/estimate.ts`](src/estimate.ts) | 固定启发式规则：每 token 四字符加块与角色开销 |
+| [`src/estimate.ts`](src/estimate.ts) | 固定启发式规则：按文字类别定密度（ASCII 每 token 四字符，CJK 每字符一 token，其他文字每 token 两字符）加块与角色开销 |
 | [`src/measurement-projection.ts`](src/measurement-projection.ts) | 固定大小的宿主恢复信息，不含逐节点缓存 |
 | [`src/surface-fold.ts`](src/surface-fold.ts) | 与 `measure()` 共享的位置表面 fold |
 | [`src/surface-projection.ts`](src/surface-projection.ts) | O(1) 投影单元的影价协议 |
@@ -155,7 +155,7 @@ token-meter 通过必需的 `ctx.sessionProjections` 服务注册三个客户端
 
 本开发备注是不具权威性的工作上下文：维护者备注与开放问题。已交付的行为与既定理由以上文、包代码和相关 Agent Note 为准。
 
-- 固定每 token 四字符启发式规则会低估 CJK 文本与 JSON schema；复用用量时提供方锚点恰好携带该误差，请把构成行呈现为近似构成，绝不呈现为总量。
+- 固定启发式规则把 CJK 文本按每字符一 token 估算，这是近似值且依赖分词器，JSON schema 仍按每 token 四字符而被低估；复用用量时提供方锚点恰好携带该误差，请把构成行呈现为近似构成，绝不呈现为总量。
 - 按提供方的精确分词器尚未决定；保持单一确定性启发式规则，正是让每个消费方的测量一致且回放稳定的原因。
 
 </details>

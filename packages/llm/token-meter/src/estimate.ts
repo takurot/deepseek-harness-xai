@@ -9,8 +9,56 @@
 import type { ContentBlock, Message } from '@deepseek-ai/dsh-llm'
 import type { EpochHeader } from '@deepseek-ai/dsh-session'
 
-/** Fixed text-density estimate used until exact tokenization is needed. */
-const CHARS_PER_TOKEN = 4
+/**
+ * Fixed per-script text densities used until exact tokenization is needed,
+ * in quarter-token units per code point so the sum stays an exact integer:
+ * ASCII is four characters per token, CJK is one token per character, and
+ * other scripts are two characters per token.
+ */
+const ASCII_QUARTER_TOKENS = 1
+const CJK_QUARTER_TOKENS = 4
+const OTHER_QUARTER_TOKENS = 2
+
+/**
+ * Whether a code point is priced at the CJK density: CJK radicals through
+ * unified ideographs (which include CJK punctuation and kana), Hangul
+ * syllables, compatibility ideographs, fullwidth forms, and the
+ * supplementary ideographic planes.
+ * @param codePoint - Unicode code point to classify.
+ * @returns true when the code point is CJK.
+ */
+function isCjk(codePoint: number): boolean {
+  return (codePoint >= 0x2e80 && codePoint <= 0x9fff)
+    || (codePoint >= 0xac00 && codePoint <= 0xd7af)
+    || (codePoint >= 0xf900 && codePoint <= 0xfaff)
+    || (codePoint >= 0xff00 && codePoint <= 0xffef)
+    || (codePoint >= 0x20000 && codePoint <= 0x2ffff)
+}
+
+/**
+ * Price text by script class under the fixed heuristic. Counts code points,
+ * so a surrogate pair is one character.
+ * @param text - text to price without mutation.
+ * @returns heuristic tokens; 0 for empty text.
+ */
+export function estimateText(text: string): number {
+  let quarters = 0
+  for (let index = 0; index < text.length; index += 1) {
+    const unit = text.charCodeAt(index)
+    if (unit < 0x80) {
+      quarters += ASCII_QUARTER_TOKENS
+      continue
+    }
+    let codePoint = unit
+    const next = text.charCodeAt(index + 1)
+    if (unit >= 0xd800 && unit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+      codePoint = 0x10000 + ((unit - 0xd800) << 10) + (next - 0xdc00)
+      index += 1
+    }
+    quarters += isCjk(codePoint) ? CJK_QUARTER_TOKENS : OTHER_QUARTER_TOKENS
+  }
+  return Math.ceil(quarters / 4)
+}
 
 /** Per-block structural overhead for JSON framing and type tags. */
 const BLOCK_OVERHEAD = 4
@@ -29,13 +77,13 @@ export const ROLE_OVERHEAD = 4
 export function estimateStructuralBlock(block: ContentBlock): number {
   if (block.type === 'image') {
     const { offloaded: _offloaded, ...reference } = block
-    return BLOCK_OVERHEAD + Math.ceil(JSON.stringify(reference).length / CHARS_PER_TOKEN)
+    return BLOCK_OVERHEAD + estimateText(JSON.stringify(reference))
   }
-  return BLOCK_OVERHEAD + Math.ceil(JSON.stringify(block).length / CHARS_PER_TOKEN)
+  return BLOCK_OVERHEAD + estimateText(JSON.stringify(block))
 }
 
 /**
- * Price content blocks recursively under the fixed density heuristic.
+ * Price content blocks recursively under the fixed per-script density heuristic.
  * @param blocks - content blocks to price without mutation.
  * @returns heuristic tokens including per-block structural overhead.
  */
@@ -45,11 +93,11 @@ export function estimateContent(blocks: readonly ContentBlock[]): number {
     switch (block.type) {
       case 'text':
       case 'reasoning':
-        tokens += Math.ceil(block.text.length / CHARS_PER_TOKEN) + BLOCK_OVERHEAD
+        tokens += estimateText(block.text) + BLOCK_OVERHEAD
         break
       case 'tool-call':
-        tokens += Math.ceil(block.name.length / CHARS_PER_TOKEN)
-          + Math.ceil(block.arguments.length / CHARS_PER_TOKEN)
+        tokens += estimateText(block.name)
+          + estimateText(block.arguments)
           + BLOCK_OVERHEAD
         break
       default:
@@ -72,11 +120,11 @@ export function estimateContent(blocks: readonly ContentBlock[]): number {
  */
 export function estimateSystemMessage(message: Message): number {
   if (message.content.length === 0) return 0
-  let characters = 0
+  let text = ''
   for (const block of message.content) {
-    characters += block.type === 'text' ? block.text.length : JSON.stringify(block).length
+    text += block.type === 'text' ? block.text : JSON.stringify(block)
   }
-  return Math.ceil(characters / CHARS_PER_TOKEN) + ROLE_OVERHEAD
+  return estimateText(text) + ROLE_OVERHEAD
 }
 
 /**
@@ -98,5 +146,5 @@ export function estimateMessage(message: Message): number {
  */
 export function estimateToolsTokens(header: EpochHeader | undefined): number {
   if (header?.tools === undefined || header.tools.length === 0) return 0
-  return Math.ceil(JSON.stringify(header.tools).length / CHARS_PER_TOKEN) + BLOCK_OVERHEAD
+  return estimateText(JSON.stringify(header.tools)) + BLOCK_OVERHEAD
 }

@@ -13,6 +13,7 @@ export const EXPERIMENTAL_PACKAGE_NAME_EXCEPTIONS: Readonly<Record<string, strin
   'packages/experimental/session-title-all-prompts-llm': '@deepseek-ai/dsh-session-title-all-prompts-llm',
   'packages/experimental/tool-terminal': '@deepseek-ai/dsh-tool-terminal',
   'packages/experimental/tool-ralph': '@deepseek-ai/dsh-tool-ralph',
+  'packages/experimental/web-search-xai': '@deepseek-ai/dsh-web-search-xai',
   'packages/experimental/skill-badge': '@deepseek-ai/dsh-skill-badge',
   'packages/experimental/hook-protocol': '@deepseek-ai/dsh-hook-protocol',
   'packages/experimental/hooks-claude-code': '@deepseek-ai/dsh-hooks-claude-code',
