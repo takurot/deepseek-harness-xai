@@ -1,0 +1,108 @@
+---
+description: "面向希望把 API 密钥移出明文文件的用户与维护者的 OS 钥匙串凭据提供方：配置、分层，以及它能与不能保护什么。"
+kind: "package-reference"
+---
+
+# @deepseek-ai/dsh-credentials-keychain
+
+[English](README.md) | 中文
+
+## 概述
+
+`dsh-credentials-keychain` 把 API 密钥和其他凭据保存在操作系统的机密存储中——macOS 钥匙串或 Linux Secret Service——而不是 `dsh-credentials-local` 写入的明文 `.credentials.yaml`。它实现同一个 `ctx.credentials` 服务，因此适配器和配置界面无需改动。它去掉了明文文件，但本身并不能把密钥对智能体的 shell 隐藏（见[已知限制](#known-limitations-and-deferred-work)）。
+
+## 目录
+
+- [使用本包](#use-this-package)
+- [理解实现](#understand-the-implementation)
+- [进一步探索](#further-exploration)
+- [模型体验](#model-experience)
+- [已知限制与延期工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
+
+-----
+
+<a id="use-this-package"></a>
+## 使用本包
+
+用它替换 `dsh-credentials-local`；两者实现同一个服务，因此一个组合只加载其中之一。
+
+```yaml
+- name: '@deepseek-ai/dsh-credentials-keychain'
+  config:
+    service: dsh
+```
+
+| 字段 | 默认值 | 含义 |
+|---|---|---|
+| `service` | `dsh` | 所有条目共用的钥匙串服务名。只允许字母、数字、`.`、`_` 与 `-`；其他字符在加载时失败 |
+
+### 密钥来自哪里
+
+引用从第一个持有非空值的层解析：OS 钥匙串（来源 `keychain`）、继承的进程环境（`env`）、调用项目的 `.env`（`project-env`），最后是 `$DSH_HOME/.env`（`user-env`）。钥匙串优先，因此在产品中保存的密钥会压过已导出的变量，与本地提供方一致。只有钥匙串层可写。
+
+### 平台
+
+macOS 使用 `security` 工具，无需安装。Linux 使用 libsecret 的 `secret-tool` 以及运行中的 Secret Service 会话（GNOME Keyring 或 KeePassXC）；无头服务器通常两者都没有。Windows 暂无受支持的存储。不支持的平台、缺失的工具或无法访问的存储会在插件加载时失败，而不是在第一次查找时才失败。
+
+### 迁移现有密钥
+
+不会自动迁移。通过配置界面或 `ctx.credentials.set` 重新保存每个密钥，然后删除旧的 `.credentials.yaml`。迁移命令为延后项。
+
+<a id="understand-the-implementation"></a>
+## 理解实现
+
+每个引用是一个钥匙串条目，账户为 `ref:<NAME>`；每条记录是一个条目，账户为 `record:<scope>/<id>`，内容为其 JSON。账户为 `index` 的条目列出记录键，因为平台工具无法按服务枚举条目。机密值通过 stdin 或 stdout 传给工具，绝不经过参数向量——同一用户的其他进程可以通过 `ps` 读取参数向量。在 macOS 上存储的文本为 base64，这样引号和空白字符不会到达 `security -i` 的交互式解析器。
+
+`backend.ts` 包含两个平台后端，建立在可注入的命令运行器之上；`index.ts` 包含 `Config`、分层、记录校验与写入队列。写入在本进程内逐个执行，因此 `modifyRecord` 的读-决定-替换在本进程内互斥，但跨进程不互斥。只有本提供方自己的写入会发出 `credentials/reference-updated` 与 `credentials/record-updated`，且发生在钥匙串接受写入之后。
+
+| 文件 | 作用 |
+|---|---|
+| [`src/index.ts`](src/index.ts) | 提供方、配置、分层、记录、写入队列 |
+| [`src/backend.ts`](src/backend.ts) | macOS 与 Secret Service 后端、命令运行器 |
+
+<a id="further-exploration"></a>
+## 进一步探索
+
+- [dsh-credentials](../../credentials/credentials/README.zh.md)——本提供方实现的服务。
+- [dsh-credentials-local](../../credentials/credentials-local/README.zh.md)——文件型提供方，本包是它的钥匙串对应物。
+
+-----
+
+<a id="model-experience"></a>
+## 模型体验
+
+经由 `ctx.credentials` 的消费方间接生效：消费方拥有存储值所启用的全部模型可见行为。
+
+#### KV Cache 影响
+
+无直接失效；存储值绝不进入请求前缀。
+
+## 已知限制与延期工作
+
+<a id="known-limitations-and-deferred-work"></a>
+
+- **同 UID 进程仍可读取密钥**——`security` 与 `secret-tool` 客户端会不经提示地回应你 OS 用户的任何进程，因此智能体 shell 可以执行 `security find-generic-password -s dsh -a ref:NAME -w`。本包去掉的是明文文件，而不是这条读取路径；要堵上它，需要限定为已签名 harness 二进制的访问列表，以及拒绝钥匙串访问的沙箱配置。
+- **外部变更不可见**——在“钥匙串访问”或其他工具中所做的编辑不会发出事件，下一次解析时才会看到。
+- **没有跨进程写锁**——两个 harness 进程同时更新同一条记录可能丢失一次更新。
+- **不支持 Windows**，Linux 需要 Secret Service 会话。
+- **没有迁移命令**——密钥通过重新保存来迁移。
+- **条目在钥匙串界面中可见**——账户名会暴露存在哪些引用和记录键，但绝不暴露值。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者的工作上下文——点击展开</summary>
+
+本开发备注是维护者的工作上下文：开放问题与尚未决定的探索方向。它明确不具权威性——已交付的行为与限制以上文和链接的 Agent Note 为准。
+
+#### 命令行客户端与原生绑定
+
+本包通过调用平台工具来避免原生依赖。`@napi-rs/keyring` 之类的绑定可以补上 Windows 和无子进程的进程内访问，并允许条目的访问列表指明 harness 本身。这是需要维护者决定的依赖选择。
+
+#### 离开 experimental
+
+本包位于 `packages/experimental`；把它移到 `credentials-local` 旁边需要产品使用分类。
+
+</details>

@@ -98,6 +98,7 @@ Promotion requires a named product role, documented public behavior and limitati
 | [`forge-session`](forge-session/README.md) | Binds change requests to the Sessions that created, pushed, or tracked them | `ctx.forgeSession` |
 | [`client-ui-forge`](client-ui-forge/README.md) | GUI panel for a Session's Git checkout, worktrees, and bound pull requests | `ctx.forgePanel` |
 | [`forge-bundle`](forge-bundle/README.md) | Default-disabled pull request and worktree panel composition | — |
+| [`credentials-keychain`](credentials-keychain/README.md) | OS-keychain credentials provider (macOS Keychain, Linux Secret Service) | `ctx.credentials` |
 
 -----
 

@@ -196,7 +196,7 @@ No direct invalidation; stored values never enter a request prefix.
 These limits define when the provider is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
 
 - **Same-reference concurrent writes are last-write-wins** — the writer lock and the read-modify-write keep concurrent writers from dropping each other's entries, but two writers editing one reference still resolve to the later write; there is no revision check.
-- **A same-UID process can read the document** — the file-effect sandbox modes do not deny reads, and an OS-keychain provider is deferred.
+- **A same-UID process can read the document** — the file-effect sandbox modes do not deny reads, and the experimental [`dsh-credentials-keychain`](../../experimental/credentials-keychain/README.md) moves the keys out of a plaintext file but not out of same-UID reach.
 - **Environment changes are invisible** — the snapshot is frozen at launch, so a variable exported after startup reaches neither resolution nor `describe`; changing an environment-sourced credential takes a restart.
 - **Atomic, not crash-durable** — inherited from `dsh-atomic-write`; the store re-reads on boot.
 

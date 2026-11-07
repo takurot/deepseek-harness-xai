@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Identifiants dans le trousseau du système",
+    "description": "Stocke les clés d’API et autres identifiants dans le trousseau du système plutôt que dans un fichier en clair."
+  }
+}
