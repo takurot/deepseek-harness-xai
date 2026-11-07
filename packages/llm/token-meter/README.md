@@ -65,7 +65,7 @@ Both plugins have usable defaults. The meter consumes only the optional `llm` se
 
 ### Reading the numbers
 
-Occupancy is a reference figure, not a billing record: nothing in the harness makes decisions from it, and compaction reads `measure()` instead. A UI computes occupancy by dividing measured pressure by the separately resolved capacity for the selected model. The `contextBreakdown` figures are estimates that will not sum to `projectedTokens`, whose provider anchor carries exactly the heuristic error — CJK text and JSON schemas underprice badly at four characters per token.
+Occupancy is a reference figure, not a billing record: nothing in the harness makes decisions from it, and compaction reads `measure()` instead. A UI computes occupancy by dividing measured pressure by the separately resolved capacity for the selected model. The `contextBreakdown` figures are estimates that will not sum to `projectedTokens`, whose provider anchor carries exactly the heuristic error — JSON schemas underprice at four characters per token.
 
 -----
 
@@ -88,7 +88,7 @@ Provider usage anchors a measurement only when its canonical envelope matches an
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | The `TokenMeter` service: replay state, fold, `measure()` and `estimateMessage()` |
-| [`src/estimate.ts`](src/estimate.ts) | The fixed heuristic: four characters per token plus block and role overhead |
+| [`src/estimate.ts`](src/estimate.ts) | The fixed heuristic: per-script density (ASCII four characters per token, CJK one token per character, other scripts two characters per token) plus block and role overhead |
 | [`src/measurement-projection.ts`](src/measurement-projection.ts) | Fixed-size host recovery facts; no positional caches |
 | [`src/surface-fold.ts`](src/surface-fold.ts) | The positional surface fold shared with `measure()` |
 | [`src/surface-projection.ts`](src/surface-projection.ts) | Shadow-price protocol for the O(1) projection units |
@@ -155,7 +155,7 @@ These limits define where the measurement stops and future work begins. They are
 
 This Dev Note is non-authoritative working context: notes for maintainers and open questions. Shipped behavior and accepted rationale live in the sections above, the package code, and the linked Agent Notes.
 
-- The fixed four-characters-per-token heuristic underprices CJK text and JSON schemas; the provider anchor carries exactly that error when usage is reused. Present the composition rows as an approximate composition, never as a total.
+- The fixed heuristic prices CJK text at one token per character, which is approximate and tokenizer-dependent, and still underprices JSON schemas at four characters per token; the provider anchor carries exactly that error when usage is reused. Present the composition rows as an approximate composition, never as a total.
 - A per-provider exact tokenizer is not decided; keeping one deterministic heuristic is what makes every consumer's measurement agree and replay-stable.
 
 </details>
