@@ -114,6 +114,54 @@ export function decoderForCharset(charset: string | undefined): TextDecoder {
   }
 }
 
+/** Bytes of an HTML document inspected for a charset declaration, per the WHATWG prescan. */
+const SNIFF_BYTES = 1024
+
+/** Attribute value after `charset=`: quoted or bare, stopping at quote, whitespace, `;`, `/`, or `>`. */
+const CHARSET_VALUE = /charset\s*=\s*["']?\s*([^\s"'>;/]+)/i
+
+/**
+ * Find the charset an HTML document announces about itself: a byte order mark,
+ * else the first `<meta charset>` or `<meta http-equiv="content-type">`
+ * declaration in the first 1024 bytes. This is a simplified WHATWG prescan, a
+ * declaration reader rather than a statistical detector. Callers apply it only
+ * when the response header declares no charset.
+ *
+ * @param bytes - the start of the response body.
+ * @returns the lower-cased label, or `undefined` when the document declares none.
+ */
+export function sniffHtmlCharset(bytes: Uint8Array): string | undefined {
+  if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) return 'utf-8'
+  if (bytes[0] === 0xFF && bytes[1] === 0xFE) return 'utf-16le'
+  if (bytes[0] === 0xFE && bytes[1] === 0xFF) return 'utf-16be'
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, SNIFF_BYTES)).replace(/<!--[\s\S]*?-->/g, '')
+  for (const [tag] of head.matchAll(/<meta\b[^>]*>/gi)) {
+    const httpEquiv = /http-equiv\s*=\s*["']?content-type/i.test(tag)
+    // Quoted values are blanked so a `charset=` inside another attribute's value does not count as the attribute.
+    if (!httpEquiv && !/\scharset\s*=/i.test(tag.replace(/"[^"]*"|'[^']*'/g, '""'))) continue
+    const label = CHARSET_VALUE.exec(tag)?.[1]
+    if (label !== undefined) return label.toLowerCase()
+  }
+  return undefined
+}
+
+/**
+ * Pick the decoder for an HTML body whose header declared no charset.
+ * A UTF-16 result from a `<meta>` label is read as UTF-8, because a page whose
+ * declaration was readable as ASCII cannot be UTF-16 (WHATWG Encoding).
+ *
+ * @param bytes - the start of the response body.
+ * @returns a decoder for the declared charset, or UTF-8 when none is declared.
+ * @throws `WEB_UNSUPPORTED_CONTENT_TYPE` for a label no decoder supports.
+ */
+export function decoderForHtml(bytes: Uint8Array): TextDecoder {
+  const label = sniffHtmlCharset(bytes)
+  const decoder = decoderForCharset(label)
+  const utf16Bom = bytes[0] === 0xFF || bytes[0] === 0xFE
+  if (!utf16Bom && decoder.encoding.startsWith('utf-16')) return new TextDecoder('utf-8')
+  return decoder
+}
+
 /** Whether a label names UTF-8, including its standard aliases. */
 function isUtf8Label(label: string): boolean {
   try {
