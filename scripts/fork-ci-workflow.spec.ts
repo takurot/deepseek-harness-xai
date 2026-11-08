@@ -14,10 +14,16 @@ const workflow = yaml.load(
   readFileSync(resolve(import.meta.dirname, '..', '.github/workflows/fork-ci.yml'), 'utf8'),
 ) as { on: Record<string, unknown>; jobs: Record<string, Job> }
 
+function job(name: string): Job {
+  const found = workflow.jobs[name]
+  if (found === undefined) throw new TypeError(`fork-ci.yml must define the ${name} job`)
+  return found
+}
+
 describe('Fork CI workflow', () => {
   it('runs every job on a GitHub-hosted runner', () => {
-    for (const [name, job] of Object.entries(workflow.jobs)) {
-      expect(job['runs-on'], name).toBe('ubuntu-latest')
+    for (const [name, entry] of Object.entries(workflow.jobs)) {
+      expect(entry['runs-on'], name).toBe('ubuntu-latest')
     }
   })
 
@@ -27,12 +33,12 @@ describe('Fork CI workflow', () => {
 
   it('gates on static, lint, and an aggregate verdict that fails on skipped needs', () => {
     const runs = (job: Job): string[] => (job.steps ?? []).flatMap(step => step.run === undefined ? [] : [step.run])
-    expect(runs(workflow.jobs.static)).toContain('pnpm run check:ci:static')
-    expect(runs(workflow.jobs.lint)).toEqual(expect.arrayContaining([
+    expect(runs(job('static'))).toContain('pnpm run check:ci:static')
+    expect(runs(job('lint'))).toEqual(expect.arrayContaining([
       'pnpm run typecheck',
       'pnpm run check:ci:lint:contracts-ready',
     ]))
-    const verdict = workflow.jobs['all-checks-passed']
+    const verdict = job('all-checks-passed')
     expect(verdict.needs?.sort()).toEqual(['lint', 'static'])
     expect(verdict.if).toContain('!cancelled()')
     expect(runs(verdict).join('\n')).toContain('exit 1')
