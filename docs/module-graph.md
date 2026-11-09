@@ -260,6 +260,7 @@ flowchart TD
     pkg_client_ui_creation_recommendations["client-ui-creation-recommendations"]
     pkg_client_ui_plugin_recommendations["client-ui-plugin-recommendations"]
     pkg_creation_recommendations["creation-recommendations"]
+    pkg_credentials_keychain["credentials-keychain"]
     pkg_cua["cua"]
     pkg_cua_bundle["cua-bundle"]
     pkg_experimental_api_speech_to_text["experimental-api-speech-to-text"]
@@ -314,6 +315,7 @@ flowchart TD
     pkg_tool_ralph["tool-ralph"]
     pkg_tool_session_query["tool-session-query"]
     pkg_tool_terminal["tool-terminal"]
+    pkg_web_search_xai["web-search-xai"]
     pkg_webhook["webhook"]
     pkg_webhook_github["webhook-github"]
   end
@@ -502,6 +504,8 @@ flowchart TD
   pkg_credentials_local --> pkg_credentials
   pkg_credentials_local --> pkg_home_paths
   pkg_credentials_local --> pkg_launch_environment
+  pkg_credentials_keychain --> pkg_credentials
+  pkg_credentials_keychain --> pkg_launch_environment
   pkg_experimental_liveshare --> pkg_scope
   pkg_anonymous_user_id --> pkg_brand
   pkg_anonymous_user_id --> pkg_home_paths
@@ -535,6 +539,10 @@ flowchart TD
   pkg_plugin_recommendations --> pkg_skill
   pkg_plugin_recommendations --> pkg_typert_protocol
   pkg_skill_badge --> pkg_skill
+  pkg_web_search_xai --> pkg_credentials
+  pkg_web_search_xai --> pkg_launch_environment
+  pkg_web_search_xai --> pkg_llm
+  pkg_web_search_xai --> pkg_web
   pkg_host_directory_picker_auto --> pkg_client_connection
   pkg_host_directory_picker_auto --> pkg_client_ui_directory_picker_browse
   pkg_host_directory_picker_auto --> pkg_client_ui_directory_picker_native
@@ -1675,6 +1683,7 @@ flowchart TD
 | [`computer-use`](../packages/computer-use/computer-use) | `computer-use` | [`brand`](../packages/util/brand) |
 | [`authorization`](../packages/credentials/authorization) | `credentials` | [`credentials`](../packages/credentials/credentials), [`llm`](../packages/llm/llm) |
 | [`credentials-local`](../packages/credentials/credentials-local) | `credentials` | [`atomic-write`](../packages/util/atomic-write), [`credentials`](../packages/credentials/credentials), [`home-paths`](../packages/util/home-paths), [`launch-environment`](../packages/util/launch-environment) |
+| [`credentials-keychain`](../packages/experimental/credentials-keychain) | `experimental` | [`credentials`](../packages/credentials/credentials), [`launch-environment`](../packages/util/launch-environment) |
 | [`experimental-liveshare`](../packages/experimental/liveshare) | `experimental` | [`scope`](../packages/core/scope) |
 | [`anonymous-user-id`](../packages/identity/anonymous-user-id) | `identity` | [`brand`](../packages/util/brand), [`home-paths`](../packages/util/home-paths) |
 | [`lsp`](../packages/lsp/lsp) | `lsp` | [`brand`](../packages/util/brand), [`llm`](../packages/llm/llm) |
@@ -1696,6 +1705,7 @@ flowchart TD
 | [`experimental-webworker-runtime`](../packages/experimental/webworker-runtime) | `experimental` | [`client-connection`](../packages/client/connection), [`client-modules`](../packages/client/modules), [`host-webserver`](../packages/host/webserver) |
 | [`plugin-recommendations`](../packages/experimental/plugin-recommendations) | `experimental` | [`llm`](../packages/llm/llm), [`skill`](../packages/skill/skill), [`typert-protocol`](../packages/typert/protocol) |
 | [`skill-badge`](../packages/experimental/skill-badge) | `experimental` | [`skill`](../packages/skill/skill) |
+| [`web-search-xai`](../packages/experimental/web-search-xai) | `experimental` | [`credentials`](../packages/credentials/credentials), [`launch-environment`](../packages/util/launch-environment), [`llm`](../packages/llm/llm), [`web`](../packages/web/web) |
 | [`host-directory-picker-auto`](../packages/host/directory-picker-auto) | `host` | [`client-connection`](../packages/client/connection), [`client-ui-directory-picker-browse`](../packages/client/ui-directory-picker-browse), [`client-ui-directory-picker-native`](../packages/client/ui-directory-picker-native), [`host-directory-picker-browse`](../packages/host/directory-picker-browse), [`host-directory-picker-native`](../packages/host/directory-picker-native), [`host-webserver`](../packages/host/webserver) |
 | [`host-frontend-static`](../packages/host/frontend-static) | `host` | [`client-connection`](../packages/client/connection), [`host-webserver`](../packages/host/webserver) |
 | [`persona`](../packages/preset/persona) | `preset` | [`system-prompt`](../packages/core/system-prompt) |
