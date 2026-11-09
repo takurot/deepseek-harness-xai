@@ -54,6 +54,7 @@ export interface Config {
   timeoutMs: Volatile<number>
 }
 
+/* jscpd:ignore-start -- Config fields parallel web-search-deepseek; each provider owns its defaults. */
 export const Config = z.object({
   apiKey: z.string().role('secret').volatile(),
   apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_API_KEY_ENV).volatile(),
@@ -62,6 +63,7 @@ export const Config = z.object({
   sources: z.array(z.union([z.const('web'), z.const('x')])).default(['web']).volatile(),
   timeoutMs: z.number().step(1).min(1).default(XAI_DEFAULT_TIMEOUT_MS).volatile(),
 })
+/* jscpd:ignore-end */
 
 /**
  * Read and validate the xAI key. An installed credentials service is authoritative, including absence;
