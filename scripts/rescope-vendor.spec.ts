@@ -9,6 +9,13 @@ import { exactEditState, isRescopeExcluded, listRescopeFiles, rescopeText } from
 
 const ANCHOR = '\n## Sync procedure'
 const INSERTED = `\n15. **rescope**: one log entry.\n${ANCHOR}`
+const PRESET_REFERENCE_FILES = [
+  'scripts/gen-tool-catalog.ts',
+  'docs/tool-catalog.md',
+  'docs/tool-catalog.zh.md',
+  'docs/upgrade-guide/v0.2.2-alpha.2/fs-observation-policy-default-off/guide.md',
+  'docs/upgrade-guide/v0.2.2-alpha.2/fs-observation-policy-default-off/guide.zh.md',
+]
 
 function expectRoundTrip(file: string, text: string, scoped: string, lines: number): void {
   expect(rescopeText(text, file)).toEqual({ text: scoped, lines })
@@ -85,6 +92,7 @@ describe('exactEditState', () => {
 
 describe('product identifiers', () => {
   it.each([
+    ...PRESET_REFERENCE_FILES,
     'apps/cli/tests/optional-bundle-transitions.e2e.ts',
     'apps/web/tests/agent-preset-selection.e2e.ts',
     'apps/web/tests/developer-tools-settings.e2e.ts',
@@ -117,6 +125,21 @@ describe('product identifiers', () => {
     expect(isRescopeExcluded(file)).toBe(false)
     expect(rescopeText(text, file)).toEqual({ text, lines: 0 })
   })
+
+  it.each(PRESET_REFERENCE_FILES)('still rewrites real module references in %s', (file) => {
+    const text = "const preset = 'cordis'\nimport { Context } from 'cordis'\nimport utils from 'cosmokit'\n"
+    const scoped = "const preset = 'cordis'\nimport { Context } from '@deepseek-ai/cordis'\nimport utils from '@deepseek-ai/cosmokit'\n"
+    const wrap = (source: string): string => file.endsWith('.md') ? `The \`cordis\` preset.\n\`\`\`ts\n${source}\`\`\`\n` : source
+    expectRoundTrip(file, wrap(text), wrap(scoped), 2)
+  })
+
+  it.each(PRESET_REFERENCE_FILES.filter(file => file.endsWith('.md')))(
+    'still rewrites YAML plugin names in %s', (file) => {
+      const text = "The `cordis` preset.\n```yaml\n- name: cordis # The 'cordis' preset.\n```\n"
+      const scoped = "The `cordis` preset.\n```yaml\n- name: @deepseek-ai/cordis # The 'cordis' preset.\n```\n"
+      expectRoundTrip(file, text, scoped, 1)
+    },
+  )
 
   it('still renames other libraries in a preset consumer and reverses them', () => {
     const file = 'packages/client/ui-agent-preset/src/client/CreatePluginMenuItem.tsx'
