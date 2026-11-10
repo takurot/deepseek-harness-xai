@@ -76,7 +76,7 @@ Electron 使用 Electron Node 模式启动私有 Desktop Host。Host 调用共�
 
 Subagent Activation 拥有运行时树成员关系。
 
-AgentLoop 回滚失败的初始化，并在启动已排队工作前等待串行 `agent/created`；卸载在 teardown 期间保留所需资源（[顺序](../packages/core/agent-loop/README.zh.md#understand-the-implementation)）。
+AgentLoop 回滚失败的初始化，并在启动已排队工作前等待串行 `agent/created`；依赖持久化的生命周期在获取句柄、取消驱动器和最终 close 期间保留存储（[顺序](../packages/core/agent-loop/README.zh.md#understand-the-implementation)）。
 
 [事件生产者与消费者](event-producer-consumer.zh.md)。
 

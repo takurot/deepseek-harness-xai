@@ -1,10 +1,11 @@
 import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setImmediate } from 'node:timers/promises'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
@@ -335,14 +336,22 @@ describe('config-driven session id', () => {
   })
 
   it.each(['resolve', 'reject'] as const)(
-    'abandons an exact-id open that later %ss when AgentLoop disposal starts',
+    'retains an exact-id open that later %ss until AgentLoop disposal completes',
     async (outcome) => {
       const root = await mkdtemp(join(tmpdir(), 'dsh-cfg-exact-dispose-'))
       dirs.push(root)
       const ctx = await makeCoreContext()
       await ctx.plugin(JsonlSessionPersistence, { root })
       const opening = Promise.withResolvers<SessionHandle>()
-      vi.spyOn(ctx.sessionPersistence, 'open').mockReturnValue(opening.promise)
+      const entered = Promise.withResolvers<undefined>()
+      vi.spyOn(ctx.sessionPersistence, 'open').mockImplementation(() => {
+        entered.resolve(undefined)
+        return opening.promise
+      })
+      onTestFinished(async () => {
+        opening.reject(new Error('test finished'))
+        await ctx.fiber.dispose()
+      })
       const closed = vi.fn(async () => {})
       const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => undefined)
       const failures: unknown[] = []
@@ -351,15 +360,21 @@ describe('config-driven session id', () => {
       const loop = await ctx.plugin(AgentLoop, {
         agents: [{ id: 'main', sessionId: SessionId('config-exact-dispose'), model: 'mock' }],
       })
-      await loop.dispose()
-      if (outcome === 'resolve') {
-        opening.resolve({ close: closed } as unknown as SessionHandle)
-      } else {
-        opening.reject(new Error('startup cancelled by teardown'))
+      await entered.promise
+      let disposed = false
+      const disposal = Promise.resolve(loop.dispose()).then(() => { disposed = true })
+      try {
+        await setImmediate()
+        expect(disposed).toBe(false)
+      } finally {
+        if (outcome === 'resolve') {
+          opening.resolve({ close: closed } as unknown as SessionHandle)
+        } else {
+          opening.reject(new Error('startup cancelled by teardown'))
+        }
+        await disposal
       }
-      await Promise.resolve()
-      // The abandoned handle is closed; the rejected open is silently released.
-      if (outcome === 'resolve') await expect.poll(() => closed).toHaveBeenCalledOnce()
+      if (outcome === 'resolve') expect(closed).toHaveBeenCalledOnce()
       expect(ctx.agents.get(SessionId('config-exact-dispose'))).toBeUndefined()
       expect(failures).toEqual([])
       expect(warn).not.toHaveBeenCalled()
@@ -367,6 +382,44 @@ describe('config-driven session id', () => {
       await ctx.fiber.dispose()
     },
   )
+
+  it('admits a deferred configured resume only once across persistence replacement', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-cfg-resume-replacement-'))
+    dirs.push(root)
+    const ctx = await makeCoreContext()
+    onTestFinished(() => ctx.fiber.dispose())
+    const backend = await ctx.plugin(JsonlSessionPersistence, { root })
+    const firstLoop = await ctx.plugin(AgentLoop, { agents: [] })
+    const sessionId = SessionId('configured-replacement')
+    const seed = await ctx.agents.create({ sessionId })
+    seed.agent.session.append('turn/start', { turn: 1 })
+    seed.agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await firstLoop.dispose()
+    await backend.dispose()
+    let opens = 0
+    ctx.inject(['sessionPersistence'], (provider: Context) => {
+      const original = provider.sessionPersistence.open.bind(provider.sessionPersistence)
+      const spy = vi.spyOn(provider.sessionPersistence, 'open').mockImplementation((...args) => {
+        opens++
+        return original(...args)
+      })
+      provider.effect(() => () => { spy.mockRestore() })
+    })
+    const published: SessionId[] = []
+    ctx.on('agent/created', ({ agent }) => { published.push(agent.id) })
+    await ctx.plugin(AgentLoop, {
+      agents: [{ id: 'main', resumeSessionId: sessionId, provider: 'mock', model: 'mock' }],
+    })
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+    const firstProvider = await ctx.plugin(JsonlSessionPersistence, { root })
+    await expect.poll(() => published).toEqual([sessionId])
+    await firstProvider.dispose()
+    await ctx.plugin(JsonlSessionPersistence, { root })
+    await setImmediate()
+    expect(opens).toBe(1)
+    expect(published).toEqual([sessionId])
+    expect(ctx.agents.get(sessionId)).toBeUndefined()
+  })
 
   it('identity-nests the deferred resume fiber under its labeled owner effect', async () => {
     const ctx = new Context()

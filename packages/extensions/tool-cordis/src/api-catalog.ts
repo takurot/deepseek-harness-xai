@@ -150,13 +150,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>',
-        description: 'Create an owned agent on a caller-supplied session id.',
+        description: 'Create an owned agent on a caller-supplied session id. Persistence uses the factory runtime; caller disposal joins its final close. Startup and rollback failures are retained together in an AggregateError.',
         parameters: [{ name: 'ownerCtx', description: 'caller context that structurally owns the lifecycle.' }, { name: 'options', description: 'identities, optional live parent, session seed/metadata, loop options, setup, and cancellation.' }],
         returns: 'the published handle.',
       },
       {
         signature: 'async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>',
-        description: 'Resume an owned agent from the configured persistence service.',
+        description: 'Resume an owned agent from the factory runtime persistence service. Cancellation can reject before raw open settles; owner/provider disposal still waits for acquisition and late-handle cleanup.',
         parameters: [{ name: 'ownerCtx', description: 'caller context that owns load, setup, and the live lifecycle.' }, { name: 'options', description: 'persisted identity, optional live parent, loop options, setup, and cancellation.' }],
         returns: 'the published handle.',
       },
