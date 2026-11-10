@@ -2,6 +2,17 @@
 
 DeepSeek Harness is an all-plugin Cordis agent harness. Read [docs/architecture.md](docs/architecture.md) before changing `packages/`; follow [docs/AGENTS.md](docs/AGENTS.md) for documentation.
 
+## Implementation workflow
+
+Every implementation task follows these six stages in order, using [docs/WORKFLOW.md](docs/WORKFLOW.md) for execution details:
+
+1. **Plan implementation.** Record scope, dependencies, acceptance conditions, affected files, and verification steps before editing code.
+2. **Review the plan with a sub-agent.** Have a sub-agent check feasibility, omissions, risks, and test coverage. Revise and repeat until actionable findings are resolved before implementation.
+3. **Implement with TDD.** Confirm a behavior test fails for the intended reason, make it pass, then refactor and run the relevant checks. Documentation-only changes use documentation checks.
+4. **Commit and push.** Review the diff, run the required pre-push checks, commit only intended changes, and push the working branch.
+5. **Create the PR.** Link the Issue and describe the final changes, validation results, and verification limits using the required PR description format.
+6. **Review and improve the PR with a sub-agent.** Have a sub-agent review the current PR diff. Resolve each actionable finding, add regression coverage for behavior fixes, rerun affected checks, commit and push fixes, update the PR description, and request another sub-agent review. Repeat until no actionable findings remain and required CI passes; only then is the PR eligible for merge.
+
 ## Pre-stable APIs and released Session data
 
 Public APIs are pre-stable; update every consumer. Follow [version/status](docs/session-format-status.md) and [type acknowledgements](docs/cookbook/reviewing-persistence-type-changes.md). [Adjacent migration](.agents/notes/implemented/architecture/2026-08-31-released-session-format-migrations.md) may add a version-named successor but never move, overwrite, or delete committed generations; predecessors imply neither fallback nor downgrade support. SQLite uses monotonic `SCHEMA_VERSION`.
