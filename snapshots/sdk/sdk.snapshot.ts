@@ -9,12 +9,13 @@
  * fixtures and rewrites expected outputs.
  */
 
+import { ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   assertPersistedSessionVersion,
   assertSessionFixtureVersion,
@@ -57,6 +58,7 @@ import {
 } from '@deepseek-ai/dsh-session-snapshot'
 import {
   DeepSeekHarness,
+  TransportClosedError,
   type HarnessNotification,
   type NotificationSubscription,
   type RunResult,
@@ -140,6 +142,9 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'shutdown-durability': {
+    patches: [fileURLToPath(new URL('./shutdown-durability/runtime.cordis.yml', import.meta.url))],
+  },
   'team-default-enabled': {
     expectedFinalResponse: 'TEAM_CONFIG_OK',
     patches: [
@@ -819,6 +824,7 @@ async function runScenario(scenario: CorpusScenario): Promise<{
     DSH_SNAPSHOT_PROVIDER: route.provider,
     DSH_SNAPSHOT_MODEL: route.model,
     DSH_TELEMETRY_DISABLED: '1',
+    DSH_SHUTDOWN_READY: join(dshHome, 'shutdown-ready'),
     DSH_AGENTS_HOME: join(cwd, '.agents'),
     NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' '),
     ...parentFixture === undefined ? {} : {
@@ -857,6 +863,7 @@ async function runScenario(scenario: CorpusScenario): Promise<{
     env,
     initializeTimeoutMs: 110_000,
     requestTimeoutMs: 110_000,
+    ...scenario.name === 'shutdown-durability' ? { shutdownTimeoutMs: 110_000 } : {},
     cwd,
     provider: route.provider,
     model,
@@ -947,6 +954,32 @@ async function runScenario(scenario: CorpusScenario): Promise<{
           await expect(harness.resumeSession('missing-session')).rejects.toThrow()
           session = await harness.resumeSession(sessionId)
           expect(session.id).toBe(sessionId)
+        }
+        if (scenario.name === 'shutdown-durability') {
+          const pending = session.run(materializeInput(action.content, scenario, cwd, liveSessions), {
+            onNotification: notification => { notifications.push(notification); observe(notification) },
+          }).then(() => { throw new Error('shutdown stream completed before cancellation') }, (error: unknown) => error)
+          await Promise.race([
+            vi.waitFor(() => expect(existsSync(env.DSH_SHUTDOWN_READY!)).toBe(true), { timeout: 110_000 }),
+            pending.then((error) => { throw error }),
+          ])
+          const kills = vi.spyOn(ChildProcess.prototype, 'kill')
+          const requests = vi.spyOn(harness.client, 'request')
+          try {
+            await harness.close()
+            expect(kills).not.toHaveBeenCalled()
+            expect(requests.mock.calls.map(([method]) => method)).toEqual(['shutdown'])
+            const shutdown = requests.mock.results[0]
+            expect(shutdown?.type).toBe('return')
+            await expect(shutdown?.value).resolves.toEqual({})
+            const error = await pending
+            expect(error).toBeInstanceOf(TransportClosedError)
+            expect(String(error)).toContain('exit code: 0')
+          } finally {
+            requests.mockRestore()
+            kills.mockRestore()
+          }
+          break
         }
         let result: RunResult | undefined
         if (assertions.replayStandaloneCommands === true) {
@@ -1213,6 +1246,23 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       )
       reconcileCatalogCreationTimes(ordered.map(log => log.content), 'validate')
       const actualContext = contextOf(ordered, cwd)
+      if (scenario.name === 'shutdown-durability') {
+        const events = records(ordered[0]!.content)
+        const closers = events.filter(event => event.type === 'step/end' || event.type === 'turn/end')
+          .map(event => ({ type: event.type, data: event.data }))
+        expect(closers).toEqual([
+          { type: 'step/end', data: { turn: 1, step: 1 } },
+          { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted', reason: { kind: 'disposed' } } } },
+        ])
+        const projection = JSON.stringify({
+          error: 'TransportClosedError',
+          exitCode: 0,
+          persistedClosers: closers,
+        }, null, 2) + '\n'
+        const expected = join(scenario.dir, 'shutdown.expected.json')
+        if (refreshing) await writeFile(expected, projection)
+        else expect(projection).toBe(await readFile(expected, 'utf8'))
+      }
       if (scenario.name === 'team-default-enabled') {
         const parent = ordered[0]!
         const events = parseSessionLog(parent.content)

@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal
+from unittest import mock
 
 if TYPE_CHECKING:
     from deepseek_harness import Notification, RunResult
@@ -938,6 +939,7 @@ def main() -> None:
         if args.scenario in {"all", "sdk-restart"}:
             assert args.exe is not None
             smoke_sdk_restart_snapshot(model.url, args.exe.resolve(), args.update_snapshots)
+            smoke_sdk_shutdown_snapshot(model.url, args.exe.resolve(), args.update_snapshots)
         if args.installed_wheel and args.scenario in {"all", "sdk-profile-plugin"}:
             smoke_sdk_profile_plugin(model.url)
         if args.scenario in {"all", "direct"}:
@@ -2010,6 +2012,95 @@ def smoke_sdk_restart_snapshot(base_url: str, executable: Path, update_snapshots
             files, update_snapshots, RESTART_SNAPSHOT_DIRECTORY, RESTART_SNAPSHOT_FILENAMES,
             native_writer_output=True,
         )
+
+
+def smoke_sdk_shutdown_snapshot(base_url: str, executable: Path, update_snapshots: bool) -> None:
+    """Close an active SDK stream and read its terminal events without crash repair."""
+    from deepseek_harness import DeepSeekHarness
+    from deepseek_harness.errors import TransportClosedError
+
+    fixture = Path(__file__).resolve().parent.parent / "snapshots/sdk/shutdown-durability/shutdown.mjs"
+    with tempfile.TemporaryDirectory(prefix="dsh-sdk-shutdown-") as temporary:
+        root = Path(temporary).resolve()
+        home = root / "home"
+        sessions = home / "sessions"
+        ready = home / "shutdown-ready"
+        patch = write_advanced_profile_patch(root, "shutdown.patch.yml", sessions)
+        rows = json.loads(patch.read_text())
+        rows.append({"insert": [{"id": "shutdown-stream-fixture", "name": str(fixture)}]})
+        patch.write_text(json.dumps(rows))
+        harness = DeepSeekHarness(
+            provider="deepseek-official", model="smoke-model", cwd=str(root),
+            dsh_bin=str(executable), dsh_home=str(home), patches=(str(patch),),
+            env={"DSH_PERMISSION_MODE": "danger-full-access", "DSH_TELEMETRY_DISABLED": "1",
+                 "DSH_SHUTDOWN_READY": str(ready)},
+            api_key="sk-keyless-smoke", base_url=base_url,
+            request_timeout_seconds=60, shutdown_timeout_seconds=60,
+        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                harness.start()
+                process = harness.client._proc
+                assert process is not None
+                pending = executor.submit(
+                    harness.run, RESTART_FIRST_PROMPT, session_id="shutdown-session",
+                )
+                deadline = time.monotonic() + 60
+                while not ready.exists():
+                    if pending.done():
+                        raise AssertionError(f"shutdown stream ended before readiness: {pending.result()}")
+                    if time.monotonic() >= deadline:
+                        raise AssertionError("shutdown stream did not publish readiness")
+                    threading.Event().wait(0.01)
+                with mock.patch.object(process, "terminate", wraps=process.terminate) as terminate, \
+                        mock.patch.object(process, "kill", wraps=process.kill) as kill:
+                    harness.close()
+                    terminate.assert_not_called()
+                    kill.assert_not_called()
+                if any("shutdown request failed:" in line for line in harness.client._stderr_lines):
+                    raise AssertionError(f"shutdown protocol failed: {harness.client._stderr_lines}")
+                if process.returncode != 0:
+                    raise AssertionError(f"shutdown did not exit normally: {process.returncode}")
+                try:
+                    pending.result(timeout=60)
+                except TransportClosedError:
+                    pass
+                else:
+                    raise AssertionError("active SDK run did not report transport closure")
+            finally:
+                harness.close()
+        records = read_session_logs(sessions)["shutdown-session"]
+        closers = [{"type": record["type"], "data": record["data"]} for record in records
+                   if record.get("type") in ("step/end", "turn/end")]
+        expected_closers = [
+            {"type": "step/end", "data": {"turn": 1, "step": 1}},
+            {"type": "turn/end", "data": {"turn": 1, "reason": {
+                "kind": "aborted", "reason": {"kind": "disposed"},
+            }}},
+        ]
+        if closers != expected_closers:
+            raise AssertionError(f"shutdown lost terminal Session events: {closers}")
+        with DeepSeekHarness(harness.config) as restarted:
+            resumed = restarted.resume_session("shutdown-session")
+        restored = read_session_logs(sessions)["shutdown-session"]
+        if restored[:len(records)] != records or [record for record in restored[len(records):]
+                if record.get("type") in ("step/end", "turn/end")]:
+            raise AssertionError("resume changed or repaired an already closed shutdown turn")
+        replacements = snapshot_directory_replacements(root, "{{cwd}}")
+        replacements.append(("shutdown-session", "{{session:1}}"))
+        normalized = project_session_snapshot([
+            normalize_snapshot_value(record, replacements) for record in records
+        ])
+        result = {
+            "error": "TransportClosedError", "exitCode": process.returncode,
+            "resumedSessionId": resumed.id,
+            "persistedClosers": closers,
+        }
+        compare_snapshot_files({
+            "result.json": json.dumps(result, indent=2) + "\n",
+            "session.v4.jsonl": render_jsonl(normalized),
+        }, update_snapshots, ADVANCED_SNAPSHOT_ROOT / "shutdown", ("result.json", "session.v4.jsonl"),
+            native_writer_output=True)
 
 
 def smoke_sdk_scheduler_recovery(base_url: str, executable: Path, update_snapshots: bool) -> None:

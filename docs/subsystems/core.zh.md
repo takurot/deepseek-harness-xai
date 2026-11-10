@@ -564,6 +564,8 @@ async create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader
 
 /**
  * Create an owned agent on a caller-supplied session id.
+ * Persistence uses the factory runtime; caller disposal joins its final close.
+ * Startup and rollback failures are retained together in an AggregateError.
  * @param ownerCtx - caller context that structurally owns the lifecycle.
  * @param options - identities, optional live parent, session seed/metadata, loop options, setup, and cancellation.
  * @returns the published handle.
@@ -571,7 +573,9 @@ async create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader
 async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>
 
 /**
- * Resume an owned agent from the configured persistence service.
+ * Resume an owned agent from the factory runtime persistence service.
+ * Cancellation can reject before raw open settles; owner/provider disposal
+ * still waits for acquisition and late-handle cleanup.
  * @param ownerCtx - caller context that owns load, setup, and the live lifecycle.
  * @param options - persisted identity, optional live parent, loop options, setup, and cancellation.
  * @returns the published handle.

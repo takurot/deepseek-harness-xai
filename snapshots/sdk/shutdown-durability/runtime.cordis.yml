@@ -1,0 +1,3 @@
+- insert:
+    - id: shutdown-stream-fixture
+      name: ./shutdown.mjs

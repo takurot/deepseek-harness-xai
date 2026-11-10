@@ -1815,8 +1815,8 @@ export const Config: z<Config> = z.object({
 
 /**
  * Mount persistence with live routing and handles retained through the
- * consumer unloads triggered by removing this provider. Consumers must own
- * cleanup in their injecting scope; concurrent root disposal is not ordered.
+ * required consumers' complete cleanup, including concurrent root disposal.
+ * Consumers must own acquisition and final close in their injecting scope.
  * @param ctx - the owning plugin context.
  * @param config - the storage root, physical encoding, and listing concurrency.
  * @returns resolves when the service is ready.
