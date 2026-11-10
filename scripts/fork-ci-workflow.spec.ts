@@ -7,7 +7,12 @@ interface Job {
   'runs-on'?: unknown
   needs?: string[]
   if?: string
-  steps?: Array<{ run?: string; uses?: string }>
+  steps?: Array<{
+    run?: string
+    uses?: string
+    env?: Record<string, string>
+    with?: Record<string, unknown>
+  }>
 }
 
 const workflow = yaml.load(
@@ -29,6 +34,15 @@ describe('Fork CI workflow', () => {
 
   it('triggers on pull_request and master pushes without pull_request_target', () => {
     expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'push'])
+  })
+
+  it('compares archived notes with the PR base or the commit before a master push', () => {
+    const staticSteps = job('static').steps ?? []
+    const gates = staticSteps.find(step => step.run === 'pnpm run check:ci:static')
+    expect(gates?.env?.DSH_ARCHIVE_BASE_REF)
+      .toBe('${{ github.event.pull_request.base.sha || github.event.before }}')
+    const checkout = staticSteps.find(step => step.uses?.startsWith('actions/checkout@'))
+    expect(checkout?.with?.['fetch-depth']).toBe(0)
   })
 
   it('gates on static, lint, and an aggregate verdict that fails on skipped needs', () => {
