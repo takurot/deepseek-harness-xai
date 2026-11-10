@@ -1,0 +1,99 @@
+name: Fork CI
+
+# Fork-only replacement for ci.yml, which targets organization runner labels
+# that this fork does not have. Runs on GitHub-hosted runners and never uses
+# pull_request_target, so PR code never sees repository secrets.
+on:
+  pull_request:
+  push:
+    branches: [master]
+permissions:
+  contents: read
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+  DSH_TELEMETRY_DISABLED: '1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: node 24 / static
+    runs-on: ubuntu-latest
+    env:
+      # gen-doc-graphs exceeds the default heap.
+      NODE_OPTIONS: --max-old-space-size=8192
+      DSH_GATE_FAIL_FAST: '1'
+    steps:
+      - name: Use runner-owned temporary storage
+        run: echo "TMPDIR=${{ runner.temp }}" >> "$GITHUB_ENV"
+
+      # Full history lets the archive gate read the PR base.
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v5.0.0
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Run static gates
+        env:
+          DSH_ARCHIVE_BASE_REF: ${{ github.event.pull_request.base.sha }}
+        run: pnpm run check:ci:static
+
+  lint:
+    name: node 24 / typecheck and lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Use runner-owned temporary storage
+        run: echo "TMPDIR=${{ runner.temp }}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v5.0.0
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      # check:ci:lint:contracts-ready resolves workspace imports through the
+      # declarations this step emits, so typecheck runs once here.
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Run lint and duplication
+        run: pnpm run check:ci:lint:contracts-ready
+
+  all-checks-passed:
+    name: all checks passed
+    runs-on: ubuntu-latest
+    needs: [static, lint]
+    if: ${{ !cancelled() }}
+    steps:
+      - name: Fail if any needed job did not succeed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: |
+          echo "::error::Needed job results: ${{ join(needs.*.result, ', ') }}"
+          exit 1
+      - name: All checks passed
+        run: echo "All needed jobs succeeded (${{ join(needs.*.result, ', ') }})"
