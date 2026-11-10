@@ -69,7 +69,7 @@ A malformed comma- or whitespace-joined charset declaration containing a UTF-8 l
 
 ### Failures and recovery
 
-Failures throw `WebError` with a machine-routable code: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_REDIRECT_BLOCKED`, `WEB_UNSUPPORTED_CONTENT_TYPE`, `WEB_ABORTED`, or `WEB_PROVIDER_ERROR`. `WEB_UNSUPPORTED_CONTENT_TYPE` covers unsupported media types, unsupported charset declarations, and invalid UTF-8 during malformed-declaration recovery. Direct callers can route on the code; the model-facing `web_fetch` tool surfaces the failure text to the model under its own error wrapper.
+Failures throw `WebError` with a machine-routable code: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_REDIRECT_BLOCKED`, `WEB_UNSUPPORTED_CONTENT_TYPE`, `WEB_ABORTED`, or `WEB_PROVIDER_ERROR`. `WEB_UNSUPPORTED_CONTENT_TYPE` covers unsupported media types, unsupported charset declarations, and invalid UTF-8 during malformed-declaration recovery. A response with excessive content encodings and an incomplete body fails as `WEB_PROVIDER_ERROR` without terminating the host process. Direct callers can route on the code; the model-facing `web_fetch` tool surfaces the failure text to the model under its own error wrapper.
 
 -----
 

@@ -69,7 +69,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 ### 失败与恢复
 
-失败会抛出 `WebError`，其中包含可供程序路由的错误码：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_REDIRECT_BLOCKED`、`WEB_UNSUPPORTED_CONTENT_TYPE`、`WEB_ABORTED` 或 `WEB_PROVIDER_ERROR`。`WEB_UNSUPPORTED_CONTENT_TYPE` 涵盖不支持的媒体类型、不支持的 charset 声明，以及畸形声明恢复过程中遇到的非法 UTF-8。直接调用方可以按错误码路由；面向模型的 `web_fetch` 工具会在自己的错误包装层内把失败文本呈现给模型。
+失败会抛出 `WebError`，其中包含可供程序路由的错误码：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_REDIRECT_BLOCKED`、`WEB_UNSUPPORTED_CONTENT_TYPE`、`WEB_ABORTED` 或 `WEB_PROVIDER_ERROR`。`WEB_UNSUPPORTED_CONTENT_TYPE` 涵盖不支持的媒体类型、不支持的 charset 声明，以及畸形声明恢复过程中遇到的非法 UTF-8。内容编码层数过多且正文不完整的响应会以 `WEB_PROVIDER_ERROR` 失败，不会终止宿主进程。直接调用方可以按错误码路由；面向模型的 `web_fetch` 工具会在自己的错误包装层内把失败文本呈现给模型。
 
 -----
 
