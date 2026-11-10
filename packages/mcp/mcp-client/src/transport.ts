@@ -26,7 +26,7 @@ function buildChildEnv(extra: Record<string, string>): Record<string, string> {
  * Create an MCP transport from the resolved plugin config.
  *
  * @param config - Resolved plugin config discriminated on `transport`.
- * @returns an unstarted MCP transport (stdio or Streamable HTTP).
+ * @returns an unstarted MCP transport; Streamable HTTP follows only same-origin redirects.
  */
 export function createTransport(config: Config): Transport {
   switch (config.transport) {
@@ -37,10 +37,19 @@ export function createTransport(config: Config): Transport {
         env: buildChildEnv(config.env),
         cwd: config.cwd,
       })
-    case 'streamable-http':
+    case 'streamable-http': {
+      const endpoint = new URL(config.url)
+      const origin = endpoint.origin
       return new StreamableHTTPClientTransport(
-        new URL(config.url),
-        { requestInit: { headers: config.headers } },
+        endpoint,
+        {
+          requestInit: { headers: config.headers },
+          fetch: (input, init) => {
+            if (new URL(input).origin !== origin) throw new Error('MCP HTTP redirect must stay on the configured origin')
+            return globalThis.fetch(input, { ...init, redirect: 'manual' })
+          },
+        },
       )
+    }
   }
 }

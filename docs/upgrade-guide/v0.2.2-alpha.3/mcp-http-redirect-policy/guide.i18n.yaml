@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-alpha.3/mcp-http-redirect-policy/guide.md
+/:
+  en: 11cbc178055828b9
+  zh: 4fc864f0cb1cf573
+/configure-the-final-mcp-endpoint-url:
+  en: dea7be63d536d9e6
+  zh: bfd651792ce2720c
+/configure-the-final-mcp-endpoint-url/change:
+  en: 698a199587bace47
+  zh: 597b12c5690d9807
+/configure-the-final-mcp-endpoint-url/migration:
+  en: ab3b9d63738e24bc
+  zh: 48df389ddcff65bf

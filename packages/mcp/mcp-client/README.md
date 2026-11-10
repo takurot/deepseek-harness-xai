@@ -27,6 +27,8 @@ English | [中文](README.zh.md)
 
 Add `dsh-mcp-client` when the model should call tools from an external MCP server as if they were native. Give each server a unique name and transport. The official SDK selects the 2026-07-28 protocol when available and falls back to supported legacy revisions. Choose stdio for a local program and Streamable HTTP for a service; stdio negotiation starts a temporary probe process before the serving process.
 
+Streamable HTTP follows only same-origin redirects that preserve the request method. POST requests follow 307 and 308 redirects, and reject 301, 302, and 303 redirects. A redirect to a different scheme, hostname, or port fails before forwarding credentials, the MCP session ID, or the request body. This includes changing HTTP to HTTPS on the same hostname. Configure the intended server's final URL directly when it uses another origin.
+
 ### Minimal configuration
 
 Add one entry per server; nothing else is required. After the harness starts, the server's tools appear in the model's tool list.

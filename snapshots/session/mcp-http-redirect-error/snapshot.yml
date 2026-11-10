@@ -1,0 +1,9 @@
+version: 1
+scenario: mcp-http-redirect-error
+profile: headless
+composition: mcp-template-error
+recording: authored
+environment:
+  DSH_MCP_TEMPLATE_TOKEN: snapshot-mcp-secret-do-not-log
+header:
+  class: mcp-template-error

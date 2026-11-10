@@ -821,7 +821,7 @@ function verifyMcpResources(log: string, ptc: boolean): void {
     .toContain('server argument: ["catalog"]')
 }
 
-function verifyMcpTemplateError(log: string, secret: string): void {
+function verifyMcpToolError(log: string, secret: string, expectedDiagnostic: string): void {
   const events = parseSessionLog(log)
   const calls = events.flatMap(event => event.type === 'tool/call' ? [event.data.name] : [])
   expect(calls).toEqual(['mcp__protected__ping'])
@@ -829,7 +829,7 @@ function verifyMcpTemplateError(log: string, secret: string): void {
   expect(results).toHaveLength(1)
   expect(results[0]).toMatchObject({ isError: true })
   const diagnostic = results[0]!.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
-  expect(diagnostic).toBe('Error: MCP fixture rejected Bearer [redacted]')
+  expect(diagnostic).toBe(expectedDiagnostic)
   expect(log).not.toContain(secret)
   const resultIndex = events.findIndex(event => event.type === 'tool/result')
   const nextRequest = events.findIndex((event, index) => index > resultIndex && event.type === 'assistant/message')
@@ -1400,8 +1400,12 @@ describe('headless recorded-session snapshots', () => {
       const spillRoot = await mkdtemp(join(tmpdir(), 'acp-snap-spill-'))
       const fixturePath = join(scenario.dir, fixtureFiles[0] ?? sessionFixtureName(0, SESSION_FORMAT_VERSION))
       const locatorRoot = snapshotSpillRoot(fixturePath)
-      const mcpDemo = scenario.name === 'plugin-manager-mcp' || scenario.name === 'mcp-template-error'
-        ? await startHttpMcpFixture({ rejectToolCalls: scenario.name === 'mcp-template-error' }) : undefined
+      const mcpDemo = ['plugin-manager-mcp', 'mcp-template-error', 'mcp-http-redirect-error'].includes(scenario.name)
+        ? await startHttpMcpFixture({
+            rejectToolCalls: scenario.name === 'mcp-template-error',
+            ...(scenario.name === 'mcp-http-redirect-error'
+              ? { redirectToolCallsTo: 'https://mcp-redirect.test/mcp', proxy: true } : {}),
+          }) : undefined
       let result: Awaited<ReturnType<typeof runLoaderSmoke>>
       try {
         result = await runLoaderSmoke({
@@ -1449,6 +1453,15 @@ describe('headless recorded-session snapshots', () => {
             NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' '),
             DSH_TELEMETRY_DISABLED: '1',
             ...(mcpDemo === undefined ? {} : { DSH_MCP_DEMO_URL: mcpDemo.url }),
+            ...(scenario.name === 'mcp-http-redirect-error' && mcpDemo !== undefined ? {
+              DSH_MCP_DEMO_URL: 'http://mcp-redirect.test/mcp',
+              HTTP_PROXY: new URL(mcpDemo.url).origin,
+              HTTPS_PROXY: new URL(mcpDemo.url).origin,
+              http_proxy: new URL(mcpDemo.url).origin,
+              https_proxy: new URL(mcpDemo.url).origin,
+              NO_PROXY: '',
+              no_proxy: '',
+            } : {}),
           },
           prepare: async (cwd) => {
             if (scenario.manifest.workspace?.parent === 'outside-temp') assertWorkspaceOutsideTemp(cwd)
@@ -1491,10 +1504,21 @@ describe('headless recorded-session snapshots', () => {
             if (scenario.name === 'mcp-template-error' && mcpDemo !== undefined) {
               const secret = scenario.manifest.environment?.DSH_MCP_TEMPLATE_TOKEN
               expect(secret).toBeDefined()
-              verifyMcpTemplateError(actualLogs[0]!.content, secret!)
+              verifyMcpToolError(actualLogs[0]!.content, secret!, 'Error: MCP fixture rejected Bearer [redacted]')
               expect(mcpDemo.calls).toEqual(['ping'])
               expect(mcpDemo.authorization.length).toBeGreaterThan(1)
               expect(mcpDemo.authorization.every(value => value === `Bearer ${secret!}`)).toBe(true)
+            }
+            if (scenario.name === 'mcp-http-redirect-error' && mcpDemo !== undefined) {
+              const secret = scenario.manifest.environment?.DSH_MCP_TEMPLATE_TOKEN
+              expect(secret).toBeDefined()
+              verifyMcpToolError(actualLogs[0]!.content, secret!,
+                'Error: Error: MCP HTTP redirect must stay on the configured origin')
+              expect(mcpDemo.calls).toEqual([])
+              expect(mcpDemo.redirects).toEqual(['tools/call'])
+              expect(mcpDemo.requests).toContain('http://mcp-redirect.test/mcp')
+              expect(mcpDemo.authorization).toContain(`Bearer ${secret!}`)
+              expect(mcpDemo.connects).not.toContain('mcp-redirect.test:443')
             }
             if (scenario.name === 'toolcall-unused-args') {
               const events = parseSessionLog(actualLogs[0]!.content)
