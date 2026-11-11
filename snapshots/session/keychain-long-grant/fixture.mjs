@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { credentialKey } from '@deepseek-ai/dsh-credentials'
-import { KeychainCredentialProvider, macosBackend } from '@deepseek-ai/dsh-credentials-keychain'
+import { isDeepStrictEqual } from 'node:util'
+import { credentialKey, credentialRef } from '@deepseek-ai/dsh-credentials'
+import { KeychainCredentialProvider, KeychainStorageLimitError, macosBackend } from '@deepseek-ai/dsh-credentials-keychain'
 
 export const name = 'keychain-long-grant-fixture'
 
@@ -12,7 +13,7 @@ class FixtureKeychain extends KeychainCredentialProvider {
     return join(process.cwd(), '.dsh', 'keychain-fixture-locks')
   }
 
-  createBackend(service) {
+  createBackend(service, _run, outputLimitBytes) {
     const filename = join(process.cwd(), '.dsh', 'keychain-fixture-items.json')
     const result = (code, stdout = '') => ({ code, stdout, stderr: '' })
     const load = async () => {
@@ -61,13 +62,13 @@ class FixtureKeychain extends KeychainCredentialProvider {
       await writeFile(filename, JSON.stringify(items))
       return result(0)
     }
-    return macosBackend(service, run)
+    return macosBackend(service, run, outputLimitBytes)
   }
 }
 
 /** Verify reloaded durable state before exposing a nonsecret receipt to the model. */
 export async function apply(ctx) {
-  let active = ctx.plugin(FixtureKeychain, { service: 'snapshot-long-grant' })
+  let active = ctx.plugin(FixtureKeychain, { service: 'snapshot-long-grant', commandOutputLimitBytes: 65536 })
   await active
   let initialized = false
   ctx.on('agent/pre-step', async (_event, next) => {
@@ -78,15 +79,48 @@ export async function apply(ctx) {
       assert.ok(storedBytes > 4096)
       const provider = ctx.get('credentials')
       assert.ok(provider)
+      const reference = credentialRef('SNAPSHOT_BOUNDED_KEY')
+      const originalReference = { value: 'short-reference', source: 'keychain' }
+      await provider.set(reference, originalReference.value)
       await provider.modifyRecord(key, async () => record)
+      const filename = join(process.cwd(), '.dsh', 'keychain-fixture-items.json')
+      const originalItems = await readFile(filename, 'utf8')
+      const notifications = []
+      const stopReference = ctx.on('credentials/reference-updated', () => { notifications.push('reference') })
+      const stopRecord = ctx.on('credentials/record-updated', () => { notifications.push('record') })
+      const unchangedStorageLimit = (error) => {
+        assert.ok(error instanceof KeychainStorageLimitError)
+        assert.equal(error.code, 'KEYCHAIN_STORAGE_LIMIT')
+        assert.equal(error.outcome, 'unchanged')
+        assert.equal(error.reason, 'read-budget')
+        return true
+      }
+      const assertPreserved = async () => {
+        assert.equal(await readFile(filename, 'utf8') === originalItems, true)
+        assert.deepEqual(await provider.resolve(reference), originalReference)
+        assert.ok(isDeepStrictEqual(await provider.readRecord(key), record))
+        assert.deepEqual(await provider.listRecords(), [{ key, kind: 'grant' }])
+        assert.deepEqual(notifications, [])
+      }
+      try {
+        const oversized = 'x'.repeat(65536)
+        await assert.rejects(provider.set(reference, oversized), unchangedStorageLimit)
+        await assertPreserved()
+        await assert.rejects(provider.modifyRecord(key, async () => ({ kind: 'grant', payload: { token: oversized } })), unchangedStorageLimit)
+        await assertPreserved()
+      } finally {
+        stopReference()
+        stopRecord()
+      }
       await active.dispose()
-      active = ctx.plugin(FixtureKeychain, { service: 'snapshot-long-grant' })
+      active = ctx.plugin(FixtureKeychain, { service: 'snapshot-long-grant', commandOutputLimitBytes: 65536 })
       await active
       const reloaded = ctx.get('credentials')
       assert.ok(reloaded)
+      assert.deepEqual(await reloaded.resolve(reference), originalReference)
       assert.deepEqual(await reloaded.readRecord(key), record)
       assert.deepEqual(await reloaded.listRecords(), [{ key, kind: 'grant' }])
-      await writeFile('keychain-result.json', JSON.stringify({ storedBytes, roundTrip: true, reloaded: true, listed: true }) + '\n')
+      await writeFile('keychain-result.json', JSON.stringify({ storedBytes, roundTrip: true, reloaded: true, listed: true, refused: true, preserved: true }) + '\n')
       initialized = true
     }
     return next()
