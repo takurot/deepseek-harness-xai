@@ -60,6 +60,9 @@ describe('Fork CI workflow', () => {
   })
 
   it('runs full coverage after installing dependencies and preparing Linux confinement', () => {
+    expect(job('coverage')).toMatchObject({
+      env: { DSH_GATE_CONCURRENCY: '1', DSH_COVERAGE_MAX_WORKERS: '3' },
+    })
     expectCommandsInOrder(job('coverage'), [
       'pnpm install --frozen-lockfile',
       'bash scripts/prepare-ci-bubblewrap.sh',
@@ -68,6 +71,9 @@ describe('Fork CI workflow', () => {
   })
 
   it('prepares browser and Office runtime prerequisites before running artifact consumers', () => {
+    expect(job('consumers')).toMatchObject({
+      env: { DSH_GATE_CONCURRENCY: '1', DSH_WEB_SNAPSHOT_WORKERS: '2' },
+    })
     expectCommandsInOrder(job('consumers'), [
       'pnpm install --frozen-lockfile',
       'bash scripts/prepare-ci-bubblewrap.sh',
@@ -100,6 +106,7 @@ describe('Fork CI workflow', () => {
     expect(commands).toContain('/usr/bin/time -v')
     expect(commands).toContain('df -h')
     expect(commands).toContain('$GITHUB_STEP_SUMMARY')
+    expect(commands).toContain('/sys/fs/cgroup/memory.peak')
     expect(entry.steps?.find(step => step.uses?.startsWith('actions/upload-artifact@'))?.if)
       .toBe('${{ !cancelled() }}')
   })
