@@ -838,7 +838,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-credentials-keychain`
 
-- `source`: [`packages/experimental/credentials-keychain/src/index.ts:51`](../packages/experimental/credentials-keychain/src/index.ts)
+- `source`: [`packages/experimental/credentials-keychain/src/index.ts:75`](../packages/experimental/credentials-keychain/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config. */
