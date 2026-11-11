@@ -57,7 +57,8 @@ class FixtureProvider extends KeychainCredentialProvider {
     if (pause?.startsWith('macos')) {
       let paused = false
       return macosBackend(service, (command, args, stdin) => {
-        if (pause === 'macos-helper' && !paused && command === '/usr/bin/osascript') {
+        if (pause === 'macos-helper' && !paused && command === '/usr/bin/osascript'
+          && stdin !== undefined && (JSON.parse(stdin) as { operation: string }).operation === 'set') {
           paused = true
           const marker = JSON.stringify(join(root, 'helper-ready'))
           const gate = JSON.stringify(join(root, 'helper-release'))
