@@ -14,63 +14,106 @@ function fake(result: Partial<KeychainCommandResult>): { run: KeychainCommandRun
   return { run, calls }
 }
 
-describe('macosBackend', () => {
-  it('reads a base64 secret from stdout and keeps the secret out of argv', async () => {
-    const { run, calls } = fake({ stdout: `${Buffer.from('s3cret ünï').toString('base64')}\n` })
-    expect(await macosBackend('dsh', run).get('ref:KEY')).toBe('s3cret ünï')
-    expect(calls[0]).toEqual({ command: 'security', args: ['find-generic-password', '-s', 'dsh', '-a', 'ref:KEY', '-w'] })
-  })
-
-  it('maps exit 44 to an absent secret and other failures to errors with the tool diagnostic', async () => {
-    expect(await macosBackend('dsh', fake({ code: 44 }).run).get('a')).toBeUndefined()
-    await expect(macosBackend('dsh', fake({ code: 1, stderr: 'denied\n' }).run).get('a'))
-      .rejects.toThrow('security find-generic-password failed with exit code 1: denied')
-    await expect(macosBackend('dsh', fake({ code: null }).run).get('a')).rejects.toThrow('exit code null')
-  })
-
-  it('writes stdin JSON and refuses invalid helper results without exposing output', async () => {
-    const { run, calls } = fake({ stdout: '0\n' })
-    await macosBackend('dsh', run).set('ref:KEY', 'a "quoted" b')
-    expect(calls[0]!.args.slice(0, 3)).toEqual(['-l', 'JavaScript', '-e'])
-    expect(JSON.parse(calls[0]!.stdin!)).toEqual({ service: 'dsh', account: 'ref:KEY', secret: Buffer.from('a "quoted" b').toString('base64') })
-    expect(JSON.stringify(calls[0]!.args)).not.toContain('quoted')
-    for (const result of [
-      { code: 1, stdout: '0', stderr: 'private-token' },
-      { stdout: '' }, { stdout: '-25293' }, { stdout: '0 private-token' },
-    ]) {
-      await expect(macosBackend('dsh', fake(result).run).set('a', 'private-token'))
-        .rejects.toThrow('credentials-keychain: Keychain write failed; verify the store is accessible before retrying')
+function macStore() {
+  const items = new Map<string, string>()
+  const calls: Call[] = []
+  const run: KeychainCommandRunner = async (command, args, stdin) => {
+    calls.push({ command, args, ...(stdin === undefined ? {} : { stdin }) })
+    const result = (code: number, stdout = '') => ({ code, stdout, stderr: '' })
+    if (command === '/usr/bin/osascript') {
+      const request = JSON.parse(stdin!) as { operation: string; account: string; secret?: string }
+      if (request.operation === 'get') return result(0, JSON.stringify(items.has(request.account) ? { status: 0, secret: items.get(request.account) } : { status: -25300 }))
+      if (request.operation === 'delete') { items.delete(request.account); return result(0, '{"status":0}') }
+      items.set(request.account, request.secret!)
+      return result(0, '{"status":0}')
     }
+    if (args[0] === 'find-generic-password') return items.has(args[4]!) ? result(0, items.get(args[4]!)!) : result(44)
+    if (Buffer.byteLength(stdin!) > 4096) return { ...result(1), stderr: 'interactive input exceeds 4096 bytes' }
+    items.delete(stdin!.trim().split(' ').at(-1)!)
+    return result(0)
+  }
+  return { run, calls, items }
+}
+
+describe('macosBackend', () => {
+  it('preserves a legacy item and reads its successor after an update', async () => {
+    const store = macStore()
+    store.items.set('a', Buffer.from('old').toString('base64'))
+    const backend = macosBackend('dsh', store.run)
+    expect(await backend.get('a')).toBe('old')
+    await backend.set('a', 'new 日本語\n  ')
+    expect(await backend.get('a')).toBe('new 日本語\n  ')
+    expect(store.items.get('a')).toBe(Buffer.from('old').toString('base64'))
+    expect(store.items.has('v2:a')).toBe(true)
+    await backend.delete('a')
+    expect(await backend.get('a')).toBeUndefined()
+    expect(store.items.size).toBe(0)
+    await backend.delete('absent')
   })
 
   it('round-trips a long Unicode value when the interactive client rejects lines over 4096 bytes', async () => {
+    const store = macStore()
+    const backend = macosBackend('dsh', store.run)
     const secret = '日本語 "quoted"\n'.repeat(4096) + '  '
-    const stored = new Map<string, string>()
-    const calls: Call[] = []
-    const run: KeychainCommandRunner = async (command, args, stdin) => {
-      calls.push({ command, args, ...(stdin === undefined ? {} : { stdin }) })
-      if (command === 'security' && args[0] === '-i' && Buffer.byteLength(stdin!) > 4096) {
-        return { code: 1, stdout: '', stderr: 'interactive input exceeds 4096 bytes' }
-      }
-      if (command === '/usr/bin/osascript') {
-        const request = JSON.parse(stdin!) as { account: string; secret: string }
-        stored.set(request.account, request.secret)
-        return { code: 0, stdout: '0\n', stderr: '' }
-      }
-      return { code: 0, stdout: stored.get('record:oauth/test') ?? '', stderr: '' }
-    }
-    const backend = macosBackend('dsh', run)
     await backend.set('record:oauth/test', secret)
     expect(await backend.get('record:oauth/test')).toBe(secret)
-    expect(calls.every(call => !call.args.join(' ').includes(secret))).toBe(true)
+    expect(store.calls.every(call => !call.args.join(' ').includes(secret))).toBe(true)
   })
 
-  it('deletes through stdin and treats a missing item as removed', async () => {
-    const { run, calls } = fake({})
-    await macosBackend('dsh', run).delete('ref:KEY')
-    expect(calls[0]!.stdin).toBe('delete-generic-password -s dsh -a ref:KEY\n')
-    await macosBackend('dsh', fake({ code: 44 }).run).delete('a')
-    await expect(macosBackend('dsh', fake({ code: 2, stderr: 'locked' }).run).delete('a')).rejects.toThrow('locked')
+  it('does not fall back to legacy on native permission failures', async () => {
+    const { run, calls } = fake({ stdout: '{"status":-25293}' })
+    await expect(macosBackend('dsh', run).get('a')).rejects.toThrow('macOS get failed')
+    expect(calls).toHaveLength(1)
+    await expect(macosBackend('dsh', run).set('a', 'secret')).rejects.toThrow('macOS set failed')
+  })
+
+  it('rejects malformed helper responses without retaining secret output or parser causes', async () => {
+    for (const response of [
+      { code: 1, stdout: '{"status":0,"secret":"PRIVATE_VALUE"}' },
+      { stdout: 'PRIVATE_VALUE' }, { stdout: 'null' }, { stdout: '{}' },
+      { stdout: '{"status":"PRIVATE_VALUE"}' }, { stdout: '{"status":1e100}' },
+      { stdout: '{"status":0}' }, { stdout: '{"status":0,"secret":42}' },
+      { stdout: '{"status":0,"secret":"PRIVATE_VALUE","extra":true}' },
+      { stdout: '{"status":-25300,"secret":"PRIVATE_VALUE"}' },
+    ]) {
+      const error = await macosBackend('dsh', fake(response).run).get('a').catch((error: unknown) => error)
+      expect(error).toBeInstanceOf(Error)
+      expect(String(error)).not.toContain('PRIVATE_VALUE')
+      expect((error as Error).cause).toBeUndefined()
+    }
+    await expect(macosBackend('dsh', fake({ stdout: '{"status":0,"secret":"private"}' }).run).set('a', 'private')).rejects.toThrow('macOS set failed')
+  })
+
+  it('leaves the successor readable when either deletion fails and completes on retry', async () => {
+    for (const phase of ['legacy', 'native'] as const) {
+      const store = macStore()
+      store.items.set('a', Buffer.from('old').toString('base64'))
+      store.items.set('v2:a', Buffer.from('new').toString('base64'))
+      let failed = false
+      const run: KeychainCommandRunner = async (command, args, stdin) => {
+        if (!failed && (phase === 'legacy' ? command === 'security' && args[0] === '-i' : command === '/usr/bin/osascript' && JSON.parse(stdin!).operation === 'delete')) {
+          failed = true
+          return phase === 'legacy' ? { code: 2, stdout: '', stderr: 'denied' } : { code: 0, stdout: '{"status":-25293}', stderr: '' }
+        }
+        return store.run(command, args, stdin)
+      }
+      const backend = macosBackend('dsh', run)
+      await expect(backend.delete('a')).rejects.toThrow()
+      expect(await backend.get('a')).toBe('new')
+      expect(store.items.has('a')).toBe(phase === 'legacy')
+      await backend.delete('a')
+      expect(store.items.size).toBe(0)
+    }
+  })
+
+  it('reports legacy read failures and treats native absence plus legacy exit44 as absent', async () => {
+    const run: KeychainCommandRunner = async command => command === '/usr/bin/osascript'
+      ? { code: 0, stdout: '{"status":-25300}', stderr: '' }
+      : { code: 1, stdout: '', stderr: 'denied' }
+    await expect(macosBackend('dsh', run).get('a')).rejects.toThrow('security find-generic-password failed')
+    expect(await macosBackend('dsh', macStore().run).get('a')).toBeUndefined()
+    await macosBackend('dsh', async command => command === '/usr/bin/osascript'
+      ? { code: 0, stdout: '{"status":-25300}', stderr: '' } : { code: 44, stdout: '', stderr: '' }).delete('a')
   })
 })
 
@@ -100,13 +143,14 @@ describe('secretServiceBackend', () => {
 
 describe('createBackend', () => {
   it('selects by platform and rejects unsupported ones', async () => {
-    const { run, calls } = fake({ code: 44 })
+    const { run, calls } = macStore()
     await createBackend('darwin', 'dsh', run).get('a')
-    expect(calls[0]!.command).toBe('security')
+    expect(calls[0]!.command).toBe('/usr/bin/osascript')
     await createBackend('linux', 'dsh', fake({ code: 1 }).run).get('a')
     await expect(createBackend('linux', 'dsh', run).get('a')).rejects.toThrow()
-    calls.push({ command: 'secret-tool', args: [] })
-    expect(calls[1]!.command).toBe('secret-tool')
+    const linux = fake({ code: 1 })
+    await createBackend('linux', 'dsh', linux.run).get('a')
+    expect(linux.calls[0]!.command).toBe('secret-tool')
     expect(() => createBackend('win32', 'dsh', run)).toThrow('platform "win32" has no supported secret store')
   })
 })
