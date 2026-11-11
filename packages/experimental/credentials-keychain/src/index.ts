@@ -370,7 +370,7 @@ export class KeychainCredentialProvider extends CredentialProvider {
     let parsed: unknown
     try {
       parsed = JSON.parse(text)
-    } catch (_error) {
+    } catch (error) {
       throw new Error('credentials-keychain: the record index is not valid JSON', { cause: error })
     }
     if (!Array.isArray(parsed)) throw new Error('credentials-keychain: the record index is not a list')
