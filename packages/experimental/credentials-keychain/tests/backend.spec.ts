@@ -43,13 +43,26 @@ describe('macosBackend', () => {
     }
   })
 
-  it('writes long Unicode values without an interactive command line', async () => {
-    const secret = '日本語 \"quoted\"\n'.repeat(4096) + '  '
-    const { run, calls } = fake({ stdout: '0\n' })
-    await macosBackend('dsh', run).set('record:oauth/test', secret)
-    expect(calls[0]!.command).toBe('/usr/bin/osascript')
-    expect(JSON.parse(calls[0]!.stdin!)).toEqual({ service: 'dsh', account: 'record:oauth/test', secret: Buffer.from(secret).toString('base64') })
-    expect(calls[0]!.args.join(' ')).not.toContain(secret)
+  it('round-trips a long Unicode value when the interactive client rejects lines over 4096 bytes', async () => {
+    const secret = '日本語 "quoted"\n'.repeat(4096) + '  '
+    const stored = new Map<string, string>()
+    const calls: Call[] = []
+    const run: KeychainCommandRunner = async (command, args, stdin) => {
+      calls.push({ command, args, ...(stdin === undefined ? {} : { stdin }) })
+      if (command === 'security' && args[0] === '-i' && Buffer.byteLength(stdin!) > 4096) {
+        return { code: 1, stdout: '', stderr: 'interactive input exceeds 4096 bytes' }
+      }
+      if (command === '/usr/bin/osascript') {
+        const request = JSON.parse(stdin!) as { account: string; secret: string }
+        stored.set(request.account, request.secret)
+        return { code: 0, stdout: '0\n', stderr: '' }
+      }
+      return { code: 0, stdout: stored.get('record:oauth/test') ?? '', stderr: '' }
+    }
+    const backend = macosBackend('dsh', run)
+    await backend.set('record:oauth/test', secret)
+    expect(await backend.get('record:oauth/test')).toBe(secret)
+    expect(calls.every(call => !call.args.join(' ').includes(secret))).toBe(true)
   })
 
   it('deletes through stdin and treats a missing item as removed', async () => {
