@@ -31,7 +31,7 @@ kind: "package-reference"
 
 ### 何时选择
 
-当工作依赖跨调用 PowerShell 状态时选择持久工具；当每条命令都应从已知、干净的环境开始时选择 `dsh-tool-pwsh`。这里不支持需要交互 stdin 的命令——读取输入的前台子进程会一直阻塞到命令超时，随后重置 shell——因此交互工作属于 terminal 工具。
+当工作依赖跨调用 PowerShell 状态时选择持久工具；当每条命令都应从已知、干净的环境开始时选择 `dsh-tool-pwsh`。交互 stdin 应使用 terminal 工具。前台子进程的 stdin 等待就绪经确认后，可以返回部分输出并保留 shell。命令到达超时后会重置 shell。
 
 ### 最小配置
 
@@ -56,7 +56,7 @@ kind: "package-reference"
 
 ### agent 可以依赖什么
 
-命令共享每个 agent 一个 shell，因此 cwd、`$env:` 变量、函数与后台任务都会跨调用保留。结果排除私有完成标记与回显的输入行。当 shell 再次读取 stdin 却没有打印完成标记时——一次中断、一个被替换的 shell，或提供方能证明其 stdin 等待的交互式前台子进程——调用返回已捕获的部分输出，其结尾可能是后端自己的提示符文本。非零的包装命令追加 `[exit code: N]`——命令运行原生程序时给出确切原生退出码，PowerShell 终止错误则为 `1`。在报告该状态前就退出的 shell 改为追加 `[shell exited: code N]`、`[shell killed by signal: SIG]` 或 `[shell exited]`（Windows 强制终止报告 exit 1 且没有信号），然后重置并告诉 agent 下一次调用从全新状态开始。长输出保留最早的已保留前缀并附裁剪通知；若 terminal 已经丢弃该前缀，结果会明确说明。
+命令共享每个 agent 一个 shell，因此 cwd、`$env:` 变量、函数与后台任务都会跨调用保留。结果排除私有完成标记与回显的输入行。原生 stdin 等待就绪要求命令已输出独立的起始标记行。当 shell 再次读取 stdin 却没有打印完成标记时——一次中断、一个被替换的 shell，或提供方能证明其 stdin 等待的交互式前台子进程——调用返回已捕获的部分输出，其结尾可能是后端自己的提示符文本。非零的包装命令追加 `[exit code: N]`——命令运行原生程序时给出确切原生退出码，PowerShell 终止错误则为 `1`。在报告该状态前就退出的 shell 改为追加 `[shell exited: code N]`、`[shell killed by signal: SIG]` 或 `[shell exited]`（Windows 强制终止报告 exit 1 且没有信号），然后重置并告诉 agent 下一次调用从全新状态开始。长输出保留最早的已保留前缀并附裁剪通知；若 terminal 已经丢弃该前缀，结果会明确说明。
 
 ### 可能出什么问题
 
@@ -88,7 +88,7 @@ kind: "package-reference"
 
 ### 命令流程
 
-首条命令通过 `ctx.terminals.spawn` 生成 shell，其 pwsh 启动流程安装受控的 `prompt` 函数，并只在该 shell 达到就绪后返回。随后每条命令都包装成一行物理文本——`Write-Output` 起始标记、用反引号转义进双引号字符串的命令体、`Write-Output` 结束标记加退出状态——因此 PSReadLine 对换行包装的回显无法伪造完成。解析器允许状态码数字后的 ASCII 空格，但仍要求以 LF 或 CRLF 结束。命令输出中的空格保持不变。工具以 1,000 行一页轮询 scrollback，直到出现完整的结束标记状态行或该 send 以 `stdin_read` 结算，提取区间、剥离回显的包装，并连同任何状态标记一起渲染。超时会中止截止时间、捕获部分输出并重置 shell。
+首条命令通过 `ctx.terminals.spawn` 生成 shell，其 pwsh 启动流程安装受控的 `prompt` 函数，并只在该 shell 达到就绪后返回。随后每条命令都包装成一行物理文本，先输出空行与独立起始标记，再执行用反引号转义进双引号字符串的命令体，最后输出结束标记与退出状态。工具在每次轮询中都将起始标记行作为 `stdinWaitAfterOutput` 传入，并提取实际输出的标记行之后的内容。解析器允许状态码数字后的 ASCII 空格，但仍要求以 LF 或 CRLF 结束。命令输出中的空格保持不变。工具以 1,000 行一页轮询 scrollback，直到出现完整的结束标记状态行或该 send 以 `stdin_read` 结算，提取区间、剥离回显的包装，并连同任何状态标记一起渲染。超时会中止截止时间、捕获部分输出并重置 shell。
 
 </details>
 

@@ -65,6 +65,8 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 Both dialects expose the same readiness contract, so consumers are dialect-agnostic. A send settles when the shell is ready again: after the controlled prompt is verified, after the foreground process group provably waits on stdin (Linux), after output silence (`inferred_idle`), or at the absolute `timeoutMs`. A prompt marker whose printable tail has not arrived yet holds the send on the exact path for `promptTailGraceMs` beyond `idleSilenceMs + handoffGraceMs`, because the marker and its tail are written by the same prompt render. An `inferred_idle` or `timeout` result does not prove the foreground command exited.
 
+A send can require a complete sanitized output line before native stdin-wait evidence is accepted through [`stdinWaitAfterOutput`](../../../docs/subsystems/terminal.md). A verified controlled prompt can settle the send before that line arrives.
+
 ### Sandboxing and safe operation
 
 The shell runs under the effective sandbox boundary for its whole life. Changing the effective sandbox mode is rejected while the owner still has open sessions or a spawn in progress — wait for creation to settle and close the sessions first, so a terminal opened with wider access cannot survive a downgrade. The backend supplies only terminal-specific environment overrides; the subprocess provider applies its shared credential scrub.

@@ -261,6 +261,7 @@ export class LocalPtySession implements TerminalBackendSession {
   private promptSeen = false
   private promptTextSeen = false
   private promptTail = ''
+  private stdinWaitOutput: { line: string; tail: string; accepted: boolean } | undefined
   private shellPgid: number | undefined
   private initializing = false
   private lastOutputAt = Date.now()
@@ -344,6 +345,7 @@ export class LocalPtySession implements TerminalBackendSession {
       () => { this.interrupt(operation) },
     )
     this.active = operation
+    this.prepareStdinWaitOutput(request)
     this.resetReadinessEvidence()
 
     if (request.signal !== undefined) {
@@ -390,6 +392,7 @@ export class LocalPtySession implements TerminalBackendSession {
       operation.setInitialForeground(foreground)
       const input = `${request.text}${request.submit ? '\r' : ''}`
       if (input.length > 0 && !operation.cancelRequested) {
+        this.prepareStdinWaitOutput(request)
         this.resetReadinessEvidence()
         const write = this.terminal.write(input)
         this.activeWrite = write.then(() => true, () => false)
@@ -424,6 +427,15 @@ export class LocalPtySession implements TerminalBackendSession {
     this.promptSeen = false
     this.promptTextSeen = false
     this.promptTail = ''
+  }
+
+  private prepareStdinWaitOutput(request: TerminalSendRequest): void {
+    const line = request.stdinWaitAfterOutput
+    if (line === undefined) {
+      this.stdinWaitOutput = undefined
+    } else if (request.text.length > 0 || request.submit || this.stdinWaitOutput?.line !== line) {
+      this.stdinWaitOutput = { line, tail: '\n', accepted: false }
+    }
   }
 
   read(request: TerminalReadRequest): TerminalReadResult {
@@ -532,6 +544,12 @@ export class LocalPtySession implements TerminalBackendSession {
 
   private appendOutput(text: string): void {
     if (text.length === 0) return
+    const required = this.stdinWaitOutput
+    if (required !== undefined && !required.accepted) {
+      const output = required.tail + text
+      required.accepted = output.includes(`\n${required.line}\n`)
+      required.tail = required.accepted ? '' : output.slice(-(required.line.length + 1))
+    }
     this.lastOutputAt = Date.now()
     this.scrollback.append(text)
     this.active?.append(text)
@@ -575,7 +593,7 @@ export class LocalPtySession implements TerminalBackendSession {
       const startupHasOutput = !this.initializing || !this.scrollback.isEmpty
       const acceptsStdinWait = startupHasOutput && foreground !== undefined
         && operation.acceptsStdinWait(foreground.processGroupId, foreground.inputWaiting)
-      if (elapsed >= this.config.exactProbeAfterMs && acceptsStdinWait) {
+      if (elapsed >= this.config.exactProbeAfterMs && acceptsStdinWait && this.stdinWaitOutput?.accepted !== false) {
         this.settleActive('stdin_read')
         return
       }
