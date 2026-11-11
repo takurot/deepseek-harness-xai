@@ -47,6 +47,12 @@ importers:
       '@deepseek-ai/dsh-computer-use':
         specifier: workspace:*
         version: link:packages/computer-use/computer-use
+      '@deepseek-ai/dsh-credentials':
+        specifier: workspace:*
+        version: link:packages/credentials/credentials
+      '@deepseek-ai/dsh-credentials-keychain':
+        specifier: workspace:*
+        version: link:packages/experimental/credentials-keychain
       '@deepseek-ai/dsh-cua':
         specifier: workspace:*
         version: link:packages/experimental/cua
