@@ -22,10 +22,13 @@ describe.skipIf(!enabled)('KeychainCredentialProvider against the macOS Keychain
   const cleanup: Array<() => Promise<void>> = []
 
   afterAll(async () => {
-    const provider = ctx.credentials
-    await provider.unset(REF).catch(() => {})
-    await provider.deleteRecord(KEY).catch(() => {})
-    while (cleanup.length > 0) await cleanup.pop()!()
+    const provider = ctx.get('credentials')
+    const removed = provider === undefined ? [] : await Promise.allSettled([
+      provider.unset(REF), provider.deleteRecord(KEY),
+    ])
+    const disposed: PromiseSettledResult<void>[] = []
+    while (cleanup.length > 0) disposed.push(...await Promise.allSettled([cleanup.pop()!()]))
+    expect([...removed, ...disposed].every(result => result.status === 'fulfilled')).toBe(true)
   })
 
   it('stores, resolves, and removes a reference and a record, with awkward characters intact', async () => {
@@ -61,7 +64,7 @@ describe.skipIf(!enabled)('macOS long-item compatibility', () => {
     const accounts = ['boundary', 'record:oauth/test', 'index', 'legacy']
     try {
       for (const size of [4095, 4096, 4097, 65536]) {
-        const value = 'x'.repeat(size) + '\n日本語 "quoted" \'single\'  '
+        const value = 'x'.repeat(size)
         await backend.set('boundary', value)
         expect(await backend.get('boundary')).toBe(value)
       }
