@@ -11,6 +11,7 @@ class FixtureKeychain extends KeychainCredentialProvider {
   lockDirectory() {
     return join(process.cwd(), '.dsh', 'keychain-fixture-locks')
   }
+  failNextIndexWrite = false
 
   createBackend(service) {
     const filename = join(process.cwd(), '.dsh', 'keychain-fixture-items.json')
@@ -37,6 +38,10 @@ class FixtureKeychain extends KeychainCredentialProvider {
         else {
           assert.equal(request.operation, 'set')
           assert.equal(typeof request.secret, 'string')
+          if (this.failNextIndexWrite && request.account === 'v2:index') {
+            this.failNextIndexWrite = false
+            return result(0, '{"status":-25293}')
+          }
           assert.equal(args.join(' ').includes(request.secret), false)
           items[request.account] = request.secret
         }
@@ -69,6 +74,8 @@ class FixtureKeychain extends KeychainCredentialProvider {
 export async function apply(ctx) {
   let active = ctx.plugin(FixtureKeychain, { service: 'snapshot-long-grant' })
   await active
+  const notifications = []
+  ctx.on('credentials/record-updated', key => { notifications.push(key) })
   let initialized = false
   ctx.on('agent/pre-step', async (_event, next) => {
     if (!initialized) {
@@ -77,16 +84,25 @@ export async function apply(ctx) {
       const storedBytes = Buffer.byteLength(JSON.stringify(record))
       assert.ok(storedBytes > 4096)
       const provider = ctx.get('credentials')
-      assert.ok(provider)
-      await provider.modifyRecord(key, async () => record)
+      assert.ok(provider instanceof FixtureKeychain)
+      provider.failNextIndexWrite = true
+      await assert.rejects(provider.modifyRecord(key, async () => record), { code: 'KEYCHAIN_COMMIT_UNKNOWN', outcome: 'unknown' })
+      assert.deepEqual(notifications, [])
+      const pending = JSON.parse(await readFile(join(process.cwd(), '.dsh', 'keychain-fixture-items.json'), 'utf8'))
+      assert.ok(Object.hasOwn(pending, 'v2:record-transaction-v1'))
+      assert.equal(Object.hasOwn(pending, 'v2:index'), false)
+      assert.deepEqual(JSON.parse(Buffer.from(pending[`v2:record:${key}`], 'base64').toString('utf8')), record)
       await active.dispose()
       active = ctx.plugin(FixtureKeychain, { service: 'snapshot-long-grant' })
       await active
       const reloaded = ctx.get('credentials')
       assert.ok(reloaded)
+      assert.deepEqual(notifications, [key])
       assert.deepEqual(await reloaded.readRecord(key), record)
       assert.deepEqual(await reloaded.listRecords(), [{ key, kind: 'grant' }])
-      await writeFile('keychain-result.json', JSON.stringify({ storedBytes, roundTrip: true, reloaded: true, listed: true }) + '\n')
+      const repaired = JSON.parse(await readFile(join(process.cwd(), '.dsh', 'keychain-fixture-items.json'), 'utf8'))
+      assert.equal(Object.hasOwn(repaired, 'v2:record-transaction-v1'), false)
+      await writeFile('keychain-result.json', JSON.stringify({ storedBytes, roundTrip: true, reloaded: true, listed: true, unknownOutcome: true, recovered: true }) + '\n')
       initialized = true
     }
     return next()
