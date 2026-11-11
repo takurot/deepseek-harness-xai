@@ -1722,7 +1722,7 @@ describe('FaceModelEmitter', { timeout: 60_000 }, () => {
         skipLibCheck: false,
         target: ts.ScriptTarget.ES2024,
         lib: ['lib.es2024.d.ts'],
-        types: [],
+        types: ['node'],
         module: ts.ModuleKind.ESNext,
         moduleResolution: ts.ModuleResolutionKind.Bundler,
       },

@@ -84,6 +84,199 @@ jobs:
       - name: Run lint and duplication
         run: pnpm run check:ci:lint:contracts-ready
 
+  coverage:
+    name: node 24 / coverage
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      DSH_GATE_CONCURRENCY: '1'
+      DSH_GATE_FAIL_FAST: '1'
+      DSH_COVERAGE_MAX_WORKERS: '3'
+      DSH_COVERAGE_TEST_TIMEOUT_MS: '90000'
+    steps:
+      - &heavy-temp
+        name: Use runner-owned temporary storage
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "NODE_COMPILE_CACHE=$RUNNER_TEMP/node-compile-cache" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/fork-ci-metrics"
+
+      - &heavy-checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - &heavy-pnpm
+        uses: pnpm/action-setup@v5.0.0
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - &heavy-node
+        id: node
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          cache: pnpm
+
+      - &heavy-capacity
+        name: Record runner capacity
+        env:
+          PNPM_CACHE_HIT: ${{ steps.node.outputs.cache-hit }}
+        run: |
+          {
+            node --version
+            printf 'pnpm cache hit: %s\n' "$PNPM_CACHE_HIT"
+            printf 'CPUs: %s\n' "$(nproc)"
+            free -h
+            df -h . "$RUNNER_TEMP"
+          } > "$RUNNER_TEMP/fork-ci-metrics/before-install.txt"
+
+      - &heavy-install
+        name: Install (immutable)
+        run: |
+          /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/install.txt" pnpm install --frozen-lockfile
+          {
+            df -h . "$RUNNER_TEMP"
+            du -sh node_modules
+          } > "$RUNNER_TEMP/fork-ci-metrics/after-install.txt"
+
+      - &heavy-bubblewrap
+        name: Prepare Linux confinement
+        run: /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/bubblewrap.txt" bash scripts/prepare-ci-bubblewrap.sh
+
+      - name: Run full coverage
+        run: /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/coverage.txt" pnpm run check:ci:coverage
+
+      - &heavy-summary
+        name: Record final resource measurements
+        if: ${{ !cancelled() }}
+        run: |
+          metrics="$RUNNER_TEMP/fork-ci-metrics"
+          df -h . "$RUNNER_TEMP" > "$metrics/after-gates.txt"
+          if [ -r /sys/fs/cgroup/memory.peak ]; then
+            printf 'cgroup memory peak (bytes): ' > "$metrics/memory-peak.txt"
+            cat /sys/fs/cgroup/memory.peak >> "$metrics/memory-peak.txt"
+          else
+            printf 'cgroup memory peak unavailable\n' > "$metrics/memory-peak.txt"
+          fi
+          {
+            for file in "$metrics"/*.txt; do
+              printf '### %s\n\n```text\n' "$(basename "$file" .txt)"
+              cat "$file"
+              printf '```\n\n'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload resource measurements
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-resources
+          path: ${{ runner.temp }}/fork-ci-metrics/
+          if-no-files-found: error
+
+  consumers:
+    name: node 24 / snapshots and artifacts
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      DSH_GATE_CONCURRENCY: '1'
+      DSH_GATE_FAIL_FAST: '1'
+      DSH_SNAPSHOT_MAX_WORKERS: '1'
+      DSH_SNAPSHOT_MAX_CONCURRENCY: '1'
+      DSH_WEB_SNAPSHOT_WORKERS: '2'
+      DSH_PUBLINT_CONCURRENCY: '1'
+      DSH_NODE_COMPAT_SKIP_TYPECHECK: '1'
+    steps:
+      - *heavy-temp
+      - *heavy-checkout
+      - *heavy-pnpm
+      - *heavy-node
+      - *heavy-capacity
+      - *heavy-install
+      - *heavy-bubblewrap
+
+      - name: Install Playwright Chromium, WebKit, and hosted dependencies
+        # Hosted images can carry Ubuntu mirrors whose HTTP endpoints are unreachable.
+        run: |
+          sudo find /etc/apt -maxdepth 2 -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -E 's@http://([a-z]{2}\.)?archive\.ubuntu\.com/ubuntu@https://archive.ubuntu.com/ubuntu@g; s@http://security\.ubuntu\.com/ubuntu@https://security.ubuntu.com/ubuntu@g' {} +
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/playwright-browsers"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
+          /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/playwright.txt" pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium webkit
+          {
+            df -h . "$RUNNER_TEMP"
+            du -sh "$PLAYWRIGHT_BROWSERS_PATH"
+          } > "$RUNNER_TEMP/fork-ci-metrics/after-playwright.txt"
+
+      - name: Build and execute the Linux Office runtime
+        run: |
+          CI=true /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/office.txt" pnpm run prepare:primary-runtime --target linux-x64 --output "$RUNNER_TEMP/office-runtime" --cache "$RUNNER_TEMP/office-runtime-downloads"
+          {
+            df -h . "$RUNNER_TEMP"
+            du -sh "$RUNNER_TEMP/office-runtime" "$RUNNER_TEMP/office-runtime-downloads"
+          } > "$RUNNER_TEMP/fork-ci-metrics/after-office.txt"
+
+      - name: Run compatibility, snapshot, and artifact gates
+        run: /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/consumers.txt" pnpm run check:ci:consumers
+
+      - name: Typecheck the consumer artifacts
+        run: /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/build-check.txt" pnpm run build:check
+
+      - name: Check vendor rescope
+        run: /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/rescope.txt" pnpm run rescope-vendor:check
+
+      - *heavy-summary
+      - name: Upload resource measurements
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: consumers-resources
+          path: ${{ runner.temp }}/fork-ci-metrics/
+          if-no-files-found: error
+
+  node-compat:
+    name: node ${{ matrix.node }} / compatibility
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      DSH_GATE_CONCURRENCY: '1'
+      DSH_GATE_FAIL_FAST: '1'
+      DSH_NODE_COMPAT_SKIP_TYPECHECK: '1'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        node: ['24.9', '26']
+    steps:
+      - *heavy-temp
+      - *heavy-checkout
+      - *heavy-pnpm
+      - id: node
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - *heavy-capacity
+      - *heavy-install
+      - *heavy-bubblewrap
+
+      - name: Run compatibility smokes
+        env:
+          DSH_BUILD_CLIENT_PROFILE: official
+        run: /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/compatibility.txt" pnpm run check:node-compat
+
+      - name: Check Loader internal shape detection
+        run: /usr/bin/time -v -o "$RUNNER_TEMP/fork-ci-metrics/loader.txt" pnpm exec vitest run packages/boot/app-boot/tests/loader-shape.compat.spec.ts
+
+      - *heavy-summary
+      - name: Upload resource measurements
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: node-${{ matrix.node }}-resources
+          path: ${{ runner.temp }}/fork-ci-metrics/
+          if-no-files-found: error
+
   dependency-audit:
     name: node 24 / dependency audit
     runs-on: ubuntu-latest
@@ -113,7 +306,7 @@ jobs:
   all-checks-passed:
     name: all checks passed
     runs-on: ubuntu-latest
-    needs: [static, lint, dependency-audit]
+    needs: [static, lint, dependency-audit, coverage, consumers, node-compat]
     if: ${{ !cancelled() }}
     steps:
       - name: Fail if any needed job did not succeed
