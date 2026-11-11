@@ -6,9 +6,9 @@ import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { credentialKey } from '../src/index.ts'
 import type { CredentialRecord } from '../src/index.ts'
-import { LocalCredentialProvider } from '../../credentials-local/src/index.ts'
-import { KeychainCredentialProvider } from '../../../experimental/credentials-keychain/src/index.ts'
-import type { KeychainBackend } from '../../../experimental/credentials-keychain/src/index.ts'
+import { LocalCredentialProvider } from '@deepseek-ai/dsh-credentials-local'
+import { KeychainCredentialProvider } from '@deepseek-ai/dsh-credentials-keychain'
+import type { KeychainBackend } from '@deepseek-ai/dsh-credentials-keychain'
 
 const KEY = credentialKey('owner', 'route')
 
