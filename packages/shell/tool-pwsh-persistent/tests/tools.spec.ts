@@ -112,9 +112,11 @@ type StubMode =
   | 'exit-after-send'
   | 'prompt-collision'
   | 'interrupted-echo'
+  | 'done-on-abort'
 
 const START_PATTERN = /__DSH_PERSISTENT_PWSH_START_[^_]+(?:-[^_]+)*__/
 const END_PATTERN = /__DSH_PERSISTENT_PWSH_END_[^:]+:/
+const DONE_PATTERN = /__DSH_PERSISTENT_PWSH_DONE_[a-f0-9-]+__/
 
 class StubTerminalSession implements TerminalBackendSession {
   readonly motd = 'stub> '
@@ -138,15 +140,16 @@ class StubTerminalSession implements TerminalBackendSession {
     this.sends += 1
     if (this.mode === 'send-error') throw new Error('stub send failed')
     if (this.throwOnSend) throw new Error('PTY session has exited')
-    if (this.mode === 'wait-for-abort' || this.mode === 'end-on-abort') {
+    if (this.mode === 'wait-for-abort' || this.mode === 'end-on-abort' || this.mode === 'done-on-abort') {
       const done = new Promise<ReturnType<StubTerminalSession['result']>>((resolve) => {
         request.signal?.addEventListener('abort', () => {
           const start = START_PATTERN.exec(request.text)?.[0]
           const end = END_PATTERN.exec(request.text)?.[0]
           const output = this.mode === 'end-on-abort'
             ? `\n${start ?? ''}\ninterrupted\n${end ?? ''}130\n${this.motd}`
-            : 'partial output'
-          this.scrollback += output
+            : this.mode === 'done-on-abort' ? `partial retained\n${DONE_PATTERN.exec(request.text)?.[0] ?? ''}\n${this.motd}`
+              : 'partial output'
+          this.scrollback = this.mode === 'done-on-abort' ? output : this.scrollback + output
           resolve(this.result(output, 'stdin_read'))
         }, { once: true })
       })
@@ -345,9 +348,9 @@ async function setup(
 }
 
 describe('tool-pwsh-persistent', () => {
-  it('waits for its own completion and rejects a delayed previous prompt on the next call', async () => {
+  it.each(['complete', 'deadline-after-end'])('preserves command ownership during %s', async (mode) => {
     vi.useFakeTimers()
-    const { ctx, owner } = await setup({ backendType: 'framed' })
+    const { ctx, owner } = await setup({ backendType: 'framed', timeoutMs: mode === 'deadline-after-end' ? 100 : 1_000 })
     const output = new PassThrough()
     type Outcome = Awaited<ConstructorParameters<typeof LocalPtySession>[0]['done']>
     const outcome = Promise.withResolvers<Outcome>()
@@ -396,6 +399,20 @@ describe('tool-pwsh-persistent', () => {
       expect(firstReturned).toBe(false)
 
       const firstDone = /__DSH_PERSISTENT_PWSH_DONE_[a-f0-9-]+__/.exec(firstInput)![0]
+      if (mode === 'deadline-after-end') {
+        terminal.signalForeground = async () => {
+          emit(`${firstDone}\n\x1b]133;D;130\x07dsh> `)
+          return foreground.processGroupId
+        }
+        emit(`${firstEnd}7\n`)
+        await vi.advanceTimersByTimeAsync(100)
+        const result = text(await first)
+        expect(result).toContain('Your command timed out')
+        expect(result).toContain('first output')
+        expect(result).toContain('shell was reset')
+        expect(result).not.toContain('__DSH_PERSISTENT_PWSH')
+        return
+      }
       emit(`${firstEnd}0\n${firstDone}\n`)
       await vi.advanceTimersByTimeAsync(10)
       expect(text(await first)).toBe('first output')
@@ -422,7 +439,7 @@ describe('tool-pwsh-persistent', () => {
     }
   })
 
-  it('requests the same complete START output line across empty polling sends', async () => {
+  it('requests the same START and completion lines across empty polling sends', async () => {
     const { ctx, owner, stub } = await setup()
     await call(ctx, owner, 'first')
     const session = stub.sessions[0]!
@@ -432,9 +449,25 @@ describe('tool-pwsh-persistent', () => {
     expect(sends).toHaveBeenCalledTimes(2)
     const initial = sends.mock.calls[0]![0]
     const start = START_PATTERN.exec(initial.text)?.[0]
+    const completion = DONE_PATTERN.exec(initial.text)?.[0]
     expect(start).toBeDefined()
-    expect(initial).toMatchObject({ submit: true, stdinWaitAfterOutput: start })
-    expect(sends.mock.calls[1]![0]).toMatchObject({ text: '', submit: false, stdinWaitAfterOutput: start })
+    expect(completion).toBeDefined()
+    const frame = { startLine: start, completionLine: completion }
+    expect(initial).toMatchObject({ submit: true, stdinWaitAfterOutput: frame })
+    expect(sends.mock.calls[1]![0]).toMatchObject({ text: '', submit: false, stdinWaitAfterOutput: frame })
+  })
+
+  it('hides a completion footer retained after the prefix and status were clipped on timeout', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub', timeoutMs: 5 })
+    await call(ctx, owner, 'warm shell')
+    const session = stub.sessions[0]!
+    session.mode = 'done-on-abort'
+    session.historyTruncated = true
+    const result = text(await call(ctx, owner, 'blocked'))
+    expect(result).toContain('Your command timed out')
+    expect(result).toContain('partial retained')
+    expect(result).not.toContain('__DSH_PERSISTENT_PWSH')
+    expect(session.closed).toContain('persistent pwsh command timed out')
   })
 
   it('excludes wrapper source when interrupted before an emitted START line', async () => {

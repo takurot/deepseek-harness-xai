@@ -11,6 +11,7 @@ class SnapshotSession {
   scrollback = 'dsh> '
   next = 0
   pending
+  delayedTail = ''
 
   startSend(request) {
     let viewport
@@ -22,20 +23,31 @@ class SnapshotSession {
       }
       const start = /__DSH_PERSISTENT_PWSH_START_[a-f0-9-]+__/.exec(request.text)?.[0]
       const end = /__DSH_PERSISTENT_PWSH_END_[a-f0-9-]+:/.exec(request.text)?.[0]
-      if (!start || !end || request.stdinWaitAfterOutput !== start) {
-        throw new Error('command acceptance requires the actual standalone START output line')
+      const done = /__DSH_PERSISTENT_PWSH_DONE_[a-f0-9-]+__/.exec(request.text)?.[0]
+      const frame = request.stdinWaitAfterOutput
+      if (!start || !end || !done || typeof frame !== 'object' || frame.startLine !== start || frame.completionLine !== done) {
+        throw new Error('command acceptance requires the actual START and completion output lines')
       }
-      this.pending = { ...response, start, end }
-      viewport = `${request.text}\r\n`
+      this.pending = { ...response, start, end, done, started: false }
+      viewport = this.delayedTail + `${request.text}\r\n`
+      this.delayedTail = ''
       waitReason = 'inferred_idle'
     } else {
       const pending = this.pending
-      if (!pending || request.text !== '' || request.stdinWaitAfterOutput !== pending.start) {
+      const frame = request.stdinWaitAfterOutput
+      if (!pending || request.text !== '' || typeof frame !== 'object'
+        || frame.startLine !== pending.start || frame.completionLine !== pending.done) {
         throw new Error('command acceptance must continue reading without resubmitting input')
       }
-      viewport = `\r\n${pending.start}\r\n  ${pending.token}  ${pending.end}${pending.code}  \r\n${this.motd}`
-      waitReason = 'stdin_read'
-      this.pending = undefined
+      if (!pending.started) {
+        viewport = `\r\n${pending.start}\r\n  ${pending.token}  `
+        pending.started = true
+      } else {
+        viewport = `${pending.end}${pending.code}  \r\n`
+        this.delayedTail = `${pending.done}\r\n${this.motd}`
+        this.pending = undefined
+      }
+      waitReason = 'inferred_idle'
     }
     this.scrollback += viewport
     const result = { viewport, waitReason, sessionStatus: this.statusValue, truncated: false }

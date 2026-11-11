@@ -37,6 +37,7 @@ interface ResolvedConfig {
 interface CommandMarkers {
   start: string
   end: string
+  done: string
 }
 
 interface RetainedOutput {
@@ -67,6 +68,7 @@ function markers(): CommandMarkers {
   return {
     start: `__DSH_PERSISTENT_PWSH_START_${nonce}__`,
     end: `__DSH_PERSISTENT_PWSH_END_${nonce}:`,
+    done: `__DSH_PERSISTENT_PWSH_DONE_${nonce}__`,
   }
 }
 
@@ -96,7 +98,7 @@ function wrapCommand(command: string, marker: CommandMarkers): string {
   // regex needs digits immediately after it and the echo continues with
   // quote characters. The initial empty output isolates START from prior text.
   const body = quoteForPwsh(command)
-  return `Write-Output ''; Write-Output '${marker.start}'; $LASTEXITCODE = $null; $__s = 1; try { Invoke-Expression "${body}"; $__ok = $? } catch { $__ok = $false }; if ($null -ne $LASTEXITCODE) { $__s = [int]$LASTEXITCODE } else { $__s = if ($__ok) { 0 } else { 1 } }; Write-Output ('${marker.end}' + $__s)`
+  return `Write-Output ''; Write-Output '${marker.start}'; $LASTEXITCODE = $null; $__s = 1; try { Invoke-Expression "${body}"; $__ok = $? } catch { $__ok = $false }; if ($null -ne $LASTEXITCODE) { $__s = [int]$LASTEXITCODE } else { $__s = if ($__ok) { 0 } else { 1 } }; Write-Output ('${marker.end}' + $__s); Write-Output '${marker.done}'`
 }
 
 function trimTrailingNewline(text: string): string {
@@ -136,7 +138,7 @@ function partialOutput(
   const startMarker = startLine(snapshot.text, marker.start)
   if (startMarker >= 0) {
     return {
-      text: trimTrailingNewline(snapshot.text.slice(startMarker + marker.start.length).replace(/^\r?\n/, '')),
+      text: trimPartialOutput(snapshot.text.slice(startMarker + marker.start.length).replace(/^\r?\n/, ''), marker),
       incomplete: false,
     }
   }
@@ -145,12 +147,18 @@ function partialOutput(
   const afterStart = fallbackStart < 0
     ? cleanedFallback
     : cleanedFallback.slice(fallbackStart + marker.start.length).replace(/^\r?\n/, '')
-  const fallbackEnd = afterStart.lastIndexOf(marker.end)
-  const beforeEnd = fallbackEnd < 0 ? afterStart : afterStart.slice(0, fallbackEnd)
   return {
-    text: trimTrailingNewline(beforeEnd.replaceAll(wrapper, '')),
+    text: trimPartialOutput(afterStart, marker),
     incomplete: fallbackTruncated || fallbackStart < 0,
   }
+}
+
+function trimPartialOutput(text: string, marker: CommandMarkers): string {
+  for (const token of [marker.end, marker.done]) {
+    const position = text.indexOf(token)
+    if (position >= 0) text = text.slice(0, position)
+  }
+  return trimTrailingNewline(text)
 }
 
 async function pause(): Promise<void> {
@@ -356,7 +364,7 @@ async function executeCommand(
       operation = ctx.terminals.startSend(owner, id, {
         text: first ? wrapped : '',
         submit: first,
-        stdinWaitAfterOutput: marker.start,
+        stdinWaitAfterOutput: { startLine: marker.start, completionLine: marker.done },
         signal: commandDeadline.signal,
       })
       first = false

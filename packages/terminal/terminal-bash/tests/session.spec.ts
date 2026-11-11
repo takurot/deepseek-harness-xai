@@ -198,6 +198,309 @@ describe('LocalPtySession readiness and output', () => {
     }
   })
 
+  it.each(['before-start', 'after-start'])('retains delivered SIGINT and a fresh prompt between empty followups (%s)', async (when) => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ timeoutMs: 1_000 }))
+    try {
+      await initialize(session, terminal)
+      const frame = { startLine: 'START', completionLine: 'DONE' }
+      const first = await startWrittenSend(session, terminal, { text: 'framed', submit: true, stdinWaitAfterOutput: frame })
+      if (when === 'after-start') terminal.emitData('START\nbody\n')
+      await vi.advanceTimersByTimeAsync(50)
+      expect((await first.done).waitReason).toBe('inferred_idle')
+      await session.signal('SIGINT')
+      expect(terminal.inspector.groups).toEqual([[456, 'SIGINT']])
+      terminal.emitData('\x1b]133;D;130\x07dsh> ')
+      const next = session.startSend({ text: '', submit: false, stdinWaitAfterOutput: { ...frame } })
+      let settled = false
+      void next.done.then(() => { settled = true })
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(true)
+      expect((await next.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('signal between followups cleanup')
+    }
+  })
+
+  it.each(['done-before-start', 'prompt-before-done', 'done-before-prompt', 'split-prompt'])('orders command frames and prompts (%s)', async (order) => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 1_000 }))
+    try {
+      await initialize(session, terminal)
+      const request = { text: 'framed', submit: true, stdinWaitAfterOutput: { startLine: 'START', completionLine: 'DONE' } }
+      const operation = await startWrittenSend(session, terminal, request)
+      let settled = false
+      void operation.done.then(() => { settled = true })
+      if (order === 'done-before-start') terminal.emitData('DONE\r\nSTART\r\n\x1b]133;D;0\x07dsh> ')
+      else if (order === 'prompt-before-done') terminal.emitData('START\r\n\x1b]133;D;0\x07dsh> \r\nDONE\r\n')
+      else terminal.emitData('START\r\nDONE\r\n' + (order === 'done-before-prompt' ? '\x1b]133;D;0\x07dsh> ' : ''))
+      await vi.advanceTimersByTimeAsync(20)
+      if (order !== 'done-before-prompt') {
+        expect(settled).toBe(false)
+        if (order === 'done-before-start') terminal.emitData('\r\nDONE\r\n')
+        terminal.emitData('\x1b]133;D;0\x07dsh> ')
+        await vi.advanceTimersByTimeAsync(10)
+      }
+      expect((await operation.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('frame order cleanup')
+    }
+  })
+
+  it.each([true, false])('requires a known shell group before returning child-group partial output (known=%s)', async (known) => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 1_000 }))
+    try {
+      if (known) await initialize(session, terminal)
+      const request = { text: 'framed', submit: true, stdinWaitAfterOutput: { startLine: 'START', completionLine: 'DONE' } }
+      const operation = await startWrittenSend(session, terminal, request)
+      let settled = false
+      void operation.done.then(() => { settled = true })
+      terminal.emitData('START\nchild input\n')
+      terminal.inspector.pgid = 789
+      terminal.inspector.waiting = true
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(known)
+      if (!known) {
+        terminal.emitData('DONE\n')
+        await vi.advanceTimersByTimeAsync(10)
+      }
+      expect((await operation.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('child group cleanup')
+    }
+  })
+
+  it('accepts same-frame child input readiness already present when an empty followup begins', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ timeoutMs: 1_000 }))
+    try {
+      await initialize(session, terminal)
+      const frame = { startLine: 'START', completionLine: 'DONE' }
+      const first = await startWrittenSend(session, terminal, { text: 'framed', submit: true, stdinWaitAfterOutput: frame })
+      await vi.advanceTimersByTimeAsync(50)
+      expect((await first.done).waitReason).toBe('inferred_idle')
+      terminal.emitData('START\nchild input\n')
+      terminal.inspector.pgid = 789
+      terminal.inspector.waiting = true
+      const next = session.startSend({ text: '', submit: false, stdinWaitAfterOutput: { ...frame } })
+      let settled = false
+      void next.done.then(() => { settled = true })
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(true)
+      expect((await next.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('existing child wait cleanup')
+    }
+  })
+
+  it('requires a new prompt after confirmed SIGINT and does not reuse a previous prompt', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 1_000 }))
+    try {
+      await initialize(session, terminal)
+      const request = { text: 'framed', submit: true, stdinWaitAfterOutput: { startLine: 'START', completionLine: 'DONE' } }
+      const operation = await startWrittenSend(session, terminal, request)
+      let settled = false
+      void operation.done.then(() => { settled = true })
+      terminal.emitData('\x1b]133;D;0\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(false)
+      await session.signal('SIGINT')
+      await vi.advanceTimersByTimeAsync(10)
+      expect(settled).toBe(false)
+      terminal.emitData('\x1b]133;D;130\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(10)
+      expect((await operation.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('fresh signal prompt cleanup')
+    }
+  })
+
+  it('does not grant a prompt escape after failed SIGINT delivery', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 1_000 }))
+    try {
+      await initialize(session, terminal)
+      const request = { text: 'framed', submit: true, stdinWaitAfterOutput: { startLine: 'START', completionLine: 'DONE' } }
+      const operation = await startWrittenSend(session, terminal, request)
+      terminal.inspector.throwGroup = true
+      await expect(session.signal('SIGINT')).rejects.toThrow('group failed')
+      let settled = false
+      void operation.done.then(() => { settled = true })
+      terminal.emitData('\x1b]133;D;130\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(false)
+      terminal.emitData('\nSTART\nDONE\n\x1b]133;D;0\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(10)
+      expect((await operation.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('failed signal cleanup')
+    }
+  })
+
+  it('does not grant a successor frame an old signal that finishes delivery late', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 1_000 }))
+    const delivered = Promise.withResolvers<number>()
+    try {
+      await initialize(session, terminal)
+      const frame = { startLine: 'START', completionLine: 'DONE' }
+      const first = await startWrittenSend(session, terminal, { text: 'first', submit: true, stdinWaitAfterOutput: frame })
+      terminal.signalForeground = async () => await delivered.promise
+      const signal = session.signal('SIGINT')
+      terminal.emitData('START\nDONE\n\x1b]133;D;0\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(20)
+      expect((await first.done).waitReason).toBe('stdin_read')
+      const next = await startWrittenSend(session, terminal, { text: 'next', submit: true, stdinWaitAfterOutput: { ...frame } })
+      delivered.resolve(456)
+      await signal
+      let settled = false
+      void next.done.then(() => { settled = true })
+      terminal.emitData('\x1b]133;D;130\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(false)
+      terminal.emitData('\nSTART\nDONE\n\x1b]133;D;0\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(10)
+      expect((await next.done).waitReason).toBe('stdin_read')
+    } finally {
+      delivered.resolve(456)
+      await session.close('late signal cleanup')
+    }
+  })
+
+  it.each(['cancel', 'abort'])('retains the framed send reservation until confirmed %s delivery', async (method) => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 1_000 }))
+    const delivering = Promise.withResolvers<undefined>()
+    const delivered = Promise.withResolvers<number>()
+    try {
+      await initialize(session, terminal)
+      const controller = new AbortController()
+      const request = {
+        text: 'framed', submit: true, signal: controller.signal,
+        stdinWaitAfterOutput: { startLine: 'START', completionLine: 'DONE' },
+      }
+      const operation = await startWrittenSend(session, terminal, request)
+      let settled = false
+      void operation.done.then(() => { settled = true })
+      terminal.signalForeground = async () => {
+        delivering.resolve(undefined)
+        return await delivered.promise
+      }
+      if (method === 'cancel') expect(operation.cancel()).toBe(true)
+      else controller.abort(new Error('caller canceled'))
+      await delivering.promise
+      terminal.emitData('\x1b]133;D;130\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(false)
+      expect(() => session.startSend({ text: 'successor', submit: true })).toThrow('active send')
+      delivered.resolve(456)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settled).toBe(true)
+      expect((await operation.done).waitReason).toBe('stdin_read')
+    } finally {
+      delivered.resolve(456)
+      await session.close('framed cancellation cleanup')
+    }
+  })
+
+  it.each(['pending-start', 'pending-completion', 'completed'])('retains %s framing across clipped idle continuations', async (phase) => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ timeoutMs: 1_000 }))
+    try {
+      await initialize(session, terminal)
+      const frame = { startLine: 'START', completionLine: 'DONE' }
+      const first = await startWrittenSend(session, terminal, { text: 'framed', submit: true, stdinWaitAfterOutput: frame })
+      terminal.emitData(phase === 'pending-start' ? 'STA' : phase === 'pending-completion' ? 'START\nDO' : `START\nDONE\n${'x'.repeat(300)}`)
+      await vi.advanceTimersByTimeAsync(50)
+      expect((await first.done).waitReason).toBe('inferred_idle')
+      if (phase === 'completed') {
+        expect(first.readOutput().delta).not.toContain('DONE')
+        expect(session.read({}).text).not.toContain('DONE')
+      }
+      terminal.inspector.waiting = true
+      const next = session.startSend({ text: '', submit: false, stdinWaitAfterOutput: { ...frame } })
+      if (phase === 'pending-start') terminal.emitData('RT\nDONE\n')
+      if (phase === 'pending-completion') terminal.emitData('NE\n')
+      await vi.advanceTimersByTimeAsync(20)
+      expect((await next.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('retained frame cleanup')
+    }
+  })
+
+  it.each(['new-text', 'submit', 'changed-start', 'changed-completion', 'absent', 'string'])(
+    'clears completed and interrupted frame evidence after %s', async (reset) => {
+      vi.useFakeTimers()
+      const terminal = new FakeTerminal()
+      const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 1_000 }))
+      try {
+        await initialize(session, terminal)
+        const frame = { startLine: 'START', completionLine: 'DONE' }
+        const first = await startWrittenSend(session, terminal, { text: 'first', submit: true, stdinWaitAfterOutput: frame })
+        terminal.emitData('START\nDONE\n')
+        await session.signal('SIGINT')
+        terminal.emitData('\x1b]133;D;130\x07dsh> ')
+        await vi.advanceTimersByTimeAsync(20)
+        expect((await first.done).waitReason).toBe('stdin_read')
+        if (reset === 'absent' || reset === 'string') {
+          const between = session.startSend({
+            text: '', submit: false, ...reset === 'string' ? { stdinWaitAfterOutput: 'START' } : {},
+          })
+          terminal.emitData('\x1b]133;D;0\x07dsh> ')
+          await vi.advanceTimersByTimeAsync(20)
+          expect((await between.done).waitReason).toBe('stdin_read')
+        }
+        const nextFrame = {
+          startLine: reset === 'changed-start' ? 'NEXT_START' : frame.startLine,
+          completionLine: reset === 'changed-completion' ? 'NEXT_DONE' : frame.completionLine,
+        }
+        const request = {
+          text: reset === 'new-text' ? 'next' : '', submit: reset === 'submit', stdinWaitAfterOutput: nextFrame,
+        }
+        const next = request.text.length > 0 || request.submit
+          ? await startWrittenSend(session, terminal, request) : session.startSend(request)
+        let settled = false
+        void next.done.then(() => { settled = true })
+        terminal.emitData('\x1b]133;D;0\x07dsh> ')
+        await vi.advanceTimersByTimeAsync(20)
+        expect(settled).toBe(false)
+        terminal.emitData(`\n${nextFrame.startLine}\n${nextFrame.completionLine}\n\x1b]133;D;0\x07dsh> `)
+        await vi.advanceTimersByTimeAsync(10)
+        expect((await next.done).waitReason).toBe('stdin_read')
+      } finally {
+        await session.close('frame reset cleanup')
+      }
+    },
+  )
+
+  it('keeps a same-shell interactive wait incomplete until its deadline', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 100 }))
+    try {
+      await initialize(session, terminal)
+      const request = { text: 'Read-Host', submit: true, stdinWaitAfterOutput: { startLine: 'START', completionLine: 'DONE' } }
+      const operation = await startWrittenSend(session, terminal, request)
+      terminal.emitData('START\nEnter value: ')
+      terminal.inspector.waiting = true
+      await vi.advanceTimersByTimeAsync(100)
+      expect((await operation.done).waitReason).toBe('timeout')
+    } finally {
+      await session.close('same-shell interactive cleanup')
+    }
+  })
+
   it.each(['before-start', 'after-start'])('rejects a previous prompt %s until the current footer', async (when) => {
     vi.useFakeTimers()
     const terminal = new FakeTerminal()

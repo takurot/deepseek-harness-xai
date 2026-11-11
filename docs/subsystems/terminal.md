@@ -60,7 +60,11 @@ interface TerminalBackendSession {
 
 One live session accepts one active send. Its operation exposes a consuming output cursor for generic background jobs and one terminal result for a foreground caller. `TerminalReadResult` separately pages the bounded session scrollback.
 
-`TerminalSendRequest.stdinWaitAfterOutput` optionally requires a complete sanitized output line, excluding line breaks, before native stdin-wait readiness can settle a send. Empty, unsubmitted follow-ups with the same line retain acceptance even after retained output drops the line. New input, submission, or a changed or omitted line clears that evidence. A verified controlled prompt can settle before the required line arrives.
+`TerminalSendRequest.stdinWaitAfterOutput` accepts a string or `{ startLine, completionLine }`. Each value names a complete sanitized output line without line breaks. The string form requires its line before native stdin-wait readiness; a verified controlled prompt remains sufficient without it.
+
+The object form requires its start line followed by its completion line before a wait in the shell process group or an ordinary controlled prompt can settle. After the start line, proven native input waiting in a different process group can settle early; an unknown shell process group cannot prove that distinction. A successfully delivered `SIGINT` permits a controlled prompt before completion only for the same retained command. Completion plus native readiness does not require a controlled prompt.
+
+Empty, unsubmitted follow-ups with equivalent values retain observed lines and confirmed signals across output consumption, clipping, and inferred idle. The structured form measures exact-probe age from the frame's input, rather than restarting it for each empty continuation. New input, submission, changed values or variant, or omission clears that evidence. Signal delivery that finishes after this reset cannot authorize the successor.
 
 ```ts type-equiv
 /** Live backend-owned send; exactly one may be active per PTY session. */

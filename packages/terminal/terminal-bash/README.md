@@ -65,7 +65,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 Both dialects expose the same readiness contract, so consumers are dialect-agnostic. A send settles when the shell is ready again: after the controlled prompt is verified, after the foreground process group provably waits on stdin (Linux), after output silence (`inferred_idle`), or at the absolute `timeoutMs`. A prompt marker whose printable tail has not arrived yet holds the send on the exact path for `promptTailGraceMs` beyond `idleSilenceMs + handoffGraceMs`, because the marker and its tail are written by the same prompt render. An `inferred_idle` or `timeout` result does not prove the foreground command exited.
 
-A send can require a complete sanitized output line before native stdin-wait evidence is accepted through [`stdinWaitAfterOutput`](../../../docs/subsystems/terminal.md). A verified controlled prompt can settle the send before that line arrives.
+A send can use [`stdinWaitAfterOutput`](../../../docs/subsystems/terminal.md) as a string to gate native stdin-wait evidence on one output line, or as an object to distinguish command start and completion. The object form also guards controlled prompts against delayed output from a previous command. The reference defines foreground-group and confirmed-signal exceptions.
 
 ### Sandboxing and safe operation
 
