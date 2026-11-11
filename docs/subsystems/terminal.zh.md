@@ -60,6 +60,8 @@ interface TerminalBackendSession {
 
 一个活跃会话同时只接受一个活动发送。该操作向通用后台任务提供读取后即推进的输出游标，并向前台调用方提供最终结果。`TerminalReadResult` 则为有界的会话 scrollback 单独分页。
 
+`TerminalSendRequest.stdinWaitAfterOutput` 可选地要求先出现一行完整的清理后输出（不含换行符），再由原生 stdin 等待就绪结算发送。携带相同行条件、不提交且文本为空的后续发送保留接受状态，即使输出保留区已经丢弃该行。新输入、提交、更改或省略行条件会清除该证据。已验证的受控提示符可以在所需行到达前结算。
+
 ```ts type-equiv
 /** Live backend-owned send; exactly one may be active per PTY session. */
 interface TerminalSendOperation {

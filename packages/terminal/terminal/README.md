@@ -47,6 +47,8 @@ A backend provides one stable type — the shipped shell backend provides `shell
 
 Once a session exists, consumers can open a session and receive its id and bounded startup output, send text (optionally submitting Enter) and wait until the shell is ready again or the send times out, read bounded retained output, deliver one allowed signal to the foreground process group, close a session and wait for its process tree to end, and list the sessions a caller owns. Exactly one send can be active per session at a time; a second send fails until the first settles.
 
+Consumers can require a complete output line with `stdinWaitAfterOutput` before the backend accepts native stdin-wait readiness. The [send reference](../../../docs/subsystems/terminal.md) defines the continuation and reset rules.
+
 ### Ownership and isolation
 
 Every session is owned by the exact agent that opened it. Operations that name a session are rejected when the caller is not that agent, so the model cannot reach another agent's terminal even if it learns the id. An optional session `name` is owner-local display metadata — labels such as `main` or `gdb` — and is unique only within its owner.

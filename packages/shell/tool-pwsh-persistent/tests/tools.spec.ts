@@ -141,7 +141,7 @@ class StubTerminalSession implements TerminalBackendSession {
           const start = START_PATTERN.exec(request.text)?.[0]
           const end = END_PATTERN.exec(request.text)?.[0]
           const output = this.mode === 'end-on-abort'
-            ? `${start ?? ''}\ninterrupted\n${end ?? ''}130\n${this.motd}`
+            ? `\n${start ?? ''}\ninterrupted\n${end ?? ''}130\n${this.motd}`
             : 'partial output'
           this.scrollback += output
           resolve(this.result(output, 'stdin_read'))
@@ -157,7 +157,7 @@ class StubTerminalSession implements TerminalBackendSession {
     if (this.mode === 'prompt-after-idle') {
       if (request.text.length > 0) {
         const start = START_PATTERN.exec(request.text)?.[0]
-        const output = `${start ?? ''}\npartial syntax output\n`
+        const output = `\n${start ?? ''}\npartial syntax output\n`
         this.scrollback += output
         return this.operation(Promise.resolve(this.result(output, 'inferred_idle')))
       }
@@ -200,11 +200,11 @@ class StubTerminalSession implements TerminalBackendSession {
       return this.operation(Promise.resolve(settled))
     }
     if (this.mode === 'incremental-fallback') {
-      const incremental = `${start ?? ''}\nincrement\n${this.motd}`
+      const incremental = `\n${start ?? ''}\nincrement\n${this.motd}`
       return this.operation(Promise.resolve(this.result(this.motd, 'stdin_read')), incremental)
     }
     if (this.mode === 'status-tail' || this.mode === 'continue-status-tail') {
-      const prefix = this.mode === 'status-tail' ? `${start ?? ''}\nkept  \ndsh> \n${end ?? ''}` : ''
+      const prefix = this.mode === 'status-tail' ? `\n${start ?? ''}\nkept  \ndsh> \n${end ?? ''}` : ''
       const fragment = this.statusChunks.shift()
       if (fragment === undefined) throw new Error('missing scripted completion fragment')
       const output = prefix + fragment
@@ -213,7 +213,7 @@ class StubTerminalSession implements TerminalBackendSession {
       return this.operation(Promise.resolve(this.result(output, 'inferred_idle')))
     }
     if (this.mode === 'torn-status') {
-      const output = `${start ?? ''}\nhello from stub\n${end ?? ''}`
+      const output = `\n${start ?? ''}\nhello from stub\n${end ?? ''}`
       this.scrollback += output
       this.mode = 'finish-torn-status'
       return this.operation(Promise.resolve(this.result(output, 'inferred_idle')))
@@ -234,10 +234,10 @@ class StubTerminalSession implements TerminalBackendSession {
         : this.mode === 'prompt-collision' ? this.motd
           : 'hello from stub'
     const exitCode = this.mode === 'nonzero' ? 7 : 0
-    const output = `${start ?? ''}\n${commandOutput}\n${end ?? ''}${exitCode}\n${this.motd}`
+    const output = `\n${start ?? ''}\n${commandOutput}\n${end ?? ''}${exitCode}\n${this.motd}`
     this.scrollback += output
     if (this.mode === 'exit' || this.mode === 'signal-exit' || this.mode === 'unknown-exit') {
-      const exitedOutput = `${start ?? ''}\nhello from stub\n`
+      const exitedOutput = `\n${start ?? ''}\nhello from stub\n`
       this.scrollback = this.scrollback.slice(0, -output.length) + exitedOutput
       this.statusValue = this.mode === 'signal-exit'
         ? { kind: 'exited', exitCode: null, signal: 'SIGTERM' }

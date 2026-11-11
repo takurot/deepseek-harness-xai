@@ -31,7 +31,7 @@ Load this plugin in any composition where the agent should keep PowerShell state
 
 ### When to choose it
 
-Choose the persistent tool when work depends on cross-call PowerShell state, and choose `dsh-tool-pwsh` when every command should start from a known, clean environment. Commands that need interactive stdin are unsupported here — a foreground child that reads input blocks until the command timeout, which resets the shell — so interactive work belongs to the terminal tools.
+Choose the persistent tool when work depends on cross-call PowerShell state, and choose `dsh-tool-pwsh` when every command should start from a known, clean environment. Use the terminal tools for interactive stdin. A foreground child with proven stdin-wait readiness can return partial output while retaining the shell. A command that reaches its timeout resets the shell.
 
 ### Minimal configuration
 
@@ -56,7 +56,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### What the agent can rely on
 
-Commands share one shell per agent, so cwd, `$env:` variables, functions, and background jobs persist across calls. Results exclude the private completion markers and the echoed input line. When the shell reads stdin again without having printed the completion marker — an interrupt, a replaced shell, or an interactive foreground child whose stdin wait the provider proves — the call returns the captured partial output, which can end with the backend's own prompt text. A non-zero wrapped command appends `[exit code: N]` — the exact native exit code when the command ran a native program, `1` for a terminating PowerShell error. A shell that exits before reporting that status instead appends `[shell exited: code N]`, `[shell killed by signal: SIG]`, or `[shell exited]` (Windows forced termination reports exit 1 without a signal), then resets and tells the agent the next call starts fresh. Long output keeps the earliest retained prefix plus a clipping notice; if the terminal has already dropped that prefix, the result says so explicitly.
+Commands share one shell per agent, so cwd, `$env:` variables, functions, and background jobs persist across calls. Results exclude the private completion markers and the echoed input line. Native stdin-wait readiness requires the command's standalone emitted start line. When the shell reads stdin again without having printed the completion marker — an interrupt, a replaced shell, or an interactive foreground child whose stdin wait the provider proves — the call returns the captured partial output, which can end with the backend's own prompt text. A non-zero wrapped command appends `[exit code: N]` — the exact native exit code when the command ran a native program, `1` for a terminating PowerShell error. A shell that exits before reporting that status instead appends `[shell exited: code N]`, `[shell killed by signal: SIG]`, or `[shell exited]` (Windows forced termination reports exit 1 without a signal), then resets and tells the agent the next call starts fresh. Long output keeps the earliest retained prefix plus a clipping notice; if the terminal has already dropped that prefix, the result says so explicitly.
 
 ### What can go wrong
 
@@ -88,7 +88,7 @@ This section explains the design decisions behind the tool and points at the cod
 
 ### Command flow
 
-A first command spawns the shell through `ctx.terminals.spawn`, whose pwsh startup installs the controlled `prompt` function and returns only once the shell reached readiness. Each command is wrapped into one physical line — `Write-Output` of the start marker, the body escaped with backtick escapes into a double-quoted string, and `Write-Output` of the end marker plus the exit status — so PSReadLine's echo of a wrapped line cannot fabricate completion. The parser accepts ASCII-space padding after the status digits but still requires LF or CRLF. Spaces in command output remain unchanged. The tool polls the scrollback in 1,000-line pages until a complete end-marker status line is available or the send settles as `stdin_read`, extracts the span, strips the echoed wrapper, and renders it with any status marker. A timeout aborts the deadline, captures the partial output, and resets the shell.
+A first command spawns the shell through `ctx.terminals.spawn`, whose pwsh startup installs the controlled `prompt` function and returns only once the shell reached readiness. Each command is wrapped into one physical line. It emits an empty line and a standalone start marker, runs the body escaped with backtick escapes in a double-quoted string, then emits the end marker and exit status. The tool passes the start line as `stdinWaitAfterOutput` on every poll and extracts output after the emitted line. The parser accepts ASCII-space padding after the status digits but still requires LF or CRLF. Spaces in command output remain unchanged. The tool polls the scrollback in 1,000-line pages until a complete end-marker status line is available or the send settles as `stdin_read`, extracts the span, strips the echoed wrapper, and renders it with any status marker. A timeout aborts the deadline, captures the partial output, and resets the shell.
 
 </details>
 

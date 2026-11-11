@@ -228,6 +228,70 @@ describe('LocalPtySession readiness and output', () => {
     }
   })
 
+  it('retains an unfinished required line across an empty idle continuation', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ timeoutMs: 1_000 }))
+    try {
+      await initialize(session, terminal)
+      const request = { text: 'read-command', submit: true, stdinWaitAfterOutput: 'START' }
+      const first = await startWrittenSend(session, terminal, request)
+      terminal.emitData('STA')
+      await vi.advanceTimersByTimeAsync(50)
+      expect((await first.done).waitReason).toBe('inferred_idle')
+
+      const followup = session.startSend({ ...request, text: '', submit: false })
+      await vi.advanceTimersByTimeAsync(0)
+      terminal.inspector.pgid = 789
+      terminal.inspector.waiting = true
+      terminal.emitData('RT\n')
+      await vi.advanceTimersByTimeAsync(20)
+      expect((await followup.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('split continuation cleanup')
+    }
+  })
+
+  it('discards required output received before the provider write', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ timeoutMs: 1_000, idleSilenceMs: 500 }))
+    try {
+      await initialize(session, terminal)
+      const inspecting = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      const written = Promise.withResolvers<undefined>()
+      const inspect = terminal.inspectForeground.bind(terminal)
+      terminal.inspectForeground = async () => {
+        inspecting.resolve(undefined)
+        await release.promise
+        return await inspect()
+      }
+      terminal.write = async (data) => {
+        terminal.writes.push(data)
+        written.resolve(undefined)
+      }
+      const request = { text: 'read-command', submit: true, stdinWaitAfterOutput: 'START' }
+      const operation = session.startSend(request)
+      let settled = false
+      void operation.done.then(() => { settled = true })
+      await inspecting.promise
+      terminal.emitData('START\n')
+      release.resolve(undefined)
+      await vi.advanceTimersByTimeAsync(0)
+      await written.promise
+      terminal.inspector.pgid = 789
+      terminal.inspector.waiting = true
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(false)
+      terminal.emitData('START\n')
+      await vi.advanceTimersByTimeAsync(10)
+      expect((await operation.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('prewrite acceptance cleanup')
+    }
+  })
+
   it('accepts a fresh controlled prompt after a raw foreground interrupt before START', async () => {
     vi.useFakeTimers()
     const terminal = new FakeTerminal()
