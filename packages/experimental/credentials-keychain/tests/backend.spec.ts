@@ -27,7 +27,7 @@ function macStore() {
       items.set(request.account, request.secret!)
       return result(0, '{"status":0}')
     }
-    if (args[0] === 'find-generic-password') return items.has(args[4]!) ? result(0, items.get(args[4]!)!) : result(44)
+    if (args[0] === 'find-generic-password') return items.has(args[4]!) ? result(0, items.get(args[4]!)) : result(44)
     if (Buffer.byteLength(stdin!) > 4096) return { ...result(1), stderr: 'interactive input exceeds 4096 bytes' }
     items.delete(stdin!.trim().split(' ').at(-1)!)
     return result(0)
@@ -91,7 +91,8 @@ describe('macosBackend', () => {
       store.items.set('v2:a', Buffer.from('new').toString('base64'))
       let failed = false
       const run: KeychainCommandRunner = async (command, args, stdin) => {
-        if (!failed && (phase === 'legacy' ? command === 'security' && args[0] === '-i' : command === '/usr/bin/osascript' && JSON.parse(stdin!).operation === 'delete')) {
+        const request = command === '/usr/bin/osascript' ? JSON.parse(stdin!) as { operation: string } : undefined
+        if (!failed && (phase === 'legacy' ? command === 'security' && args[0] === '-i' : request?.operation === 'delete')) {
           failed = true
           return phase === 'legacy' ? { code: 2, stdout: '', stderr: 'denied' } : { code: 0, stdout: '{"status":-25293}', stderr: '' }
         }
