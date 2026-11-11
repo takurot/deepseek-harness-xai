@@ -15,6 +15,8 @@ packages:
   - python/sdk-runtime
 
 overrides:
+  '@deepseek-ai/libreoffice-kit@0.1.5>fflate': '0.8.3'
+  '@browserbasehq/stagehand@4.1.0>zod': '4.6.7'
   '@botiverse/oar@0.67.0>undici': '8.12.4'
   '@earendil-works/pi-coding-agent@1.3.0>undici': '8.12.4'
   '@electron/get@5.1.0>undici': '7.30.1'

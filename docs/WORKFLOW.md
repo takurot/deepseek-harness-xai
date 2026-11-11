@@ -90,6 +90,10 @@ The Git hooks in [lefthook.yml](../lefthook.yml) are a fast local checkpoint, no
 
 State only the commands you ran. A check you could not run is not a pass; report it with the reason.
 
+The required fork CI dependency audit runs `pnpm run dependency-audit`. It retains raw JSON, stderr, the subprocess status, and a versioned classified report under `temp/dependency-audit/`, including on failure. Every production advisory needs an exact package, version, importer, resolved chain, advisory ID, and unexpired exception in `scripts/dependency-audit-exceptions.json`; registry errors and incomplete input fail the job and required aggregate. Before delivery, verify each exception's follow-up Issue remains open and renew its recorded source review when caller options or embedded code change.
+
+CLI, Desktop, and Python categories describe resolved dependency membership, including optional platforms. Python deployment validation checks mandatory peers for the default profiles and checks shipped presets. The audit includes the launcher opt-in bundle paths. Shared findings can appear in several categories, so their counts are non-additive. Nonmember test-support, experimental runtime, and other tooling importers remain distinct. Membership does not establish exploitability or emitted bundle contents; imported APIs, input control, limits, and embedded implementations need separate evidence.
+
 ## Security and secrets
 
 - Never commit credentials. Real-API tests read `DEEPSEEK_API_KEY` and the root `.env`; [AGENTS.md](../AGENTS.md#secrets--env) defines the policy.

@@ -3,14 +3,18 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { loadCordisYaml } from './cordis-yaml.ts'
-import { verifyRuntimeClosure } from './verify-runtime-closure.ts'
+import { collectRuntimeClosure, verifyRuntimeClosure } from './verify-runtime-closure.ts'
 
 const roots: string[] = []
 
 function fixture(files: Record<string, string | Record<string, unknown>>): string {
   const root = mkdtempSync(join(tmpdir(), 'dsh-runtime-closure-'))
   roots.push(root)
-  for (const [relative, value] of Object.entries(files)) {
+  for (const [relative, value] of Object.entries({
+    'package.json': { name: 'fixture-root' },
+    'pnpm-workspace.yaml': 'packages: ["packages/*/*", "apps/*", "native/system", "native/system/packages/*", "python/sdk-runtime", "!packages/core/excluded"]\n',
+    ...files,
+  })) {
     const preset = /^preset:(.+)$/.exec(relative)
     const path = join(root, preset === null ? relative : `packages/bundle/web-app/presets/${preset[1]}.patch.yml`)
     mkdirSync(dirname(path), { recursive: true })
@@ -39,6 +43,89 @@ afterEach(() => {
 })
 
 describe('verifyRuntimeClosure', () => {
+  it('follows declared apps, native children and root optionals once, excluding dev and excluded members', async () => {
+    const root = fixture({
+      'apps/carrier/package.json': { name: 'carrier', dependencies: { cli: 'workspace:*' }, optionalDependencies: { native: 'workspace:*' }, devDependencies: { dev: 'workspace:*' } },
+      'apps/cli/package.json': { name: 'cli', dependencies: { leaf: 'workspace:*', excluded: 'workspace:*' } },
+      'packages/core/leaf/package.json': { name: 'leaf', dependencies: { cli: 'workspace:*' } },
+      'native/system/package.json': { name: 'native', optionalDependencies: { platform: 'workspace:*' } },
+      'native/system/packages/platform/package.json': { name: 'platform' },
+      'packages/core/dev/package.json': { name: 'dev' },
+      'packages/core/excluded/package.json': { name: 'excluded' },
+    })
+    expect(await verifyRuntimeClosure(root, 'apps/carrier/package.json', false)).toEqual({
+      failures: [], presetCount: 0, workspacePackageCount: 4,
+      workspacePackages: [
+        { name: 'cli', manifestPath: 'apps/cli/package.json' },
+        { name: 'leaf', manifestPath: 'packages/core/leaf/package.json' },
+        { name: 'native', manifestPath: 'native/system/package.json' },
+        { name: 'platform', manifestPath: 'native/system/packages/platform/package.json' },
+      ],
+    })
+  })
+
+  it('reports membership without claiming root-direct peers are supplied', async () => {
+    const root = fixture({
+      'apps/carrier/package.json': { name: 'carrier', dependencies: { '@scope/child': 'workspace:*' } },
+    })
+    workspace(root, '@scope/child', { dependencies: { '@scope/peer': 'workspace:*' }, peerDependencies: { '@scope/peer': 'workspace:*' } })
+    workspace(root, '@scope/peer', {})
+    expect(await collectRuntimeClosure(root, 'apps/carrier/package.json')).toEqual({
+      workspacePackages: [
+        { name: '@scope/child', manifestPath: 'packages/core/child/package.json' },
+        { name: '@scope/peer', manifestPath: 'packages/core/peer/package.json' },
+      ],
+      requiredWorkspacePeers: [{ name: '@scope/peer', chain: 'carrier -> @scope/child -> @scope/peer' }],
+    })
+    expect((await verifyRuntimeClosure(root, 'apps/carrier/package.json', false)).failures)
+      .toEqual(['carrier -> @scope/child -> @scope/peer'])
+  })
+
+  it('counts optional root members without satisfying required deployment dependencies', async () => {
+    const manifestPath = 'python/sdk-runtime/package.json'
+    const root = fixture({
+      [manifestPath]: {
+        name: 'runtime', dependencies: { '@scope/child': 'workspace:*' },
+        optionalDependencies: { '@scope/peer': 'workspace:*' },
+      },
+      'python/sdk-runtime/platforms.json': platforms,
+      'preset:standard': "- name: '@scope/peer'",
+    })
+    workspace(root, '@scope/child', { peerDependencies: { '@scope/peer': 'workspace:*' } })
+    workspace(root, '@scope/peer', {})
+    const result = await verifyRuntimeClosure(root, manifestPath)
+    expect(result.workspacePackages.map(member => member.name)).toEqual(['@scope/child', '@scope/peer'])
+    expect(result.failures).toEqual([
+      'standard preset -> @scope/peer (linux-arm64, linux-x64, macos-arm64, macos-x64, win-x64)',
+      'runtime -> @scope/child -> @scope/peer',
+    ])
+  })
+
+  it('keeps launcher opt-ins in membership and checks peers reached by a required path', async () => {
+    const cli = '@deepseek-ai/dsh'
+    const bundle = '@deepseek-ai/dsh-experimental-forge-bundle'
+    const manifestPath = 'python/sdk-runtime/package.json'
+    const root = fixture({
+      [manifestPath]: { name: 'runtime', dependencies: { [cli]: 'workspace:*' } },
+      'apps/cli/package.json': { name: cli, dependencies: { [bundle]: 'workspace:*' } },
+      'packages/experimental/forge-bundle/package.json': { name: bundle, peerDependencies: { '@scope/peer': 'workspace:*' } },
+      'python/sdk-runtime/platforms.json': platforms,
+      'preset:standard': `- name: '${cli}'`,
+    })
+    workspace(root, '@scope/peer', {})
+
+    expect((await collectRuntimeClosure(root, manifestPath)).workspacePackages.map(member => member.name))
+      .toEqual([cli, bundle])
+    expect((await verifyRuntimeClosure(root, manifestPath)).failures).toEqual([])
+
+    workspace(root, '@scope/required', { dependencies: { [bundle]: 'workspace:*' } })
+    writeFileSync(join(root, manifestPath), JSON.stringify({
+      name: 'runtime', dependencies: { [cli]: 'workspace:*', '@scope/required': 'workspace:*' },
+    }))
+    expect((await verifyRuntimeClosure(root, manifestPath)).failures)
+      .toEqual([`runtime -> @scope/required -> ${bundle} -> @scope/peer`])
+  })
+
   it('checks a private worker closure without requiring application presets', async () => {
     const manifestPath = 'packages/ssh/ssh-helper-runtime/package.json'
     const root = fixture({ [manifestPath]: { name: 'helper', dependencies: { '@scope/worker': 'workspace:^' } } })

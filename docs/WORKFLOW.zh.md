@@ -90,6 +90,10 @@ git switch -c <type>/<short-description>
 
 只陈述你实际运行过的命令。未能运行的检查不算通过；请连同原因一并报告。
 
+必需的 fork CI 依赖审计运行 `pnpm run dependency-audit`。它在 `temp/dependency-audit/` 下保留原始 JSON、stderr、子进程状态和带版本的分类报告，失败时也会保留。每条生产依赖公告都必须在 `scripts/dependency-audit-exceptions.json` 中有精确限定包、版本、importer、已解析依赖链、公告 ID 且未到期的例外；注册表错误和不完整输入会使该任务及必需的汇总任务失败。交付前，核实每个例外的后续 Issue 仍处于打开状态，并在调用选项或内嵌代码改变时重新记录源码审查。
+
+CLI（命令行界面）、Desktop 和 Python 分类表示已解析的依赖归属，包括可选平台。 Python 部署校验检查默认配置的必需 peer 和随附的 preset。审计包含启动器的可选 bundle 路径。同一发现可出现在多个分类中，因此分类计数不能相加。不属于这些分发产物的 test-support、实验运行时和其他工具 importer 分别列出。依赖归属不能证明可利用性或构建产物的实际内容；导入 API、输入控制者、现有限制和内嵌实现需要单独的证据。
+
 ## 安全与密钥
 
 - 绝不提交凭据。真实 API 测试读取 `DEEPSEEK_API_KEY` 和根目录的 `.env`；策略见 [AGENTS.md](../AGENTS.md#secrets--env)。
