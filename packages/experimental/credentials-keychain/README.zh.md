@@ -54,7 +54,7 @@ macOS 通过系统 `osascript` JavaScript 桥接调用 Security API 写入，并
 
 每个引用是一个钥匙串条目，账户为 `ref:<NAME>`；每条记录是一个条目，账户为 `record:<scope>/<id>`，内容为其 JSON。账户为 `index` 的条目列出记录键，因为平台工具无法按服务枚举条目。机密值通过 stdin 或 stdout 传给工具，绝不经过参数向量——同一用户的其他进程可以通过 `ps` 读取参数向量。macOS 写入通过 stdin 向 Security API 传递 JSON，保留长 grant、Unicode、引号、换行和末尾空格，不受交互式输入行长度限制。base64 存储与已有条目兼容。新条目信任 `/usr/bin/osascript` 和 `/usr/bin/security`；更新保留已有访问设置。写入失败时不报告辅助程序输出。
 
-`backend.ts` 包含两个平台后端，建立在可注入的命令运行器之上；`index.ts` 包含 `Config`、分层、记录校验与写入队列。写入在本进程内逐个执行，因此 `modifyRecord` 的读-决定-替换在本进程内互斥，但跨进程不互斥。只有本提供方自己的写入会发出 `credentials/reference-updated` 与 `credentials/record-updated`，且发生在钥匙串接受写入之后。
+`backend.ts` 包含两个平台后端，建立在可注入的命令运行器之上；`index.ts` 包含 `Config`、分层、记录校验与写入队列。记录操作在本进程内逐个执行。`record-transaction-v1` 条目在修改记录和索引之前保存完整替换内容及目标索引；启动和后续记录操作先完成中断的事务，再读取或修改记录。损坏或不一致的事务会停止记录操作，不会覆盖已存条目。目前尚未提供跨进程互斥。只有本提供方的写入和完成的修复会发出 `credentials/reference-updated` 与 `credentials/record-updated`。记录通知发生在记录、索引更新及 journal 删除之后；删除之后的进程崩溃可能丢失通知。记录提交或修复失败抛出 `KeychainCommitError`（`code: KEYCHAIN_COMMIT_UNKNOWN`、`outcome: unknown`），不保证存储未改变。重新打开提供方尝试恢复，然后检查凭据再重试；不会自动重试 mutation 回调。旧版本无法恢复待处理的 journal：降级或通过旧进程访问同一服务前须完成恢复。
 
 | 文件 | 作用 |
 |---|---|

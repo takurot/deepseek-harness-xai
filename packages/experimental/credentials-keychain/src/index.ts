@@ -47,6 +47,30 @@ const SERVICE_PATTERN = /^[A-Za-z0-9._-]+$/
 /** Account of the item listing every stored record key. */
 const INDEX_ACCOUNT = 'index'
 
+/** A record transaction failed with an unknown stored outcome; inspect after recovery before retrying. */
+export class KeychainCommitError extends Error {
+  /** Stable code for a commit or repair whose backend outcome is unknown. */
+  readonly code = 'KEYCHAIN_COMMIT_UNKNOWN'
+  /** Storage may already contain the replacement; inspect after attempting recovery. */
+  readonly outcome = 'unknown'
+
+  constructor() {
+    super('credentials-keychain: record commit outcome is unknown; reopen the provider to attempt recovery, then inspect the credential before retrying')
+    this.name = 'KeychainCommitError'
+  }
+}
+
+/** Pending record replacement and complete target index, stored in the OS secret store. */
+interface RecordIntent {
+  version: 1
+  key: CredentialKey
+  record: string | null
+  keys: CredentialKey[]
+}
+
+/** One transaction at a time; concurrent processes require the service-wide lock. */
+const JOURNAL_ACCOUNT = 'record-transaction-v1'
+
 /** Plugin config. */
 export interface Config {
   /** Keychain service name shared by every item; defaults to `dsh`. */
@@ -160,7 +184,10 @@ export class KeychainCredentialProvider extends CredentialProvider {
       await this.operations
     }
     // Reading the index proves the store is reachable before any consumer resolves a key.
-    await this.readIndex()
+    await this.enqueue(async () => {
+      await this.recoverRecords()
+      await this.readIndex()
+    })
   }
 
   /* jscpd:ignore-start -- Mirrors credentials-local; a shared credentials helper would replace both. */
@@ -218,7 +245,11 @@ export class KeychainCredentialProvider extends CredentialProvider {
     })
   }
 
-  override async readRecord(key: CredentialKey): Promise<CredentialRecord | undefined> {
+  override readRecord(key: CredentialKey): Promise<CredentialRecord | undefined> {
+    return this.recordOperation(() => this.readStoredRecord(key))
+  }
+
+  private async readStoredRecord(key: CredentialKey): Promise<CredentialRecord | undefined> {
     const text = await this.backend.get(recordAccount(key))
     return text === undefined ? undefined : parseRecord(key, text)
   }
@@ -229,38 +260,100 @@ export class KeychainCredentialProvider extends CredentialProvider {
     return { configured: true, kind: record.kind, writable: true }
   }
 
-  override async listRecords(): Promise<readonly CredentialRecordEntry[]> {
-    const entries: CredentialRecordEntry[] = []
-    for (const key of await this.readIndex()) {
-      const record = await this.readRecord(key)
-      if (record !== undefined) entries.push({ key, kind: record.kind })
-    }
-    return entries
+  override listRecords(): Promise<readonly CredentialRecordEntry[]> {
+    return this.recordOperation(async () => {
+      const entries: CredentialRecordEntry[] = []
+      for (const key of await this.readIndex()) {
+        const record = await this.readStoredRecord(key)
+        if (record !== undefined) entries.push({ key, kind: record.kind })
+      }
+      return entries
+    })
   }
 
   override modifyRecord(
     key: CredentialKey,
     mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
   ): Promise<CredentialRecord | undefined> {
-    return this.enqueue(async () => {
-      const current = await this.readRecord(key)
+    return this.recordOperation(async () => {
+      const current = await this.readStoredRecord(key)
       const next = await mutate(current)
       if (next === undefined) return current
       assertStorable(key, next)
-      await this.backend.set(recordAccount(key), JSON.stringify(next))
-      await this.indexAdd(key)
-      this.notifyRecordUpdated(key)
+      const keys = await this.readIndex()
+      await this.commitRecord({ version: 1, key, record: JSON.stringify(next), keys: keys.includes(key) ? keys : [...keys, key] })
       return next
     })
   }
 
-  override async deleteRecord(key: CredentialKey): Promise<void> {
-    await this.enqueue(async () => {
-      if (await this.backend.get(recordAccount(key)) === undefined) return
-      await this.backend.delete(recordAccount(key))
-      await this.indexRemove(key)
-      this.notifyRecordUpdated(key)
+  override deleteRecord(key: CredentialKey): Promise<void> {
+    return this.recordOperation(async () => {
+      const keys = await this.readIndex()
+      if (await this.backend.get(recordAccount(key)) === undefined && !keys.includes(key)) return
+      await this.commitRecord({ version: 1, key, record: null, keys: keys.filter(candidate => candidate !== key) })
     })
+  }
+
+  private recordOperation<T>(operation: () => Promise<T>): Promise<T> {
+    return this.enqueue(async () => {
+      await this.recoverRecords()
+      return operation()
+    })
+  }
+
+  /** Retain the intent until every item agrees; an error may occur after its store effect. */
+  private async commitRecord(intent: RecordIntent): Promise<void> {
+    try {
+      await this.backend.set(JOURNAL_ACCOUNT, JSON.stringify(intent))
+      await this.applyRecord(intent)
+    } catch (_error) {
+      // Backend errors may contain secret output and do not establish whether the operation took effect.
+      throw new KeychainCommitError()
+    }
+  }
+
+  private async applyRecord(intent: RecordIntent): Promise<void> {
+    if (intent.record === null) await this.backend.delete(recordAccount(intent.key))
+    else await this.backend.set(recordAccount(intent.key), intent.record)
+    if (intent.keys.length === 0) await this.backend.delete(INDEX_ACCOUNT)
+    else await this.backend.set(INDEX_ACCOUNT, JSON.stringify(intent.keys))
+    await this.backend.delete(JOURNAL_ACCOUNT)
+    this.notifyRecordUpdated(intent.key)
+  }
+
+  private async recoverRecords(): Promise<void> {
+    const text = await this.backend.get(JOURNAL_ACCOUNT)
+    if (text === undefined) return
+    const intent = this.parseIntent(text)
+    try {
+      await this.applyRecord(intent)
+    } catch (_error) {
+      // Recovery retains its journal whenever cleanup has not taken effect.
+      throw new KeychainCommitError()
+    }
+  }
+
+  private parseIntent(text: string): RecordIntent {
+    try {
+      const value: unknown = JSON.parse(text)
+      if (typeof value !== 'object' || value === null
+        || !('version' in value) || value.version !== 1
+        || !('key' in value) || typeof value.key !== 'string'
+        || !('record' in value) || !(value.record === null || typeof value.record === 'string')
+        || !('keys' in value) || !Array.isArray(value.keys)
+        || Object.keys(value).length !== 4) throw new Error('invalid intent')
+      const key = parseCredentialKey(value.key)
+      const keys = value.keys.map((item: unknown) => {
+        if (typeof item !== 'string') throw new Error('invalid index')
+        return parseCredentialKey(item)
+      })
+      if (new Set(keys).size !== keys.length || keys.includes(key) !== (value.record !== null)) throw new Error('inconsistent intent')
+      if (value.record !== null) parseRecord(key, value.record)
+      return { version: 1, key, record: value.record, keys }
+    } catch (_error) {
+      // Parser diagnostics and causes may contain the saved credential.
+      throw new Error('credentials-keychain: invalid record transaction; preserve the store and repair it before continuing')
+    }
   }
 
   /** Run one write after every earlier write settled; a failure does not block later writes. */
@@ -277,26 +370,13 @@ export class KeychainCredentialProvider extends CredentialProvider {
     let parsed: unknown
     try {
       parsed = JSON.parse(text)
-    } catch (error) {
+    } catch (_error) {
       throw new Error('credentials-keychain: the record index is not valid JSON', { cause: error })
     }
     if (!Array.isArray(parsed)) throw new Error('credentials-keychain: the record index is not a list')
     return parsed.map(item => parseCredentialKey(String(item)))
   }
 
-  private async indexAdd(key: CredentialKey): Promise<void> {
-    const keys = await this.readIndex()
-    if (keys.includes(key)) return
-    await this.backend.set(INDEX_ACCOUNT, JSON.stringify([...keys, key]))
-  }
-
-  private async indexRemove(key: CredentialKey): Promise<void> {
-    const keys = await this.readIndex()
-    if (!keys.includes(key)) return
-    const rest = keys.filter(candidate => candidate !== key)
-    if (rest.length === 0) await this.backend.delete(INDEX_ACCOUNT)
-    else await this.backend.set(INDEX_ACCOUNT, JSON.stringify(rest))
-  }
 }
 
 export default KeychainCredentialProvider

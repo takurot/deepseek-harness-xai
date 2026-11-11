@@ -1,3 +1,9 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import Loader from '@deepseek-ai/cordis-plugin-loader'
+import Include from '@deepseek-ai/cordis-plugin-include'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { credentialKey, credentialRef } from '@deepseek-ai/dsh-credentials'
@@ -10,17 +16,26 @@ import type { Config, KeychainBackend } from '../src/index.ts'
 class MemoryBackend implements KeychainBackend {
   readonly items = new Map<string, string>()
   failNext: Error | undefined
+  fault: { operation: 'set' | 'delete'; account: string; after: boolean } | undefined
 
   get(account: string): Promise<string | undefined> {
     return this.settle(() => this.items.get(account))
   }
 
   set(account: string, secret: string): Promise<void> {
-    return this.settle(() => { this.items.set(account, secret) })
+    return this.settle(() => { this.write('set', account, () => { this.items.set(account, secret) }) })
   }
 
   delete(account: string): Promise<void> {
-    return this.settle(() => { this.items.delete(account) })
+    return this.settle(() => { this.write('delete', account, () => { this.items.delete(account) }) })
+  }
+
+  private write(operation: 'set' | 'delete', account: string, action: () => void): void {
+    const fault = this.fault
+    if (fault?.operation !== operation || fault.account !== account) { action(); return }
+    this.fault = undefined
+    if (fault.after) action()
+    throw new Error('injected failure with PRIVATE_CREDENTIAL')
   }
 
   private settle<T>(action: () => T): Promise<T> {
@@ -140,6 +155,112 @@ describe('records', () => {
     await ctx.credentials.modifyRecord(KEY, () => Promise.resolve({ kind: 'api-key', key: 'k2' }))
     expect(JSON.parse(backend.items.get('index')!)).toEqual([KEY, grantKey])
     expect(seen).toEqual([KEY, grantKey, KEY])
+  })
+
+  it('repairs an interrupted create before listing, including after restart', async () => {
+    const { ctx, backend } = await boot()
+    const set = backend.set.bind(backend)
+    let fail = true
+    backend.set = async (account, value) => {
+      if (account === 'index' && fail) { fail = false; throw new Error('injected index failure') }
+      await set(account, value)
+    }
+    const seen: CredentialKey[] = []
+    ctx.on('credentials/record-updated', (key) => { seen.push(key) })
+    await expect(ctx.credentials.modifyRecord(KEY, async () => ({ kind: 'api-key', key: 'saved' }))).rejects.toThrow()
+    expect(seen).toEqual([])
+    const restarted = await boot(backend)
+    expect(await restarted.ctx.credentials.listRecords()).toEqual([{ key: KEY, kind: 'api-key' }])
+    expect(await restarted.ctx.credentials.readRecord(KEY)).toEqual({ kind: 'api-key', key: 'saved' })
+  })
+
+  it('removes a stale index entry when the record is already absent', async () => {
+    const { ctx, backend } = await boot()
+    backend.items.set('index', JSON.stringify([KEY]))
+    await ctx.credentials.deleteRecord(KEY)
+    expect(backend.items.has('index')).toBe(false)
+  })
+
+  it.each(['create', 'update', 'delete'] as const)('recovers every %s write phase before and after its effect', async (mode) => {
+    for (const phase of ['journal', 'record', 'index', 'cleanup'] as const) {
+      for (const after of [false, true]) {
+        const { ctx, backend } = await boot()
+        const old = { kind: 'api-key' as const, key: 'old' }
+        const next = { kind: 'grant' as const, payload: { token: 'new' } }
+        if (mode !== 'create') await ctx.credentials.modifyRecord(KEY, async () => old)
+        const seen: CredentialKey[] = []
+        ctx.on('credentials/record-updated', (key) => { seen.push(key) })
+        backend.fault = {
+          operation: phase === 'cleanup' || mode === 'delete' && phase !== 'journal' ? 'delete' : 'set',
+          account: phase === 'journal' || phase === 'cleanup' ? 'record-transaction-v1' : phase === 'record' ? `record:${KEY}` : 'index',
+          after,
+        }
+        let mutations = 0
+        const change = mode === 'delete' ? ctx.credentials.deleteRecord(KEY) : ctx.credentials.modifyRecord(KEY, async () => { mutations++; return next })
+        await expect(change).rejects.toMatchObject({ code: 'KEYCHAIN_COMMIT_UNKNOWN', outcome: 'unknown' })
+        expect(seen).toEqual([])
+        const restarted = await boot(backend)
+        const expected = phase === 'journal' && !after ? mode === 'create' ? undefined : old : mode === 'delete' ? undefined : next
+        expect(await restarted.ctx.credentials.readRecord(KEY)).toEqual(expected)
+        expect(await restarted.ctx.credentials.listRecords()).toEqual(expected === undefined ? [] : [{ key: KEY, kind: expected.kind }])
+        expect(backend.items.has('record-transaction-v1')).toBe(false)
+        expect(mutations).toBe(mode === 'delete' ? 0 : 1)
+      }
+    }
+  })
+
+  it('recovers durable items when loaded from a cordis.yml composition', async () => {
+    const { ctx, backend } = await boot()
+    backend.fault = { operation: 'set', account: 'index', after: false }
+    await expect(ctx.credentials.modifyRecord(KEY, async () => ({ kind: 'grant', payload: { token: 'saved' } }))).rejects.toThrow()
+    const root = await mkdtemp(join(tmpdir(), 'keychain-recovery-loader-'))
+    cleanups.push(async () => { await rm(root, { recursive: true, force: true }) })
+    const loaded = new Context()
+    cleanups.push(async () => { await loaded.fiber.dispose() })
+    TestProvider.backend = backend
+    const path = join(root, 'cordis.yml')
+    await writeFile(path, JSON.stringify([{ name: 'cordis:keychain' }]))
+    await loaded.plugin(Loader)
+    loaded.loader.builtins.include = Include
+    loaded.loader.builtins.keychain = TestProvider
+    await loaded.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(path).href } })
+    await loaded.loader.await()
+    for (const entry of loaded.loader.entries()) await entry.fiber?.await()
+    expect(await loaded.credentials.readRecord(KEY)).toEqual({ kind: 'grant', payload: { token: 'saved' } })
+    expect(await loaded.credentials.listRecords()).toEqual([{ key: KEY, kind: 'grant' }])
+    expect(backend.items.has('record-transaction-v1')).toBe(false)
+  })
+
+  it('retains a failed repair and emits only when a later repair finishes', async () => {
+    const { ctx, backend } = await boot()
+    const seen: CredentialKey[] = []
+    ctx.on('credentials/record-updated', (key) => { seen.push(key) })
+    backend.items.set('record-transaction-v1', JSON.stringify({ version: 1, key: KEY, record: '{"kind":"api-key","key":"saved"}', keys: [KEY] }))
+    backend.fault = { operation: 'set', account: 'index', after: false }
+    await expect(ctx.credentials.listRecords()).rejects.toMatchObject({ code: 'KEYCHAIN_COMMIT_UNKNOWN' })
+    expect(seen).toEqual([])
+    expect(backend.items.has('record-transaction-v1')).toBe(true)
+    expect(await ctx.credentials.listRecords()).toEqual([{ key: KEY, kind: 'api-key' }])
+    expect(seen).toEqual([KEY])
+  })
+
+  it('refuses corrupt or inconsistent journals without changing stored credentials or leaking parser text', async () => {
+    const valid = { version: 1, key: KEY, record: JSON.stringify({ kind: 'api-key', key: 'PRIVATE_CREDENTIAL' }), keys: [KEY] }
+    for (const invalid of [
+      'PRIVATE_CREDENTIAL', 'null', JSON.stringify({ ...valid, version: 2 }),
+      JSON.stringify({ ...valid, key: 'PRIVATE_CREDENTIAL' }), JSON.stringify({ ...valid, record: 42 }),
+      JSON.stringify({ ...valid, keys: [42] }), JSON.stringify({ ...valid, keys: [KEY, KEY] }),
+      JSON.stringify({ ...valid, keys: [] }), JSON.stringify({ ...valid, record: null }),
+      JSON.stringify({ ...valid, record: 'PRIVATE_CREDENTIAL' }), JSON.stringify({ ...valid, extra: true }),
+    ]) {
+      const { ctx, backend } = await boot()
+      backend.items.set(`record:${KEY}`, valid.record)
+      backend.items.set('record-transaction-v1', invalid)
+      const before = new Map(backend.items)
+      await expect(ctx.credentials.listRecords()).rejects.toThrow('invalid record transaction')
+      await expect(ctx.credentials.readRecord(KEY)).rejects.not.toThrow('PRIVATE_CREDENTIAL')
+      expect(backend.items).toEqual(before)
+    }
   })
 
   it('leaves the record untouched when mutate declines, and sees the current value', async () => {
