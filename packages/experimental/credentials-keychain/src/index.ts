@@ -18,6 +18,8 @@
  * @module @deepseek-ai/dsh-credentials-keychain
  */
 
+import { userInfo } from 'node:os'
+import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
@@ -33,7 +35,10 @@ import type {
 } from '@deepseek-ai/dsh-credentials'
 import type { LaunchEnvironmentEntry } from '@deepseek-ai/dsh-launch-environment'
 import { createBackend, spawnRunner } from './backend.ts'
-import type { KeychainBackend } from './backend.ts'
+import type { KeychainBackend, KeychainCommandRunner } from './backend.ts'
+import { withServiceLock } from './service-lock.ts'
+
+export { KeychainLockError } from './service-lock.ts'
 
 export type { KeychainCommandResult, KeychainCommandRunner, KeychainBackend } from './backend.ts'
 export { createBackend, macosBackend, secretServiceBackend, spawnRunner } from './backend.ts'
@@ -46,6 +51,9 @@ const SERVICE_PATTERN = /^[A-Za-z0-9._-]+$/
 
 /** Account of the item listing every stored record key. */
 const INDEX_ACCOUNT = 'index'
+
+/** Default acquisition budget; configurable through lockWaitMs. */
+const DEFAULT_LOCK_WAIT_MS = 30_000
 
 /** A record transaction failed with an unknown stored outcome; inspect after recovery before retrying. */
 export class KeychainCommitError extends Error {
@@ -75,6 +83,8 @@ const JOURNAL_ACCOUNT = 'record-transaction-v1'
 export interface Config {
   /** Keychain service name shared by every item; defaults to `dsh`. */
   service?: string
+  /** Maximum time to acquire the OS-user/service lock, in milliseconds; defaults to 30,000. */
+  lockWaitMs?: number
 }
 
 /**
@@ -157,30 +167,47 @@ function assertStorable(key: CredentialKey, record: CredentialRecord): void {
 export class KeychainCredentialProvider extends CredentialProvider {
   static Config: z<Config> = z.object({
     service: z.string().default(DEFAULT_SERVICE),
+    lockWaitMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULT_LOCK_WAIT_MS),
   })
 
   private readonly backend: KeychainBackend
-  /** Serializes every write so index updates never interleave. */
+  private readonly service: string
+  private readonly lockWaitMs: number
+  private readonly lockAbort = new AbortController()
+  private lockFd: number | undefined
+  /** Serializes local writes and record reads before acquiring the service lock. */
   private operations: Promise<void> = Promise.resolve()
   private closed = false
 
   constructor(ctx: Context, public config: Config) {
     super(ctx)
-    this.backend = this.createBackend(resolveService(config))
+    this.service = resolveService(config)
+    this.lockWaitMs = config.lockWaitMs ?? DEFAULT_LOCK_WAIT_MS
+    if (!Number.isSafeInteger(this.lockWaitMs) || this.lockWaitMs < 1) {
+      throw new TypeError('credentials-keychain: lockWaitMs must be a positive safe integer')
+    }
+    this.backend = this.createBackend(this.service, (command, args, stdin) => spawnRunner(command, args, stdin, this.lockFd))
   }
 
   /**
    * Build the platform backend; the single place a different store is chosen.
    * @param service - validated service name.
+   * @param run - runner inheriting the currently held service-lock descriptor.
    * @returns the backend for this process's platform.
    */
-  protected createBackend(service: string): KeychainBackend {
-    return createBackend(process.platform, service, spawnRunner)
+  protected createBackend(service: string, run: KeychainCommandRunner): KeychainBackend {
+    return createBackend(process.platform, service, run)
+  }
+
+  /** Private lock directory shared by every profile of this OS user. */
+  protected lockDirectory(): string {
+    return join(userInfo().homedir, '.dsh-keychain-locks')
   }
 
   async* [Service.init](): AsyncGenerator<() => Promise<void> | void, void, void> {
     yield async () => {
       this.closed = true
+      this.lockAbort.abort(new Error('credentials-keychain is disposed'))
       await this.operations
     }
     // Reading the index proves the store is reachable before any consumer resolves a key.
@@ -359,7 +386,13 @@ export class KeychainCredentialProvider extends CredentialProvider {
   /** Run one write after every earlier write settled; a failure does not block later writes. */
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closed) return Promise.reject(new Error('credentials-keychain is disposed'))
-    const run = this.operations.then(operation)
+    const run = this.operations.then(() => withServiceLock(
+      this.lockDirectory(), this.service, this.lockWaitMs, this.lockAbort.signal,
+      async (fd) => {
+        this.lockFd = fd
+        try { return await operation() } finally { this.lockFd = undefined }
+      },
+    ))
     this.operations = run.then(() => {}, () => {})
     return run
   }

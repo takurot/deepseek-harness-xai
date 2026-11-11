@@ -1,14 +1,15 @@
 /**
  * OS secret-store backends for the keychain credentials provider. Each backend
  * maps an account name to one opaque secret string under one service name and
- * talks to the platform's own command-line client, so the package adds no
- * native dependency. Secret values travel through the child's stdin or stdout,
+ * talks to the platform's own command-line client. The provider's lock
+ * descriptor follows each helper. Secret values travel through stdin or stdout,
  * never its argument vector, which other processes of the same user can read
  * through `ps`.
  * @module @deepseek-ai/dsh-credentials-keychain/backend
  */
 
 import { spawn } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 /** Outcome of one finished command. */
 export interface KeychainCommandResult {
@@ -59,11 +60,13 @@ export interface KeychainBackend {
  * @param command - executable name resolved through `PATH`.
  * @param args - argument vector; must never carry a secret.
  * @param stdin - text written to the child's stdin before it is closed.
+ * @param lockFd - held service-lock descriptor inherited as fd 3 until the helper exits.
  * @returns the exit code and captured output.
  */
-export function spawnRunner(command: string, args: readonly string[], stdin?: string): Promise<KeychainCommandResult> {
+export function spawnRunner(command: string, args: readonly string[], stdin?: string, lockFd?: number): Promise<KeychainCommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], { stdio: ['pipe', 'pipe', 'pipe'] })
+    // Node's tuple overload describes only three descriptors; the first three remain pipes.
+    const child = spawn(command, [...args], { stdio: ['pipe', 'pipe', 'pipe', lockFd ?? 'ignore'] }) as ChildProcessWithoutNullStreams
     const stdout: Buffer[] = []
     const stderr: Buffer[] = []
     child.stdout.on('data', (chunk: Buffer) => { stdout.push(chunk) })

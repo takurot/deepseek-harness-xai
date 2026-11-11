@@ -1,5 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
+import { mkdtempSync } from 'node:fs'
+import { tryLockExclusive } from '@deepseek-ai/node-addon-system/flock'
+import { open, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
@@ -11,10 +14,15 @@ import { createLaunchEnvironmentSnapshot, DSH_LAUNCH_ENVIRONMENT_KEY } from '@de
 import type { CredentialKey, CredentialRef } from '@deepseek-ai/dsh-credentials'
 
 import { KeychainCredentialProvider, resolveService } from '../src/index.ts'
-import type { Config, KeychainBackend } from '../src/index.ts'
+import type { Config, KeychainBackend, KeychainCommandRunner } from '../src/index.ts'
 
 class MemoryBackend implements KeychainBackend {
   readonly items = new Map<string, string>()
+  readonly lockRoot = mkdtempSync(join(tmpdir(), 'keychain-lock-test-'))
+
+  constructor() {
+    cleanups.push(async () => { await rm(this.lockRoot, { recursive: true, force: true }) })
+  }
   failNext: Error | undefined
   fault: { operation: 'set' | 'delete'; account: string; after: boolean } | undefined
 
@@ -50,6 +58,10 @@ class MemoryBackend implements KeychainBackend {
 
 class TestProvider extends KeychainCredentialProvider {
   static backend: MemoryBackend
+  protected override lockDirectory(): string {
+    return TestProvider.backend.lockRoot
+  }
+
   protected override createBackend(): KeychainBackend {
     return TestProvider.backend
   }
@@ -273,6 +285,54 @@ describe('records', () => {
     expect(kept).toEqual({ kind: 'api-key', key: 'k' })
   })
 
+  it('keeps the OS-user/service lock across an asynchronous record mutation', async () => {
+    const { ctx, backend } = await boot()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const change = ctx.credentials.modifyRecord(KEY, async () => {
+      entered.resolve(undefined)
+      await release.promise
+      return { kind: 'api-key', key: 'rotated' }
+    })
+    await entered.promise
+    const path = join(backend.lockRoot, createHash('sha256').update('dsh').digest('hex') + '.lock')
+    const contender = await open(path, 'a+', 0o600)
+    try {
+      await expect(tryLockExclusive(contender.fd)).rejects.toThrow(/^E(AGAIN|WOULDBLOCK):/)
+    } finally {
+      await contender.close()
+      release.resolve(undefined)
+      await change
+    }
+  })
+
+  it('expires or disposes a contender without calling its mutation or changing storage', async () => {
+    for (const dispose of [false, true]) {
+      const { ctx: first, backend } = await boot()
+      const { ctx: second } = await boot(backend, { lockWaitMs: 40 })
+      const entered = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      const held = first.credentials.modifyRecord(KEY, async () => {
+        entered.resolve(undefined)
+        await release.promise
+        return { kind: 'api-key', key: 'first' }
+      })
+      await entered.promise
+      let called = false
+      const pending = second.credentials.modifyRecord(KEY, async () => { called = true; return { kind: 'api-key', key: 'second' } })
+      try {
+        if (dispose) {
+          const stopped = second.fiber.dispose()
+          await expect(pending).rejects.toThrow('disposed')
+          await stopped
+        } else await expect(pending).rejects.toMatchObject({ code: 'KEYCHAIN_LOCK_TIMEOUT' })
+        expect(called).toBe(false)
+        expect(backend.items.size).toBe(0)
+      } finally { release.resolve(undefined); await held }
+      expect(await first.credentials.readRecord(KEY)).toEqual({ kind: 'api-key', key: 'first' })
+    }
+  })
+
   it('serializes concurrent modifications so no update is lost', async () => {
     const { ctx } = await boot()
     await Promise.all(Array.from({ length: 5 }, () => ctx.credentials.modifyRecord(KEY, async (current) => {
@@ -360,6 +420,37 @@ describe('lifecycle', () => {
     const provider = ctx.credentials
     await fiber.dispose()
     await expect(provider.set(REF, 'v')).rejects.toThrow('disposed')
+  })
+
+  it('validates the wait budget and derives the default root from the OS user', () => {
+    for (const lockWaitMs of [0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => new TestProvider(new Context(), { lockWaitMs })).toThrow('positive safe integer')
+    }
+    class DirectoryProvider extends KeychainCredentialProvider {
+      directory(): string { return this.lockDirectory() }
+    }
+    expect(new DirectoryProvider(new Context(), {}).directory()).toBe(join(userInfo().homedir, '.dsh-keychain-locks'))
+  })
+
+  it('passes its held descriptor to the external command runner', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'keychain-command-lock-'))
+    cleanups.push(async () => { await rm(root, { recursive: true, force: true }) })
+    class CommandProvider extends KeychainCredentialProvider {
+      protected override lockDirectory(): string { return root }
+      protected override createBackend(_service: string, run: KeychainCommandRunner): KeychainBackend {
+        return {
+          async get() {
+            const result = await run(process.execPath, ['-e', 'process.stdout.write(String(require("node:fs").fstatSync(3).isFile()))'])
+            expect(result.stdout).toBe('true')
+            return undefined
+          },
+          async set() {}, async delete() {},
+        }
+      }
+    }
+    const ctx = new Context()
+    cleanups.push(async () => { await ctx.fiber.dispose() })
+    await ctx.plugin(CommandProvider)
   })
 
   it('uses the platform backend when none is injected', async () => {

@@ -15,20 +15,20 @@
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
 /deepseek-ai-dsh-credentials-keychain/use-this-package:
-  en: c6f2bb83a494c109
-  zh: ecb2350da9ae376a
+  en: dabe420a00987a0d
+  zh: 765d4a90e1a83e6d
 /deepseek-ai-dsh-credentials-keychain/use-this-package/where-keys-come-from:
   en: 6879efc6deaa5de9
   zh: fe2133ab1f74a6a4
 /deepseek-ai-dsh-credentials-keychain/use-this-package/platforms:
-  en: 321fdb828d2b70ae
-  zh: 2b6a91c0b72b5fdb
+  en: dedbd932ab01f198
+  zh: 7579e2bf5d0f3c6d
 /deepseek-ai-dsh-credentials-keychain/use-this-package/moving-existing-keys:
   en: 3a1131cdfa5da482
   zh: 0706a681898cb0f6
 /deepseek-ai-dsh-credentials-keychain/understand-the-implementation:
-  en: 16244c842638b032
-  zh: 7152bb4cbdf34264
+  en: 123f3c31c850753c
+  zh: dcc13b995b3aa49e
 /deepseek-ai-dsh-credentials-keychain/further-exploration:
   en: 3944d7ce772d5fed
   zh: 098d521b5cac071c
@@ -39,14 +39,14 @@
   en: 8bcc2bd23e28c4cd
   zh: 49bedb0374521d89
 /deepseek-ai-dsh-credentials-keychain/known-limitations-and-deferred-work:
-  en: 7618aea16630a0d1
-  zh: 93876ae91776233b
+  en: 1762163dff07e562
+  zh: c3430b58ec9c0b45
 /deepseek-ai-dsh-credentials-keychain/known-limitations-and-deferred-work/dev-note:
   en: 7f775cc79dbce94b
   zh: b9dbe001c71ffb28
 /deepseek-ai-dsh-credentials-keychain/known-limitations-and-deferred-work/dev-note/command-line-clients-versus-a-native-binding:
-  en: 659c81748e3a5002
-  zh: 50adbb5ed04fcf18
+  en: 7d74c1980c8cf488
+  zh: 68bfbc57b2ba18f3
 /deepseek-ai-dsh-credentials-keychain/known-limitations-and-deferred-work/dev-note/graduating-out-of-experimental:
   en: 9c1cc84e3bc11a7e
   zh: e34494b0447d4f15

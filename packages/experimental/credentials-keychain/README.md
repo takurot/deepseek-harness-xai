@@ -36,6 +36,7 @@ Load it in place of `dsh-credentials-local`; both implement the same service, so
 | Field | Default | Meaning |
 |---|---|---|
 | `service` | `dsh` | Keychain service name shared by every item. Letters, digits, `.`, `_`, and `-` only; anything else fails at load |
+| `lockWaitMs` | `30000` | Maximum time to acquire the OS-user/service writer lock; a positive safe integer in milliseconds |
 
 ### Where keys come from
 
@@ -43,7 +44,7 @@ A reference resolves from the first layer that holds a non-empty value: the OS k
 
 ### Platforms
 
-macOS uses the system `osascript` JavaScript bridge for Security API writes and `security` for reads and deletes; neither requires installation. Linux uses `secret-tool` from libsecret and a running Secret Service session (GNOME Keyring or KeePassXC); a headless server usually has neither. Windows has no supported store yet. An unsupported platform, a missing tool, or an unreachable store fails when the plugin loads, never later at the first lookup.
+macOS uses the system `osascript` JavaScript bridge for Security API writes and `security` for reads and deletes; neither requires installation. Linux uses `secret-tool` from libsecret and a running Secret Service session (GNOME Keyring or KeePassXC); a headless server usually has neither. The prebuilt POSIX lock binding supports macOS and Linux on arm64 and x64; other architectures must use `credentials-local`. Windows has no supported store yet. An unsupported platform, a missing tool, or an unreachable store fails when the plugin loads, never later at the first lookup.
 
 ### Moving existing keys
 
@@ -54,12 +55,15 @@ Nothing is migrated automatically. Save each key again through the configuration
 
 Each reference is one keychain item with account `ref:<NAME>`; each record is one item with account `record:<scope>/<id>` holding its JSON. An item with account `index` lists the record keys, because the platform tools cannot enumerate items by service. Secret values reach the tools through stdin or stdout, never the argument vector, which other processes of the same user can read through `ps`. macOS writes pass JSON through stdin to the Security APIs, preserving long grants, Unicode, quotes, newlines, and trailing spaces without an interactive line limit. Base64 storage remains compatible with existing items. New items trust `/usr/bin/osascript` and `/usr/bin/security`; updates preserve existing access settings. Failed writes report no helper output.
 
-`backend.ts` holds the two platform backends over an injectable command runner; `index.ts` holds `Config`, layering, record validation, and the write queue. Record operations run one at a time inside this process. A `record-transaction-v1` item saves the complete replacement and target index before either changes; startup and later record operations complete interrupted transactions before reading or mutating records. Corrupt or inconsistent transactions stop record operations without overwriting saved items. Cross-process exclusion is not yet provided. Only this provider's writes and completed repairs emit `credentials/reference-updated` and `credentials/record-updated`. Record notifications follow record/index updates and journal removal; a crash after removal may lose the notification. A failed record commit or repair throws `KeychainCommitError` (`code: KEYCHAIN_COMMIT_UNKNOWN`, `outcome: unknown`), which does not promise unchanged storage. Reopen the provider to attempt recovery, then inspect the credential before retrying; mutation callbacks are never retried automatically. Older versions cannot recover a pending journal: complete recovery before downgrading or accessing the same service from an older process.
+`backend.ts` holds the two platform backends over an injectable command runner; `index.ts` holds `Config`, layering, record validation, and the write queue. Record operations and reference writes hold one exclusive OS-user/service lock across processes, including asynchronous mutation callbacks. A `record-transaction-v1` item saves the complete replacement and target index before either changes; startup and later record operations complete interrupted transactions before reading or mutating records. Corrupt or inconsistent transactions stop record operations without overwriting saved items. Only this provider's writes and completed repairs emit `credentials/reference-updated` and `credentials/record-updated`. Record notifications follow record/index updates and journal removal; a crash after removal may lose the notification. A failed record commit or repair throws `KeychainCommitError` (`code: KEYCHAIN_COMMIT_UNKNOWN`, `outcome: unknown`), which does not promise unchanged storage. Reopen the provider to attempt recovery, then inspect the credential before retrying; mutation callbacks are never retried automatically. Older versions cannot recover a pending journal: complete recovery before downgrading or accessing the same service from an older process.
+
+The native POSIX lock binding owns a persistent file under `<OS user home>/.dsh-keychain-locks/`, named by the service's SHA-256 hash. This identity does not depend on `DSH_HOME`, the profile, or the working directory. Unsafe directory/file ownership or permissions fail before store access. The runner passes the locked open-file description to helpers as descriptor 3; the kernel releases it only after all copies close. Acquisition expiry never starts the operation. Disposal cancels acquisition and drains accepted operations; cancellation of an already-running mutation callback remains its caller's responsibility.
 
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Provider, config, layering, records, write queue |
 | [`src/backend.ts`](src/backend.ts) | macOS and Secret Service backends, command runner |
+| [`src/service-lock.ts`](src/service-lock.ts) | Private lock-file validation and bounded POSIX lock acquisition |
 
 <a id="further-exploration"></a>
 ## Further Exploration
@@ -84,7 +88,7 @@ No direct invalidation; stored values never enter a request prefix.
 
 - **A same-UID process can still read the keys** — the `security` and `secret-tool` clients answer any process of your OS user without a prompt, so an agent shell can run `security find-generic-password -s dsh -a ref:NAME -w`. This package removes the plaintext file, not that read path; closing it needs an access list limited to a signed harness binary and a sandbox profile that denies keychain access.
 - **External changes are invisible** — edits made in Keychain Access or by other tools emit no event and are seen at the next resolve.
-- **No cross-process write lock** — two harness processes updating one record can lose an update.
+- **Only cooperating processes share the lock** — older provider versions and external secret-store writers do not acquire it; stop them before upgrading or updating the same service.
 - **Windows is unsupported**, and Linux needs a Secret Service session.
 - **No migration command** — keys move by being saved again.
 - **Items are visible in the keychain UI** — account names reveal which references and record keys exist, never values.
@@ -99,7 +103,7 @@ This Dev Note is working context for maintainers: open questions and undecided d
 
 #### Command-line clients versus a native binding
 
-The package shells out to the platform tools to avoid a native dependency. A binding such as `@napi-rs/keyring` would add Windows and in-process access without child processes, and would let an item's access list name the harness. That is a dependency decision for maintainers.
+Secret-store access stays in platform tools; the existing system addon owns POSIX locking. A binding such as `@napi-rs/keyring` would add Windows and in-process access without child processes, and would let an item's access list name the harness. That is a dependency decision for maintainers.
 
 #### Graduating out of experimental
 
