@@ -1,7 +1,9 @@
 /** Exercise credential persistence while replacing only the external OS command transport. */
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { open, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
+import { tryLockExclusive } from '@deepseek-ai/node-addon-system/flock'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import { KeychainCredentialProvider, macosBackend } from '@deepseek-ai/dsh-credentials-keychain'
 
@@ -102,7 +104,54 @@ export async function apply(ctx) {
       assert.deepEqual(await reloaded.listRecords(), [{ key, kind: 'grant' }])
       const repaired = JSON.parse(await readFile(join(process.cwd(), '.dsh', 'keychain-fixture-items.json'), 'utf8'))
       assert.equal(Object.hasOwn(repaired, 'v2:record-transaction-v1'), false)
-      await writeFile('keychain-result.json', JSON.stringify({ storedBytes, roundTrip: true, reloaded: true, listed: true, unknownOutcome: true, recovered: true }) + '\n')
+      const peerContext = new Context()
+      const peer = peerContext.plugin(FixtureKeychain, { service: 'snapshot-long-grant' })
+      ctx.effect(() => () => peer.dispose())
+      await peer
+      const contender = peerContext.get('credentials')
+      assert.ok(contender)
+      const firstKey = credentialKey('snapshot', 'first-writer')
+      const secondKey = credentialKey('snapshot', 'second-writer')
+      const firstRecord = { kind: 'api-key', key: 'first-synthetic-key' }
+      const secondRecord = { kind: 'api-key', key: 'second-synthetic-key' }
+      const entered = Promise.withResolvers()
+      const release = Promise.withResolvers()
+      const first = reloaded.modifyRecord(firstKey, async () => {
+        entered.resolve()
+        await release.promise
+        return firstRecord
+      })
+      const ready = Promise.race([entered.promise, first.then(() => { throw new Error('mutation completed before its barrier') })])
+      let second
+      try {
+        await ready
+        const directory = join(process.cwd(), '.dsh', 'keychain-fixture-locks')
+        const files = await readdir(directory)
+        assert.equal(files.length, 1)
+        assert.ok(files[0].endsWith('.lock'))
+        const observer = await open(join(directory, files[0]), 'r+')
+        try {
+          await assert.rejects(tryLockExclusive(observer.fd), error => error.code === 'EAGAIN' || error.code === 'EWOULDBLOCK')
+        } finally {
+          await observer.close()
+        }
+        second = contender.modifyRecord(secondKey, async () => secondRecord)
+      } finally {
+        release.resolve()
+        const outcomes = await Promise.allSettled([first, second])
+        await peer.dispose()
+        for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason
+      }
+      await active.dispose()
+      active = ctx.plugin(FixtureKeychain, { service: 'snapshot-long-grant' })
+      await active
+      const completed = ctx.get('credentials')
+      assert.ok(completed)
+      assert.deepEqual(await completed.readRecord(key), record)
+      assert.deepEqual(await completed.readRecord(firstKey), firstRecord)
+      assert.deepEqual(await completed.readRecord(secondKey), secondRecord)
+      assert.deepEqual(await completed.listRecords(), [{ key, kind: 'grant' }, { key: firstKey, kind: 'api-key' }, { key: secondKey, kind: 'api-key' }])
+      await writeFile('keychain-result.json', JSON.stringify({ storedBytes, roundTrip: true, reloaded: true, listed: true, unknownOutcome: true, recovered: true, serialized: true, allListed: true }) + '\n')
       initialized = true
     }
     return next()
