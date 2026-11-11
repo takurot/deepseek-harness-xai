@@ -94,9 +94,9 @@ function wrapCommand(command: string, marker: CommandMarkers): string {
   // input, and a wrapped line would split the echo the extraction strips.
   // The echoed END nonce can never fabricate completion because the status
   // regex needs digits immediately after it and the echo continues with
-  // quote characters.
+  // quote characters. The initial empty output isolates START from prior text.
   const body = quoteForPwsh(command)
-  return `Write-Output '${marker.start}'; $LASTEXITCODE = $null; $__s = 1; try { Invoke-Expression "${body}"; $__ok = $? } catch { $__ok = $false }; if ($null -ne $LASTEXITCODE) { $__s = [int]$LASTEXITCODE } else { $__s = if ($__ok) { 0 } else { 1 } }; Write-Output ('${marker.end}' + $__s)`
+  return `Write-Output ''; Write-Output '${marker.start}'; $LASTEXITCODE = $null; $__s = 1; try { Invoke-Expression "${body}"; $__ok = $? } catch { $__ok = $false }; if ($null -ne $LASTEXITCODE) { $__s = [int]$LASTEXITCODE } else { $__s = if ($__ok) { 0 } else { 1 } }; Write-Output ('${marker.end}' + $__s)`
 }
 
 function trimTrailingNewline(text: string): string {
@@ -113,13 +113,11 @@ function commandOutput(
   // Terminal padding belongs to the status line, not to captured command output.
   const status = /^(\d+) *\r?\n/.exec(text.slice(end + marker.end.length))?.[1]
   if (status === undefined) return undefined
-  const startMarker = text.lastIndexOf(marker.start, end)
+  const startMarker = startLine(text.slice(0, end), marker.start)
   const start = startMarker < 0 ? 0 : startMarker + marker.start.length
   let captured = text.slice(start, end)
-  // The PSReadLine echo carries the wrapper source (including both marker
-  // nonces) before the real markers; anchor on the real markers excludes it,
-  // and stripping the wrapper covers the rare case where the real START
-  // scrolled out and extraction fell back to the echoed copy.
+  // A standalone START excludes PSReadLine's echoed source. If START was
+  // dropped, remove any retained complete wrapper from the incomplete capture.
   captured = captured.replaceAll(wrapper, '')
   return {
     text: captured.replace(/^\r?\n/, '').replace(/\r?\n$/, ''),
@@ -135,17 +133,18 @@ function partialOutput(
   fallback: string,
   fallbackTruncated = false,
 ): CapturedOutput {
-  const startMarker = snapshot.text.lastIndexOf(marker.start)
+  const startMarker = startLine(snapshot.text, marker.start)
   if (startMarker >= 0) {
     return {
       text: trimTrailingNewline(snapshot.text.slice(startMarker + marker.start.length).replace(/^\r?\n/, '')),
       incomplete: false,
     }
   }
-  const fallbackStart = fallback.lastIndexOf(marker.start)
+  const cleanedFallback = fallback.replaceAll(wrapper, '')
+  const fallbackStart = startLine(cleanedFallback, marker.start)
   const afterStart = fallbackStart < 0
-    ? fallback
-    : fallback.slice(fallbackStart + marker.start.length).replace(/^\r?\n/, '')
+    ? cleanedFallback
+    : cleanedFallback.slice(fallbackStart + marker.start.length).replace(/^\r?\n/, '')
   const fallbackEnd = afterStart.lastIndexOf(marker.end)
   const beforeEnd = fallbackEnd < 0 ? afterStart : afterStart.slice(0, fallbackEnd)
   return {
@@ -156,6 +155,16 @@ function partialOutput(
 
 async function pause(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
+}
+
+function startLine(text: string, marker: string): number {
+  let position = text.lastIndexOf(marker)
+  while (position >= 0) {
+    const after = text.slice(position + marker.length)
+    if ((position === 0 || text[position - 1] === '\n') && /^\r?\n/.test(after)) return position
+    position = text.slice(0, position).lastIndexOf(marker)
+  }
+  return -1
 }
 
 function nextScrollbackOffset(page: TerminalReadResult, offset: number): number | undefined {
@@ -347,6 +356,7 @@ async function executeCommand(
       operation = ctx.terminals.startSend(owner, id, {
         text: first ? wrapped : '',
         submit: first,
+        stdinWaitAfterOutput: marker.start,
         signal: commandDeadline.signal,
       })
       first = false
