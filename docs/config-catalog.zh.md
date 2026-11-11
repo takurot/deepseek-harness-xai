@@ -838,13 +838,21 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-credentials-keychain`
 
-- `source`: [`packages/experimental/credentials-keychain/src/index.ts:75`](../packages/experimental/credentials-keychain/src/index.ts)
+- `source`: [`packages/experimental/credentials-keychain/src/index.ts:90`](../packages/experimental/credentials-keychain/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config. */
 export interface Config {
   /** Keychain service name shared by every item; defaults to `dsh`. */
   service?: string
+  /** Maximum time to acquire the OS-user/service lock, in milliseconds; defaults to 30,000. */
+  lockWaitMs?: number
+  /** Deadline for each OS command, in milliseconds; defaults to 30,000. */
+  commandTimeoutMs?: number
+  /** Combined stdout/stderr bytes and complete item read-back budget; defaults to 4,194,304. */
+  commandOutputLimitBytes?: number
+  /** Milliseconds between group TERM and KILL; defaults to 1000. */
+  commandKillGraceMs?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-credentials-keychain -->
@@ -854,7 +862,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-credentials-local`
 
-- `source`: [`packages/credentials/credentials-local/src/index.ts:64`](../packages/credentials/credentials-local/src/index.ts)
+- `source`: [`packages/credentials/credentials-local/src/index.ts:63`](../packages/credentials/credentials-local/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: file location and hot-reload behavior. */
