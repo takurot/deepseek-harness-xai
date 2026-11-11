@@ -172,6 +172,58 @@ async function startWrittenSend(
 }
 
 describe('LocalPtySession readiness and output', () => {
+  it('requires the current command footer before same-shell native readiness', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 1_000 }))
+    try {
+      await initialize(session, terminal)
+      const request = {
+        text: 'framed-command', submit: true,
+        stdinWaitAfterOutput: { startLine: 'START', completionLine: 'DONE' },
+      }
+      const operation = await startWrittenSend(session, terminal, request)
+      let settled = false
+      void operation.done.then(() => { settled = true })
+      terminal.emitData('START\nbody\n')
+      terminal.inspector.waiting = true
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(false)
+      terminal.emitData('DONE\n')
+      await vi.advanceTimersByTimeAsync(10)
+      expect(settled).toBe(true)
+      expect((await operation.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('framed completion cleanup')
+    }
+  })
+
+  it.each(['before-start', 'after-start'])('rejects a previous prompt %s until the current footer', async (when) => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const session = new LocalPtySession(terminal, config({ idleSilenceMs: 500, timeoutMs: 1_000 }))
+    try {
+      await initialize(session, terminal)
+      const request = {
+        text: 'framed-command', submit: true,
+        stdinWaitAfterOutput: { startLine: 'START', completionLine: 'DONE' },
+      }
+      const operation = await startWrittenSend(session, terminal, request)
+      let settled = false
+      void operation.done.then(() => { settled = true })
+      if (when === 'after-start') terminal.emitData('START\nbody\n')
+      terminal.emitData('\x1b]133;D;0\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(20)
+      expect(settled).toBe(false)
+      if (when === 'before-start') terminal.emitData('\nSTART\nbody\n')
+      terminal.emitData('\nDONE\n\x1b]133;D;0\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(10)
+      expect((await operation.done).waitReason).toBe('stdin_read')
+    } finally {
+      await session.close('previous prompt cleanup')
+    }
+  })
+
   it.each(['\n', '\r\n'])('waits for a complete requested output line before native stdin readiness (%j)', async (newline) => {
     vi.useFakeTimers()
     const terminal = new FakeTerminal()

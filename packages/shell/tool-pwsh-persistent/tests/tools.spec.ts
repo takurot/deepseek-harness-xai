@@ -1,6 +1,8 @@
 import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import { PassThrough } from 'node:stream'
+import { LocalPtySession } from '@deepseek-ai/dsh-terminal-bash/src/session.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { unsupportedModel, provideWorkingDirectoryFixture, unsupportedInbox } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { Context } from '@deepseek-ai/cordis'
@@ -27,6 +29,7 @@ const contexts: Context[] = []
 let callNumber = 0
 
 afterEach(async () => {
+  vi.useRealTimers()
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose()
   vi.restoreAllMocks()
 })
@@ -342,6 +345,83 @@ async function setup(
 }
 
 describe('tool-pwsh-persistent', () => {
+  it('waits for its own completion and rejects a delayed previous prompt on the next call', async () => {
+    vi.useFakeTimers()
+    const { ctx, owner } = await setup({ backendType: 'framed' })
+    const output = new PassThrough()
+    type Outcome = Awaited<ConstructorParameters<typeof LocalPtySession>[0]['done']>
+    const outcome = Promise.withResolvers<Outcome>()
+    const writes: string[] = []
+    const firstWrite = Promise.withResolvers<string>()
+    const secondWrite = Promise.withResolvers<string>()
+    const foreground = { processGroupId: 456, inputWaiting: false }
+    const terminal = {
+      pid: 123, output, done: outcome.promise,
+      async write(input: string) {
+        writes.push(input)
+        if (writes.length === 1) firstWrite.resolve(input)
+        if (writes.length === 2) secondWrite.resolve(input)
+      },
+      async resize(_cols: number, _rows: number) {},
+      async inspectActivity() { return { state: 'unknown' as const, revision: 0 } },
+      async inspectForeground() { return { ...foreground } },
+      async signalForeground() { return foreground.processGroupId },
+      async terminate() {
+        output.end()
+        outcome.resolve({ exitCode: 0, signal: 'SIGTERM' })
+      },
+    }
+    const session = new LocalPtySession(terminal, {
+      backendType: 'framed', shellDialect: 'pwsh', shellPath: '/fixture/pwsh', shellArgs: [],
+      rows: 24, cols: 80, scrollbackLines: 2_000, scrollbackMaxBytes: 1_048_576, maxReadBytes: 32_768,
+      pollIntervalMs: 10, exactProbeAfterMs: 20, idleSilenceMs: 500,
+      handoffGraceMs: 10, promptTailGraceMs: 0, timeoutMs: 2_000, disposeGraceMs: 20,
+    })
+    const emit = (value: string) => { output.write(Buffer.from(value)) }
+    try {
+      const initialized = session.initialize()
+      emit('\x1b]133;D;0\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(10)
+      await initialized
+      ctx.terminals.registerBackend({ type: 'framed', spawn: async () => session })
+      const first = call(ctx, owner, 'first framed command')
+      let firstReturned = false
+      void first.then(() => { firstReturned = true })
+      const firstInput = await firstWrite.promise
+      const firstStart = START_PATTERN.exec(firstInput)![0]
+      const firstEnd = END_PATTERN.exec(firstInput)![0]
+      emit(`\n${firstStart}\nfirst output\n`)
+      foreground.inputWaiting = true
+      await vi.advanceTimersByTimeAsync(20)
+      expect(firstReturned).toBe(false)
+
+      const firstDone = /__DSH_PERSISTENT_PWSH_DONE_[a-f0-9-]+__/.exec(firstInput)![0]
+      emit(`${firstEnd}0\n${firstDone}\n`)
+      await vi.advanceTimersByTimeAsync(10)
+      expect(text(await first)).toBe('first output')
+
+      const second = call(ctx, owner, 'second framed command')
+      let secondReturned = false
+      void second.then(() => { secondReturned = true })
+      const secondInput = await secondWrite.promise
+      const secondStart = START_PATTERN.exec(secondInput)![0]
+      const secondEnd = END_PATTERN.exec(secondInput)![0]
+      const secondDone = /__DSH_PERSISTENT_PWSH_DONE_[a-f0-9-]+__/.exec(secondInput)![0]
+      emit('\x1b]133;D;0\x07dsh> ')
+      await vi.advanceTimersByTimeAsync(20)
+      expect(secondReturned).toBe(false)
+
+      emit(`\n${secondStart}\nsecond output\n${secondEnd}0\n${secondDone}\n\x1b]133;D;0\x07dsh> `)
+      await vi.advanceTimersByTimeAsync(10)
+      expect(text(await second)).toBe('second output')
+      expect(writes).toHaveLength(2)
+    } finally {
+      await ctx.fiber.dispose()
+      await session.close('framed tool cleanup')
+      vi.useRealTimers()
+    }
+  })
+
   it('requests the same complete START output line across empty polling sends', async () => {
     const { ctx, owner, stub } = await setup()
     await call(ctx, owner, 'first')
