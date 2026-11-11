@@ -264,6 +264,8 @@ describe('records', () => {
       JSON.stringify({ ...valid, keys: [42] }), JSON.stringify({ ...valid, keys: [KEY, KEY] }),
       JSON.stringify({ ...valid, keys: [] }), JSON.stringify({ ...valid, record: null }),
       JSON.stringify({ ...valid, record: 'PRIVATE_CREDENTIAL' }), JSON.stringify({ ...valid, extra: true }),
+      JSON.stringify({ ...valid, record: '{"kind":"api-key","key":42}' }),
+      JSON.stringify({ ...valid, record: '{"kind":"grant"}' }),
     ]) {
       const { ctx, backend } = await boot()
       backend.items.set(`record:${KEY}`, valid.record)
@@ -388,11 +390,13 @@ describe('records', () => {
     const { ctx, backend } = await boot()
     const account = `record:${KEY}`
     backend.items.set(account, 'not json SECRETVALUE')
-    const failure = await ctx.credentials.readRecord(KEY).then(() => 'resolved', (error: unknown) => (error as Error).message)
-    expect(failure).toContain(KEY)
-    expect(failure).not.toContain('SECRETVALUE')
+    const failure = await ctx.credentials.readRecord(KEY).then(() => undefined, (error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect(String(failure)).toContain(KEY)
+    expect(String(failure)).not.toContain('SECRETVALUE')
+    expect(failure).not.toHaveProperty('cause')
     backend.items.set(account, '5')
-    await expect(ctx.credentials.readRecord(KEY)).rejects.toThrow('has no kind')
+    await expect(ctx.credentials.readRecord(KEY)).rejects.toThrow('plain mapping')
     backend.items.set(account, '{"kind":"other"}')
     await expect(ctx.credentials.readRecord(KEY)).rejects.toThrow('unknown kind')
   })

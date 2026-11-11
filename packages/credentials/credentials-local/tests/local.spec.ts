@@ -264,12 +264,12 @@ describe('document validation', () => {
     ['a record key that is not scoped', 'version: 1\nrecords:\n  codex:\n    kind: grant\n    payload: 1\n',
       /must be "<scope>\/<id>"/],
     ['a record that is not a mapping', 'version: 1\nrecords:\n  llm-pi-ai/codex: token\n',
-      /record "llm-pi-ai\/codex" .* must be a mapping/],
+      /record "llm-pi-ai\/codex" .* must be a plain mapping/],
     ['a record with no kind', 'version: 1\nrecords:\n  llm-pi-ai/codex:\n    payload: 1\n', /has no kind/],
     ['a record with an unknown kind', 'version: 1\nrecords:\n  llm-pi-ai/codex:\n    kind: token\n',
-      /unknown kind "token"/],
+      /unknown kind/],
     ['a record with an unknown field', 'version: 1\nrecords:\n  llm-pi-ai/codex:\n    kind: grant\n'
-      + '    payload: 1\n    extra: 2\n', /unknown field "extra"/],
+      + '    payload: 1\n    extra: 2\n', /unknown field/],
     ['a grant with no payload', 'version: 1\nrecords:\n  llm-pi-ai/codex:\n    kind: grant\n', /has no payload/],
     // YAML spells values JSON has none for. The seam promises an owner its
     // payload comes back exactly as written, which a lossy round trip breaks.
@@ -280,9 +280,9 @@ describe('document validation', () => {
     ['an api-key record with an empty key', 'version: 1\nrecords:\n  llm-pi-ai/acme:\n    kind: api-key\n'
       + '    key: ""\n', /non-string or empty key/],
     ['an api-key record env that is not a mapping', 'version: 1\nrecords:\n  llm-pi-ai/acme:\n    kind: api-key\n'
-      + '    env: nope\n', /non-mapping env/],
+      + '    env: nope\n', /env must be a plain mapping/],
     ['an api-key record env value that is empty', 'version: 1\nrecords:\n  llm-pi-ai/acme:\n    kind: api-key\n'
-      + '    env:\n      AWS_PROFILE: ""\n', /env "AWS_PROFILE" .* must be a non-empty string/],
+      + '    env:\n      AWS_PROFILE: ""\n', /env values must be a non-empty string/],
     ['duplicate keys', 'version: 1\nrefs:\n  DSH_CRED_TEST: one\n  DSH_CRED_TEST: two\n', /invalid document/],
     ['malformed yaml', 'DSH_CRED_TEST: "unterminated\n', /invalid document/],
   ])('fails boot on %s', async (_case, text, message) => {

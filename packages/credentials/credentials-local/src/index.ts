@@ -44,9 +44,8 @@ import { Document, isMap, isScalar, parseDocument, type YAMLError } from 'yaml'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { canonicalizeWatchPath, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { CredentialProvider, credentialRef, parseCredentialKey } from '@deepseek-ai/dsh-credentials'
+import { CredentialProvider, credentialRef, decodeCredentialRecord, parseCredentialKey } from '@deepseek-ai/dsh-credentials'
 import type {
-  ApiKeyRecord,
   CredentialInfo,
   CredentialKey,
   CredentialRecord,
@@ -299,26 +298,6 @@ function parseRecords(section: unknown, filename: string): Map<string, Credentia
   return entries
 }
 
-/**
- * Refuse an api-key record the read path could not admit, before it is
- * rendered: an empty key, an env name outside the reference grammar, or an
- * empty env value would persist a document `parseRecord` rejects at the next
- * boot — a durable-boundary write is validated where it is written.
- * @param key - the record's credential key, for the failure message.
- * @param record - the api-key record a mutation returned.
- */
-function assertStorableApiKey(key: CredentialKey, record: ApiKeyRecord): void {
-  if (record.key !== undefined && record.key.length === 0) {
-    throw new TypeError(`credentials-local: record "${key}" has an empty key; omit the field instead`)
-  }
-  for (const [name, value] of Object.entries(record.env ?? {})) {
-    credentialRef(name)
-    if (value.length === 0) {
-      throw new TypeError(`credentials-local: record "${key}" env "${name}" must be a non-empty string`)
-    }
-  }
-}
-
 /** One section of the document as a plain mapping; absent and null both mean empty. */
 function asSection(section: unknown, name: string, filename: string): Record<string, unknown> {
   if (section === undefined || section === null) return {}
@@ -328,94 +307,9 @@ function asSection(section: unknown, name: string, filename: string): Record<str
   return section as Record<string, unknown>
 }
 
-/** Admit one record entry, rejecting an unknown tag or field rather than dropping it. */
+/** Admit stored JSON data while keeping YAML parsing and formatting in this provider. */
 function parseRecord(key: string, value: unknown, filename: string): CredentialRecord {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError(`credentials-local: record "${key}" in ${filename} must be a mapping`)
-  }
-  const fields = value as Record<string, unknown>
-  const kind = fields['kind']
-  if (kind === 'api-key') {
-    assertFields(key, fields, ['kind', 'key', 'env'], filename)
-    const apiKey = fields['key']
-    if (apiKey !== undefined && (typeof apiKey !== 'string' || apiKey.length === 0)) {
-      throw new TypeError(`credentials-local: record "${key}" in ${filename} has a non-string or empty key`)
-    }
-    const env = parseRecordEnv(key, fields['env'], filename)
-    return {
-      kind: 'api-key',
-      ...apiKey === undefined ? {} : { key: apiKey },
-      ...env === undefined ? {} : { env },
-    }
-  }
-  if (kind === 'grant') {
-    assertFields(key, fields, ['kind', 'payload'], filename)
-    if (!('payload' in fields)) {
-      throw new Error(`credentials-local: record "${key}" in ${filename} has no payload`)
-    }
-    assertJsonValue(`record "${key}" payload in ${filename}`, fields['payload'], new Set())
-    return { kind: 'grant', payload: fields['payload'] }
-  }
-  if (kind === undefined) throw new Error(`credentials-local: record "${key}" in ${filename} has no kind`)
-  throw new Error(`credentials-local: record "${key}" in ${filename} has unknown kind ${JSON.stringify(kind)}`)
-}
-
-/** Reject a field the tag does not define, so a typo is not silently dropped. */
-function assertFields(key: string, fields: Record<string, unknown>, allowed: string[], filename: string): void {
-  for (const field of Object.keys(fields)) {
-    if (!allowed.includes(field)) {
-      throw new Error(`credentials-local: record "${key}" in ${filename} has unknown field "${field}"`)
-    }
-  }
-}
-
-/** Admit an api-key record's provider environment: POSIX names over non-empty strings. */
-function parseRecordEnv(key: string, env: unknown, filename: string): Record<string, string> | undefined {
-  if (env === undefined) return undefined
-  if (typeof env !== 'object' || env === null || Array.isArray(env)) {
-    throw new TypeError(`credentials-local: record "${key}" in ${filename} has a non-mapping env`)
-  }
-  const parsed: Record<string, string> = {}
-  for (const [name, value] of Object.entries(env as Record<string, unknown>)) {
-    credentialRef(name)
-    if (typeof value !== 'string' || value.length === 0) {
-      throw new TypeError(
-        `credentials-local: record "${key}" env "${name}" in ${filename} must be a non-empty string`,
-      )
-    }
-    parsed[name] = value
-  }
-  return parsed
-}
-
-/**
- * Reject a payload that cannot survive a JSON round trip, on the way in and on
- * the way out. The seam promises owners their payload comes back exactly as
- * written, and both directions can break that: a document may spell `.inf` or
- * an alias cycle, and an owner may hand over a `Date`, a class instance, or a
- * `bigint` that this document has no faithful spelling for. Neither the value
- * nor any nested value is quoted in a diagnostic.
- * @param where - the subject named in a diagnostic, already free of any value.
- * @param value - the payload or nested value to admit.
- * @param seen - objects on the current path, for cycle detection.
- * @throws TypeError naming `where` when the value cannot round-trip.
- */
-function assertJsonValue(where: string, value: unknown, seen: Set<object>): void {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return
-  if (typeof value === 'number') {
-    if (Number.isFinite(value)) return
-    throw new TypeError(`credentials-local: ${where} holds a non-finite number`)
-  }
-  if (typeof value === 'object') {
-    if (seen.has(value)) throw new TypeError(`credentials-local: ${where} is cyclic`)
-    if (Object.getPrototypeOf(value) === Object.prototype || Array.isArray(value)) {
-      seen.add(value)
-      for (const nested of Object.values(value)) assertJsonValue(where, nested, seen)
-      seen.delete(value)
-      return
-    }
-  }
-  throw new TypeError(`credentials-local: ${where} holds a value JSON cannot represent`)
+  return decodeCredentialRecord(value, `credentials-local: record "${key}" in ${filename}`)
 }
 
 /**
@@ -495,7 +389,7 @@ function deleteSectionEntry(document: Document, section: 'refs' | 'records', key
 
 /**
  * Structural equality over two admitted JSON values. Records reach this after
- * {@link assertJsonValue}, so the walk meets only JSON shapes; key order is
+ * {@link decodeCredentialRecord}, so the walk meets only JSON shapes; key order is
  * ignored because an external editor may reorder a record's fields without
  * changing what it stores.
  * @param left - one value.
@@ -691,21 +585,20 @@ export class LocalCredentialProvider extends CredentialProvider {
         // have rotated it since.
         await this.reconcileFromDisk()
         const current = this.records.get(key)
-        const next = await mutate(current)
+        const next = await mutate(current === undefined ? undefined : decodeCredentialRecord(current, `credentials-local: record "${key}"`))
         if (next === undefined) return current
         // Admitted before it is rendered: what the read path would refuse is
         // refused here first, so a caller can never persist a document the
         // next boot rejects, and a value refused here has not been stored.
-        if (next.kind === 'grant') assertJsonValue(`record "${key}" payload`, next.payload, new Set())
-        else assertStorableApiKey(key, next)
-        const nextText = renderRecord(this.text, key, next)
+        const admitted = decodeCredentialRecord(next, `credentials-local: record "${key}"`)
+        const nextText = renderRecord(this.text, key, admitted)
         // 0600: a document holding secrets is never world-readable.
         await writeFileAtomic(this.spec.filename, nextText, { mode: 0o600, dirMode: 0o700 })
         this.text = nextText
-        this.records.set(key, next)
+        this.records.set(key, admitted)
         // After the commit, on the same terms as a reference write.
         this.notifyRecordUpdated(key)
-        return next
+        return admitted
       }, { waitMs: DOCUMENT_LOCK_WAIT_MS })
     })
   }

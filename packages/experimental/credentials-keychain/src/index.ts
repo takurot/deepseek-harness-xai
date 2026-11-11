@@ -23,7 +23,7 @@ import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { CredentialProvider, credentialRef, parseCredentialKey } from '@deepseek-ai/dsh-credentials'
+import { CredentialProvider, decodeCredentialRecord, parseCredentialKey } from '@deepseek-ai/dsh-credentials'
 import type {
   CredentialInfo,
   CredentialKey,
@@ -121,46 +121,11 @@ function parseRecord(key: CredentialKey, text: string): CredentialRecord {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
-  } catch (error) {
-    throw new Error(`credentials-keychain: record "${key}" is not valid JSON`, { cause: error })
+  } catch (_error) {
+    // JSON parser diagnostics can include the stored credential.
+    throw new Error(`credentials-keychain: record "${key}" is not valid JSON`)
   }
-  const kind = typeof parsed === 'object' && parsed !== null && 'kind' in parsed ? parsed.kind : undefined
-  if (kind === undefined) throw new Error(`credentials-keychain: record "${key}" has no kind`)
-  if (kind !== 'api-key' && kind !== 'grant') throw new Error(`credentials-keychain: record "${key}" has unknown kind`)
-  return parsed as CredentialRecord
-}
-
-/**
- * JSON-serialize a value, exposing that `JSON.stringify` returns `undefined`
- * for functions, symbols, and `undefined` despite its `string` signature.
- * @param value - value to serialize.
- * @returns the JSON text, or `undefined` when the value has no JSON form.
- */
-function stringifyJson(value: unknown): string | undefined {
-  return JSON.stringify(value)
-}
-
-/**
- * Refuse a record the read path would refuse, before it is stored.
- * @param key - record address, for the failure message.
- * @param record - the record a mutation returned.
- */
-function assertStorable(key: CredentialKey, record: CredentialRecord): void {
-  if (record.kind === 'grant') {
-    if (stringifyJson(record.payload) === undefined) {
-      throw new TypeError(`credentials-keychain: record "${key}" payload is not JSON-serializable`)
-    }
-    return
-  }
-  if (record.key !== undefined && record.key.length === 0) {
-    throw new TypeError(`credentials-keychain: record "${key}" has an empty key; omit the field instead`)
-  }
-  for (const [name, value] of Object.entries(record.env ?? {})) {
-    credentialRef(name)
-    if (value.length === 0) {
-      throw new TypeError(`credentials-keychain: record "${key}" env "${name}" must be a non-empty string`)
-    }
-  }
+  return decodeCredentialRecord(parsed, `credentials-keychain: record "${key}"`)
 }
 
 /** Credential provider backed by the OS secret store; see the module comment. */
@@ -304,12 +269,12 @@ export class KeychainCredentialProvider extends CredentialProvider {
   ): Promise<CredentialRecord | undefined> {
     return this.recordOperation(async () => {
       const current = await this.readStoredRecord(key)
-      const next = await mutate(current)
+      const next = await mutate(current === undefined ? undefined : decodeCredentialRecord(current, `credentials-keychain: record "${key}"`))
       if (next === undefined) return current
-      assertStorable(key, next)
+      const admitted = decodeCredentialRecord(next, `credentials-keychain: record "${key}"`)
       const keys = await this.readIndex()
-      await this.commitRecord({ version: 1, key, record: JSON.stringify(next), keys: keys.includes(key) ? keys : [...keys, key] })
-      return next
+      await this.commitRecord({ version: 1, key, record: JSON.stringify(admitted), keys: keys.includes(key) ? keys : [...keys, key] })
+      return admitted
     })
   }
 

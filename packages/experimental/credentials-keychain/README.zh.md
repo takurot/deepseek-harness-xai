@@ -55,6 +55,8 @@ macOS 通过系统 `osascript` JavaScript 桥接调用 Security API 写入，并
 
 每个引用是一个钥匙串条目，账户为 `ref:<NAME>`；每条记录是一个条目，账户为 `record:<scope>/<id>`，内容为其 JSON。账户为 `index` 的条目列出记录键，因为平台工具无法按服务枚举条目。机密值通过 stdin 或 stdout 传给工具，绝不经过参数向量——同一用户的其他进程可以通过 `ps` 读取参数向量。macOS 写入通过 stdin 向 Security API 传递 JSON，保留长 grant、Unicode、引号、换行和末尾空格，不受交互式输入行长度限制。base64 存储与已有条目兼容。新条目信任 `/usr/bin/osascript` 和 `/usr/bin/security`；更新保留已有访问设置。写入失败时不报告辅助程序输出。
 
+记录在创建事务之前，以及读取已存记录或事务替代值时，使用[共享 JSON 校验](../../credentials/credentials/README.zh.md#understand-the-implementation)。无效数据会在任何条目改变之前终止操作；解析错误不暴露已存文本或原因链。
+
 `backend.ts` 包含两个平台后端，建立在可注入的命令运行器之上；`index.ts` 包含 `Config`、分层、记录校验与写入队列。记录操作和引用写入跨进程持有同一个 OS 用户/服务独占锁，包括异步 mutation 回调。`record-transaction-v1` 条目在修改记录和索引之前保存完整替换内容及目标索引；启动和后续记录操作先完成中断的事务，再读取或修改记录。损坏或不一致的事务会停止记录操作，不会覆盖已存条目。只有本提供方的写入和完成的修复会发出 `credentials/reference-updated` 与 `credentials/record-updated`。记录通知发生在记录、索引更新及 journal 删除之后；删除之后的进程崩溃可能丢失通知。记录提交或修复失败抛出 `KeychainCommitError`（`code: KEYCHAIN_COMMIT_UNKNOWN`、`outcome: unknown`），不保证存储未改变。重新打开提供方尝试恢复，然后检查凭据再重试；不会自动重试 mutation 回调。旧版本无法恢复待处理的 journal：降级或通过旧进程访问同一服务前须完成恢复。
 
 原生 POSIX 锁绑定在 `<OS 用户主目录>/.dsh-keychain-locks/` 下使用持久文件，以服务名的 SHA-256 哈希命名。该标识不依赖 `DSH_HOME`、profile 或工作目录。目录/文件的所有权或权限不安全时，在访问存储前失败。运行器以描述符 3 向辅助程序传递锁定的打开文件描述；只有全部副本关闭后内核才释放锁。获取超时不会启动操作。释放提供方时取消锁获取并等待已接受的操作结束；已开始的 mutation 回调由调用方负责取消。

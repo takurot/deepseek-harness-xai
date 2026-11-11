@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-alpha.3/credential-record-json/guide.md
+/:
+  en: 6e1053253d93e81e
+  zh: 8f2b45095bd99849
+/store-credential-records-as-plain-json-data:
+  en: 2587616529aec2ab
+  zh: fbb23966ed4e9a3a
+/store-credential-records-as-plain-json-data/change:
+  en: 55087b43e97799c7
+  zh: 9d9aade1fc054ba7
+/store-credential-records-as-plain-json-data/migration:
+  en: 6d185cc16dfd3fdc
+  zh: b63a6902469fdc24
