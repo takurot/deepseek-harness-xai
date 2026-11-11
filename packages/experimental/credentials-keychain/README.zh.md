@@ -43,7 +43,7 @@ kind: "package-reference"
 
 ### 平台
 
-macOS 使用 `security` 工具，无需安装。Linux 使用 libsecret 的 `secret-tool` 以及运行中的 Secret Service 会话（GNOME Keyring 或 KeePassXC）；无头服务器通常两者都没有。Windows 暂无受支持的存储。不支持的平台、缺失的工具或无法访问的存储会在插件加载时失败，而不是在第一次查找时才失败。
+macOS 通过系统 `osascript` JavaScript 桥接调用 Security API 写入，并用 `security` 读取和删除；两者均无需安装。Linux 使用 libsecret 的 `secret-tool` 以及运行中的 Secret Service 会话（GNOME Keyring 或 KeePassXC）；无头服务器通常两者都没有。Windows 暂无受支持的存储。不支持的平台、缺失的工具或无法访问的存储会在插件加载时失败，而不是在第一次查找时才失败。
 
 ### 迁移现有密钥
 
@@ -52,7 +52,7 @@ macOS 使用 `security` 工具，无需安装。Linux 使用 libsecret 的 `secr
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
-每个引用是一个钥匙串条目，账户为 `ref:<NAME>`；每条记录是一个条目，账户为 `record:<scope>/<id>`，内容为其 JSON。账户为 `index` 的条目列出记录键，因为平台工具无法按服务枚举条目。机密值通过 stdin 或 stdout 传给工具，绝不经过参数向量——同一用户的其他进程可以通过 `ps` 读取参数向量。在 macOS 上存储的文本为 base64，这样引号和空白字符不会到达 `security -i` 的交互式解析器。
+每个引用是一个钥匙串条目，账户为 `ref:<NAME>`；每条记录是一个条目，账户为 `record:<scope>/<id>`，内容为其 JSON。账户为 `index` 的条目列出记录键，因为平台工具无法按服务枚举条目。机密值通过 stdin 或 stdout 传给工具，绝不经过参数向量——同一用户的其他进程可以通过 `ps` 读取参数向量。macOS 写入通过 stdin 向 Security API 传递 JSON，保留长 grant、Unicode、引号、换行和末尾空格，不受交互式输入行长度限制。base64 存储与已有条目兼容。新条目信任 `/usr/bin/osascript` 和 `/usr/bin/security`；更新保留已有访问设置。写入失败时不报告辅助程序输出。
 
 `backend.ts` 包含两个平台后端，建立在可注入的命令运行器之上；`index.ts` 包含 `Config`、分层、记录校验与写入队列。写入在本进程内逐个执行，因此 `modifyRecord` 的读-决定-替换在本进程内互斥，但跨进程不互斥。只有本提供方自己的写入会发出 `credentials/reference-updated` 与 `credentials/record-updated`，且发生在钥匙串接受写入之后。
 

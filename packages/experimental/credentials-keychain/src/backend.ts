@@ -85,12 +85,46 @@ export function spawnRunner(command: string, args: readonly string[], stdin?: st
 /** Exit code of `security` for a missing item. */
 const MACOS_ITEM_NOT_FOUND = 44
 
+/** A constant JXA program; all item data arrives on stdin, never as executable source. */
+const MACOS_WRITE_SCRIPT = String.raw`
+ObjC.import('Foundation')
+ObjC.import('Security')
+function run() {
+  try {
+    const input = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile
+    const request = JSON.parse(ObjC.unwrap($.NSString.alloc.initWithDataEncoding(input, $.NSUTF8StringEncoding)))
+    const query = $.NSMutableDictionary.alloc.init
+    query.setObjectForKey(ObjC.castRefToObject($.kSecClassGenericPassword), ObjC.castRefToObject($.kSecClass))
+    query.setObjectForKey($(request.service), ObjC.castRefToObject($.kSecAttrService))
+    query.setObjectForKey($(request.account), ObjC.castRefToObject($.kSecAttrAccount))
+    const attributes = $.NSMutableDictionary.alloc.init
+    attributes.setObjectForKey($(request.secret).dataUsingEncoding($.NSUTF8StringEncoding), ObjC.castRefToObject($.kSecValueData))
+    let status = $.SecItemUpdate(query, attributes)
+    if (status === -25300) {
+      const security = Ref()
+      status = $.SecTrustedApplicationCreateFromPath('/usr/bin/security', security)
+      if (status !== 0) return String(status)
+      const script = Ref()
+      status = $.SecTrustedApplicationCreateFromPath('/usr/bin/osascript', script)
+      if (status !== 0) return String(status)
+      const access = Ref()
+      status = $.SecAccessCreate($(request.service), $([ObjC.castRefToObject(security[0]), ObjC.castRefToObject(script[0])]), access)
+      if (status !== 0) return String(status)
+      query.setObjectForKey(ObjC.castRefToObject(access[0]), ObjC.castRefToObject($.kSecAttrAccess))
+      query.addEntriesFromDictionary(attributes)
+      status = $.SecItemAdd(query, null)
+    }
+    return String(status)
+  } catch (error) {
+    return 'invalid'
+  }
+}
+`
+
 /**
- * macOS Keychain through the `security` tool. Reads use
- * `find-generic-password -w`; writes and deletes go through `security -i` so
- * the secret arrives on stdin. The interactive parser would misread quotes and
- * whitespace, so the stored text is base64 and account names are restricted to
- * the characters the provider generates.
+ * macOS Keychain: Security APIs write stdin JSON through the system JXA bridge;
+ * `security` reads and deletes existing items. Base64 storage preserves the
+ * format used by earlier interactive writes.
  * @param service - keychain service name.
  * @param run - command runner.
  * @returns the backend.
@@ -105,8 +139,10 @@ export function macosBackend(service: string, run: KeychainCommandRunner): Keych
     },
     async set(account, secret) {
       const encoded = Buffer.from(secret, 'utf8').toString('base64')
-      const result = await run('security', ['-i'], `add-generic-password -U -s ${service} -a ${account} -w ${encoded}\n`)
-      if (result.code !== 0) throw commandFailure('security add-generic-password', result)
+      const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', MACOS_WRITE_SCRIPT], JSON.stringify({ service, account, secret: encoded }))
+      if (result.code !== 0 || result.stdout.trim() !== '0') {
+        throw new Error('credentials-keychain: Keychain write failed; verify the store is accessible before retrying')
+      }
     },
     async delete(account) {
       const result = await run('security', ['-i'], `delete-generic-password -s ${service} -a ${account}\n`)

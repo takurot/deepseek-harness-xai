@@ -43,7 +43,7 @@ A reference resolves from the first layer that holds a non-empty value: the OS k
 
 ### Platforms
 
-macOS uses the `security` tool and needs no installation. Linux uses `secret-tool` from libsecret and a running Secret Service session (GNOME Keyring or KeePassXC); a headless server usually has neither. Windows has no supported store yet. An unsupported platform, a missing tool, or an unreachable store fails when the plugin loads, never later at the first lookup.
+macOS uses the system `osascript` JavaScript bridge for Security API writes and `security` for reads and deletes; neither requires installation. Linux uses `secret-tool` from libsecret and a running Secret Service session (GNOME Keyring or KeePassXC); a headless server usually has neither. Windows has no supported store yet. An unsupported platform, a missing tool, or an unreachable store fails when the plugin loads, never later at the first lookup.
 
 ### Moving existing keys
 
@@ -52,7 +52,7 @@ Nothing is migrated automatically. Save each key again through the configuration
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-Each reference is one keychain item with account `ref:<NAME>`; each record is one item with account `record:<scope>/<id>` holding its JSON. An item with account `index` lists the record keys, because the platform tools cannot enumerate items by service. Secret values reach the tools through stdin or stdout, never the argument vector, which other processes of the same user can read through `ps`. On macOS the stored text is base64 so quotes and whitespace cannot reach `security -i`'s interactive parser.
+Each reference is one keychain item with account `ref:<NAME>`; each record is one item with account `record:<scope>/<id>` holding its JSON. An item with account `index` lists the record keys, because the platform tools cannot enumerate items by service. Secret values reach the tools through stdin or stdout, never the argument vector, which other processes of the same user can read through `ps`. macOS writes pass JSON through stdin to the Security APIs, preserving long grants, Unicode, quotes, newlines, and trailing spaces without an interactive line limit. Base64 storage remains compatible with existing items. New items trust `/usr/bin/osascript` and `/usr/bin/security`; updates preserve existing access settings. Failed writes report no helper output.
 
 `backend.ts` holds the two platform backends over an injectable command runner; `index.ts` holds `Config`, layering, record validation, and the write queue. Writes run one at a time inside this process, so a `modifyRecord` read-decide-replace is exclusive here but not across processes. Only this provider's own writes emit `credentials/reference-updated` and `credentials/record-updated`, after the keychain accepted them.
 

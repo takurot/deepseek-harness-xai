@@ -28,13 +28,28 @@ describe('macosBackend', () => {
     await expect(macosBackend('dsh', fake({ code: null }).run).get('a')).rejects.toThrow('exit code null')
   })
 
-  it('writes through stdin as base64 so quotes cannot reach the interactive parser', async () => {
-    const { run, calls } = fake({})
+  it('writes stdin JSON and refuses invalid helper results without exposing output', async () => {
+    const { run, calls } = fake({ stdout: '0\n' })
     await macosBackend('dsh', run).set('ref:KEY', 'a "quoted" b')
-    expect(calls[0]!.args).toEqual(['-i'])
-    expect(calls[0]!.stdin).toBe(`add-generic-password -U -s dsh -a ref:KEY -w ${Buffer.from('a "quoted" b').toString('base64')}\n`)
+    expect(calls[0]!.args.slice(0, 3)).toEqual(['-l', 'JavaScript', '-e'])
+    expect(JSON.parse(calls[0]!.stdin!)).toEqual({ service: 'dsh', account: 'ref:KEY', secret: Buffer.from('a "quoted" b').toString('base64') })
     expect(JSON.stringify(calls[0]!.args)).not.toContain('quoted')
-    await expect(macosBackend('dsh', fake({ code: 1 }).run).set('a', 'b')).rejects.toThrow('add-generic-password failed')
+    for (const result of [
+      { code: 1, stdout: '0', stderr: 'private-token' },
+      { stdout: '' }, { stdout: '-25293' }, { stdout: '0 private-token' },
+    ]) {
+      await expect(macosBackend('dsh', fake(result).run).set('a', 'private-token'))
+        .rejects.toThrow('credentials-keychain: Keychain write failed; verify the store is accessible before retrying')
+    }
+  })
+
+  it('writes long Unicode values without an interactive command line', async () => {
+    const secret = '日本語 \"quoted\"\n'.repeat(4096) + '  '
+    const { run, calls } = fake({ stdout: '0\n' })
+    await macosBackend('dsh', run).set('record:oauth/test', secret)
+    expect(calls[0]!.command).toBe('/usr/bin/osascript')
+    expect(JSON.parse(calls[0]!.stdin!)).toEqual({ service: 'dsh', account: 'record:oauth/test', secret: Buffer.from(secret).toString('base64') })
+    expect(calls[0]!.args.join(' ')).not.toContain(secret)
   })
 
   it('deletes through stdin and treats a missing item as removed', async () => {
