@@ -52,7 +52,7 @@ macOS 通过系统 `osascript` JavaScript 桥接执行 Security API 操作，并
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
-引用使用逻辑账户 `ref:<NAME>`；记录使用 `record:<scope>/<id>`，内容为其 JSON。账户为 `index` 的条目列出记录键，因为平台工具无法按服务枚举条目。机密值通过 stdin 或 stdout 传给工具，绝不经过参数向量——同一用户的其他进程可以通过 `ps` 读取参数向量。macOS 操作通过 stdin 向 Security API 传递 JSON，保留长 grant、Unicode、引号、换行和末尾空格，不受交互式输入行长度限制。原生条目使用账户 `v2:<account>` 和 base64 值；同一 JXA 身份读取和写入，不改变旧条目的访问设置。读取优先使用原生后继条目，仅在后继不存在时通过 `security` 回退到无版本条目。写入保留旧物理副本，直到删除。删除先移除旧条目，再移除后继，避免删除失败时暴露旧凭据。不要对同一服务运行旧提供方：它们看不到后继，可能读到陈旧的旧值。参见[升级指南](../../../docs/upgrade-guide/v0.2.2-alpha.3/keychain-macos-native-items/guide.zh.md)。
+引用使用逻辑账户 `ref:<NAME>`；记录使用 `record:<scope>/<id>`，内容为其 JSON。账户为 `index` 的条目列出记录键，因为平台工具无法按服务枚举条目。机密值通过 stdin 或 stdout 传给工具，绝不经过参数向量——同一用户的其他进程可以通过 `ps` 读取参数向量。macOS 操作通过 stdin 向 Security API 传递 JSON，保留长 grant、Unicode、引号、换行和末尾空格，不受交互式输入行长度限制。原生条目使用账户 `v2:<account>` 和 base64 值；同一 JXA 身份读取和写入，不改变旧条目的访问设置。读取优先使用原生后继条目，仅在后继不存在时通过 `security` 回退到无版本条目。原生值必须使用规范 base64 和有效 UTF-8；畸形值拒绝处理，不会启用更低层。写入保留旧物理副本，直到删除。删除先移除旧条目，再移除后继，避免删除失败时暴露旧凭据。不要对同一服务运行旧提供方：它们看不到后继，可能读到陈旧的旧值。参见[升级指南](../../../docs/upgrade-guide/v0.2.2-alpha.3/keychain-macos-native-items/guide.zh.md)。
 
 `backend.ts` 包含两个平台后端，建立在可注入的命令运行器之上；`index.ts` 包含 `Config`、分层、记录校验与写入队列。记录操作在本进程内逐个执行。`record-transaction-v1` 条目在修改记录和索引之前保存完整替换内容及目标索引；启动和后续记录操作先完成中断的事务，再读取或修改记录。损坏或不一致的事务会停止记录操作，不会覆盖已存条目。目前尚未提供跨进程互斥。只有本提供方的写入和完成的修复会发出 `credentials/reference-updated` 与 `credentials/record-updated`。记录通知发生在记录、索引更新及 journal 删除之后；删除之后的进程崩溃可能丢失通知。记录提交或修复失败抛出 `KeychainCommitError`（`code: KEYCHAIN_COMMIT_UNKNOWN`、`outcome: unknown`），不保证存储未改变。重新打开提供方尝试恢复，然后检查凭据再重试；不会自动重试 mutation 回调。旧版本无法恢复待处理的 journal：降级或通过旧进程访问同一服务前须完成恢复。
 

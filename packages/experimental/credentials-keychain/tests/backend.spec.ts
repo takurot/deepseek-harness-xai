@@ -84,6 +84,16 @@ describe('macosBackend', () => {
     await expect(macosBackend('dsh', fake({ stdout: '{"status":0,"secret":"private"}' }).run).set('a', 'private')).rejects.toThrow('macOS set failed')
   })
 
+  it('rejects noncanonical base64 and malformed UTF-8 without falling back', async () => {
+    for (const secret of ['!', 'Zg', '====', '/w==', 'YWJj\n']) {
+      const { run, calls } = fake({ stdout: JSON.stringify({ status: 0, secret }) })
+      await expect(macosBackend('dsh', run).get('a')).rejects.toThrow('macOS get failed')
+      expect(calls).toHaveLength(1)
+    }
+    const value = '\uFEFF日本語\0\n '
+    expect(await macosBackend('dsh', fake({ stdout: JSON.stringify({ status: 0, secret: Buffer.from(value).toString('base64') }) }).run).get('a')).toBe(value)
+  })
+
   it('leaves the successor readable when either deletion fails and completes on retry', async () => {
     for (const phase of ['legacy', 'native'] as const) {
       const store = macStore()

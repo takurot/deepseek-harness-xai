@@ -166,7 +166,12 @@ export function macosBackend(service: string, run: KeychainCommandRunner): Keych
   return {
     async get(account) {
       const result = await native('get', account)
-      if ('secret' in result) return Buffer.from(result.secret, 'base64').toString('utf8')
+      if ('secret' in result) {
+        const bytes = Buffer.from(result.secret, 'base64')
+        const value = bytes.toString('utf8')
+        if (bytes.toString('base64') !== result.secret || !Buffer.from(value, 'utf8').equals(bytes)) throw failure('get')
+        return value
+      }
       if (result.status !== MACOS_STATUS_NOT_FOUND) throw failure('get')
       const legacy = await run('security', ['find-generic-password', '-s', service, '-a', account, '-w'])
       if (legacy.code === MACOS_ITEM_NOT_FOUND) return undefined
