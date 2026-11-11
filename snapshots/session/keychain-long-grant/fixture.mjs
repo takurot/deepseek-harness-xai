@@ -151,7 +151,36 @@ export async function apply(ctx) {
       assert.deepEqual(await completed.readRecord(firstKey), firstRecord)
       assert.deepEqual(await completed.readRecord(secondKey), secondRecord)
       assert.deepEqual(await completed.listRecords(), [{ key, kind: 'grant' }, { key: firstKey, kind: 'api-key' }, { key: secondKey, kind: 'api-key' }])
-      await writeFile('keychain-result.json', JSON.stringify({ storedBytes, roundTrip: true, reloaded: true, listed: true, unknownOutcome: true, recovered: true, serialized: true, allListed: true }) + '\n')
+      const store = join(process.cwd(), '.dsh', 'keychain-fixture-items.json')
+      const beforeInvalid = await readFile(store, 'utf8')
+      const notificationBaseline = [...notifications]
+      const expectedEntries = await completed.listRecords()
+      const assertPreserved = async () => {
+        assert.equal(await readFile(store, 'utf8'), beforeInvalid)
+        assert.deepEqual(await completed.readRecord(key), record)
+        assert.deepEqual(await completed.listRecords(), expectedEntries)
+        assert.deepEqual(notifications, notificationBaseline)
+      }
+      for (const payload of [NaN, { nested: undefined }, -0]) {
+        await assert.rejects(completed.modifyRecord(key, async () => ({ kind: 'grant', payload })), TypeError)
+        await assertPreserved()
+      }
+      await assert.rejects(completed.modifyRecord(key, async current => {
+        assert.ok(current)
+        assert.equal(current.kind, 'grant')
+        current.payload.token = 'mutated callback copy'
+        return { kind: 'grant', payload: { nested: undefined } }
+      }), TypeError)
+      await assertPreserved()
+      const declined = await completed.modifyRecord(key, async current => {
+        assert.ok(current)
+        assert.equal(current.kind, 'grant')
+        current.payload.token = 'declined callback copy'
+        return undefined
+      })
+      assert.deepEqual(declined, record)
+      await assertPreserved()
+      await writeFile('keychain-result.json', JSON.stringify({ storedBytes, roundTrip: true, reloaded: true, listed: true, unknownOutcome: true, recovered: true, serialized: true, allListed: true, invalidRejected: true, invalidPreserved: true }) + '\n')
       initialized = true
     }
     return next()
