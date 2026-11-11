@@ -82,7 +82,7 @@ describe('Fork CI workflow', () => {
   it('runs the compatibility and Loader checks on both supported version lanes', () => {
     const compatibility = job('node-compat')
     expect(compatibility.strategy).toEqual({
-      'fail-fast': false, 'max-parallel': 1, matrix: { node: ['24.9', '26'] },
+      'fail-fast': false, 'max-parallel': 1, matrix: { node: ['24.9', '25'] },
     })
     expect(compatibility.steps?.find(step => step.uses?.startsWith('actions/setup-node@'))?.with?.['node-version'])
       .toBe('${{ matrix.node }}')
