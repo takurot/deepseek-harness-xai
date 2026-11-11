@@ -138,7 +138,7 @@ gh run rerun <run-id> --failed --repo takurot/deepseek-harness-xai
 gh workflow list --all --repo takurot/deepseek-harness-xai
 ```
 
-覆盖率、构建产物和兼容性作业会附带资源摘要和测量产物。查看各命令的耗时和最大常驻内存、各记录阶段的可用磁盘空间及 pnpm 缓存结果。根据作业的开始和完成时间记录运行器用时。
+覆盖率、构建产物和兼容性作业会附带资源摘要和测量产物。查看各命令的耗时和最大常驻内存、可用时的 cgroup 内存峰值、各记录阶段的可用磁盘空间及 pnpm 缓存结果。各命令的常驻内存测量值取单个进程的最大值。根据作业的开始和完成时间记录运行器用时。
 
 fork 在 Actions 设置中停用了以下上游工作流。使用上面的 `gh workflow list --all` 查看实时状态。
 

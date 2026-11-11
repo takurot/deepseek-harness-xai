@@ -91,7 +91,7 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=8192
       DSH_GATE_CONCURRENCY: '1'
       DSH_GATE_FAIL_FAST: '1'
-      DSH_COVERAGE_MAX_WORKERS: '1'
+      DSH_COVERAGE_MAX_WORKERS: '3'
       DSH_COVERAGE_TEST_TIMEOUT_MS: '90000'
     steps:
       - &heavy-temp
@@ -153,6 +153,12 @@ jobs:
         run: |
           metrics="$RUNNER_TEMP/fork-ci-metrics"
           df -h . "$RUNNER_TEMP" > "$metrics/after-gates.txt"
+          if [ -r /sys/fs/cgroup/memory.peak ]; then
+            printf 'cgroup memory peak (bytes): ' > "$metrics/memory-peak.txt"
+            cat /sys/fs/cgroup/memory.peak >> "$metrics/memory-peak.txt"
+          else
+            printf 'cgroup memory peak unavailable\n' > "$metrics/memory-peak.txt"
+          fi
           {
             for file in "$metrics"/*.txt; do
               printf '### %s\n\n```text\n' "$(basename "$file" .txt)"
@@ -178,7 +184,7 @@ jobs:
       DSH_GATE_FAIL_FAST: '1'
       DSH_SNAPSHOT_MAX_WORKERS: '1'
       DSH_SNAPSHOT_MAX_CONCURRENCY: '1'
-      DSH_WEB_SNAPSHOT_WORKERS: '1'
+      DSH_WEB_SNAPSHOT_WORKERS: '2'
       DSH_PUBLINT_CONCURRENCY: '1'
       DSH_NODE_COMPAT_SKIP_TYPECHECK: '1'
     steps:

@@ -138,7 +138,7 @@ gh run rerun <run-id> --failed --repo takurot/deepseek-harness-xai
 gh workflow list --all --repo takurot/deepseek-harness-xai
 ```
 
-The coverage, artifact and compatibility jobs attach resource summaries and measurement artifacts. Read elapsed time and maximum resident memory per command, disk availability at each recorded stage, and the pnpm cache result. Record runner time from job start and completion timestamps.
+The coverage, artifact and compatibility jobs attach resource summaries and measurement artifacts. Read elapsed time and maximum resident memory per command, the cgroup memory peak when available, disk availability at each recorded stage, and the pnpm cache result. Per-command resident memory is the largest individual process measurement. Record runner time from job start and completion timestamps.
 
 The fork disables these upstream workflows in Actions settings. Use `gh workflow list --all` above to verify their live state.
 

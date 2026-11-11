@@ -1589,26 +1589,40 @@ describe('continuable durability and teardown', () => {
     await waitNoActivation(ctx, started.childId)
   })
 
-  it('settles despite the persistence backend being disposed mid-run', async () => {
+  it('drains the active child before disposing its persistence backend', async () => {
     const releaseResponse = Promise.withResolvers<undefined>()
     const adapter = new GatedAdapter([
       { chunks: textResponse('unconfirmed answer'), gate: releaseResponse.promise },
     ])
-    const { ctx, parent, disposePersistence } = await setupWith(adapter)
-    const warnings: string[] = []
-    ctx.logger.warn = (message: string) => { warnings.push(message) }
+    const { ctx, parent, disposePersistence, root } = await setupWith(adapter)
 
     const started = await ctx.subagents.startActivation({ ...startSpec(parent), delivery: 'parent' })
     await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
-    // Tear down the whole backend under the child's open write path: its
-    // teardown closes the handle (draining what was buffered) and detaches
-    // the durability listeners, so the final flush finds no participant and
-    // never pins the Activation.
-    await disposePersistence!()
-    releaseResponse.resolve(undefined)
+    const child = ctx.agents.get(started.childId)!
+    const cancelled = vi.spyOn(child, 'cancel')
+    const disposing = disposePersistence!()
+    try {
+      await vi.waitFor(() => { expect(cancelled).toHaveBeenCalled() })
+    } finally {
+      // The scripted stream observes cancellation only after its response gate opens.
+      releaseResponse.resolve(undefined)
+      await disposing
+    }
 
     await waitNoActivation(ctx, started.childId)
-    expect(warnings.join('\n')).not.toContain('final session flush')
+    const verify = new Context()
+    try {
+      await verify.plugin(JsonlSessionPersistence, { root: root! })
+      const stored = await loadStoredSession(verify.sessionPersistence, started.childId)
+      expect(stored.events.filter(event => event.type === 'step/end' || event.type === 'turn/end')
+        .map(({ type, data }) => ({ type, data }))).toEqual([
+        { type: 'step/end', data: { turn: 1, step: 1 } },
+        { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted', reason: { kind: 'disposed' } } } },
+      ])
+      expect(stored.events.at(-1)?.type).toBe('turn/end')
+    } finally {
+      await verify.fiber.dispose()
+    }
   })
 
   it('logs a failed final flush after every listener settles without failing the Activation', async () => {
