@@ -18253,9 +18253,6 @@ importers:
       '@deepseek-ai/dsh-compaction-tool-result-pruner':
         specifier: workspace:*
         version: link:../../packages/compaction/compaction-tool-result-pruner
-      '@deepseek-ai/dsh-computer-use':
-        specifier: workspace:*
-        version: link:../../packages/computer-use/computer-use
       '@deepseek-ai/dsh-config-editor':
         specifier: workspace:*
         version: link:../../packages/boot/config-editor
@@ -18271,18 +18268,6 @@ importers:
       '@deepseek-ai/dsh-deepseek-llm-api-extensions':
         specifier: workspace:*
         version: link:../../packages/llm/deepseek-llm-api-extensions
-      '@deepseek-ai/dsh-experimental-forge':
-        specifier: workspace:*
-        version: link:../../packages/experimental/forge
-      '@deepseek-ai/dsh-experimental-speech-to-text':
-        specifier: workspace:*
-        version: link:../../packages/experimental/speech-to-text
-      '@deepseek-ai/dsh-experimental-translator':
-        specifier: workspace:*
-        version: link:../../packages/experimental/translator
-      '@deepseek-ai/dsh-experimental-worktree':
-        specifier: workspace:*
-        version: link:../../packages/experimental/worktree
       '@deepseek-ai/dsh-file-reference':
         specifier: workspace:*
         version: link:../../packages/context/file-reference

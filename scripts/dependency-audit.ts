@@ -289,11 +289,12 @@ async function main(): Promise<void> {
   try {
     const distributionRoots: AuditDistributionRoot[] = []
     for (const manifestPath of ['apps/cli/package.json', 'apps/desktop-host/package.json', 'python/sdk-runtime/package.json']) {
+      const { workspacePackages } = await collectRuntimeClosure(root, manifestPath)
       if (manifestPath.startsWith('python/')) {
-        distributionRoots.push({ manifestPath, verification: 'deploy-root-peers-and-presets', ...await verifyRuntimeClosure(root, manifestPath) })
+        const { failures } = await verifyRuntimeClosure(root, manifestPath)
+        distributionRoots.push({ manifestPath, verification: 'deploy-root-peers-and-presets', workspacePackages, failures })
       } else {
-        const membership = await collectRuntimeClosure(root, manifestPath)
-        distributionRoots.push({ manifestPath, verification: 'membership-only', workspacePackages: membership.workspacePackages, failures: [] })
+        distributionRoots.push({ manifestPath, verification: 'membership-only', workspacePackages, failures: [] })
       }
     }
     const commit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' })

@@ -101,6 +101,31 @@ describe('verifyRuntimeClosure', () => {
     ])
   })
 
+  it('keeps launcher opt-ins in membership and checks peers reached by a required path', async () => {
+    const cli = '@deepseek-ai/dsh'
+    const bundle = '@deepseek-ai/dsh-experimental-forge-bundle'
+    const manifestPath = 'python/sdk-runtime/package.json'
+    const root = fixture({
+      [manifestPath]: { name: 'runtime', dependencies: { [cli]: 'workspace:*' } },
+      'apps/cli/package.json': { name: cli, dependencies: { [bundle]: 'workspace:*' } },
+      'packages/experimental/forge-bundle/package.json': { name: bundle, peerDependencies: { '@scope/peer': 'workspace:*' } },
+      'python/sdk-runtime/platforms.json': platforms,
+      'preset:standard': `- name: '${cli}'`,
+    })
+    workspace(root, '@scope/peer', {})
+
+    expect((await collectRuntimeClosure(root, manifestPath)).workspacePackages.map(member => member.name))
+      .toEqual([cli, bundle])
+    expect((await verifyRuntimeClosure(root, manifestPath)).failures).toEqual([])
+
+    workspace(root, '@scope/required', { dependencies: { [bundle]: 'workspace:*' } })
+    writeFileSync(join(root, manifestPath), JSON.stringify({
+      name: 'runtime', dependencies: { [cli]: 'workspace:*', '@scope/required': 'workspace:*' },
+    }))
+    expect((await verifyRuntimeClosure(root, manifestPath)).failures)
+      .toEqual([`runtime -> @scope/required -> ${bundle} -> @scope/peer`])
+  })
+
   it('checks a private worker closure without requiring application presets', async () => {
     const manifestPath = 'packages/ssh/ssh-helper-runtime/package.json'
     const root = fixture({ [manifestPath]: { name: 'helper', dependencies: { '@scope/worker': 'workspace:^' } } })

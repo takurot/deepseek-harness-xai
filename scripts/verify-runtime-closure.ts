@@ -7,9 +7,11 @@
 import { globSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { readWorkspaceManifests } from './check-workspace-constraints.ts'
 import { parseArgs } from 'node:util'
+import { OPTIONAL_BUNDLES } from '../packages/util/official-bundles/src/bundles.ts'
+import { readWorkspaceManifests } from './check-workspace-constraints.ts'
 import { isCordisGroupEntry, loadCordisYaml, presetDefinitions } from './cordis-yaml.ts'
+import { isExperimentalPackageName } from './experimental-package-policy.ts'
 
 interface PackageManifest {
   name?: string
@@ -54,7 +56,7 @@ export async function verifyRuntimeClosure(
 ): Promise<RuntimeClosureResult> {
   const runtimeManifest = await loadManifest(resolve(root, manifestPath))
   const runtimeDependencies = runtimeManifest.dependencies ?? {}
-  const membership = await collectRuntimeClosure(root, manifestPath)
+  const membership = await walkRuntimeClosure(root, manifestPath, includePresets)
   const platforms = includePresets ? await loadJson<RuntimePlatformManifest>(resolve(root, 'python/sdk-runtime/platforms.json')) : {}
   const presetPaths = includePresets ? globSync(AGENT_PRESET_GLOB, { cwd: root }).sort() : []
   const targets = Object.keys(platforms).sort()
@@ -85,7 +87,11 @@ export interface RuntimeClosureMembership {
  * @param manifestPath Root manifest path relative to the repository.
  * @returns Sorted membership and required workspace peers; this does not validate installed peer resolution.
  */
-export async function collectRuntimeClosure(root: string, manifestPath: string): Promise<RuntimeClosureMembership> {
+export function collectRuntimeClosure(root: string, manifestPath: string): Promise<RuntimeClosureMembership> {
+  return walkRuntimeClosure(root, manifestPath, false)
+}
+
+async function walkRuntimeClosure(root: string, manifestPath: string, validateDefaultProfiles: boolean): Promise<RuntimeClosureMembership> {
   const runtimeManifest = await loadManifest(resolve(root, manifestPath))
   const runtimeName = runtimeManifest.name ?? manifestPath
   const workspace = await loadWorkspacePackages(root)
@@ -109,7 +115,13 @@ export async function collectRuntimeClosure(root: string, manifestPath: string):
     }
     const dependencies = { ...current.manifest.dependencies, ...current.manifest.optionalDependencies }
     for (const dependency of Object.keys(dependencies).sort()) {
-      if (!workspace.has(dependency) || parents.has(dependency)) continue
+      const target = workspace.get(dependency)
+      if (target === undefined || parents.has(dependency)) continue
+      // The launcher ships these bundles disabled. Their edges stay visible to audit membership.
+      if (validateDefaultProfiles && current.path === 'apps/cli/package.json'
+        && current.manifest.optionalDependencies?.[dependency] === undefined
+        && OPTIONAL_BUNDLES.includes(dependency)
+        && (isExperimentalPackageName(dependency) || target.path.startsWith('packages/experimental/'))) continue
       parents.set(dependency, packageName)
       queue.push(dependency)
     }
