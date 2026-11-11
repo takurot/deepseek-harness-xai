@@ -108,6 +108,7 @@ type StubMode =
   | 'with-echo'
   | 'exit-after-send'
   | 'prompt-collision'
+  | 'interrupted-echo'
 
 const START_PATTERN = /__DSH_PERSISTENT_PWSH_START_[^_]+(?:-[^_]+)*__/
 const END_PATTERN = /__DSH_PERSISTENT_PWSH_END_[^:]+:/
@@ -174,6 +175,11 @@ class StubTerminalSession implements TerminalBackendSession {
     this.pendingText = ''
     const start = START_PATTERN.exec(sent)?.[0]
     const end = END_PATTERN.exec(sent)?.[0]
+    if (this.mode === 'interrupted-echo') {
+      const output = `${sent}\n^C\n${this.motd}`
+      this.scrollback += output
+      return this.operation(Promise.resolve(this.result(output, 'stdin_read')))
+    }
     if (this.mode === 'with-echo') {
       // The PSReadLine echo renders the submitted wrapper before the real
       // markers; the tool must strip it from the captured result.
@@ -336,6 +342,33 @@ async function setup(
 }
 
 describe('tool-pwsh-persistent', () => {
+  it('requests the same complete START output line across empty polling sends', async () => {
+    const { ctx, owner, stub } = await setup()
+    await call(ctx, owner, 'first')
+    const session = stub.sessions[0]!
+    session.mode = 'idle-then-normal'
+    const sends = vi.spyOn(session, 'startSend')
+    expect(text(await call(ctx, owner, 'second'))).toBe('hello from stub')
+    expect(sends).toHaveBeenCalledTimes(2)
+    const initial = sends.mock.calls[0]![0]
+    const start = START_PATTERN.exec(initial.text)?.[0]
+    expect(start).toBeDefined()
+    expect(initial).toMatchObject({ submit: true, stdinWaitAfterOutput: start })
+    expect(sends.mock.calls[1]![0]).toMatchObject({ text: '', submit: false, stdinWaitAfterOutput: start })
+  })
+
+  it('excludes wrapper source when interrupted before an emitted START line', async () => {
+    const { ctx, owner, stub } = await setup()
+    await call(ctx, owner, 'first')
+    const session = stub.sessions[0]!
+    session.mode = 'interrupted-echo'
+    const output = text(await call(ctx, owner, 'interrupted'))
+    expect(output).toContain('^C\nstub> ')
+    expect(output).not.toContain('$LASTEXITCODE')
+    expect(output).not.toContain('__DSH_PERSISTENT_PWSH')
+    expect(session.closed).toEqual([])
+  })
+
   it('registers a configurable schema and reuses one owner shell', async () => {
     const { ctx, owner, stub, fiber } = await setup({
       backendType: 'stub',
