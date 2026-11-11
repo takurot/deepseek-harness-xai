@@ -18,8 +18,12 @@ class SnapshotSession {
     }
     const start = /__DSH_PERSISTENT_PWSH_START_[a-f0-9-]+__/.exec(request.text)?.[0]
     const end = /__DSH_PERSISTENT_PWSH_END_[a-f0-9-]+:/.exec(request.text)?.[0]
-    if (!start || !end) throw new Error('padded-completion snapshot requires the actual command markers')
-    const viewport = `${request.text}\r\n${start}\r\n  ${response.token}  ${end}${response.code}  \r\n${this.motd}`
+    const done = /__DSH_PERSISTENT_PWSH_DONE_[a-f0-9-]+__/.exec(request.text)?.[0]
+    const frame = request.stdinWaitAfterOutput
+    if (!start || !end || !done || typeof frame !== 'object' || frame.startLine !== start || frame.completionLine !== done) {
+      throw new Error('padded-completion snapshot requires the actual command frame')
+    }
+    const viewport = `${request.text}\r\n${start}\r\n  ${response.token}  ${end}${response.code}  \r\n${done}\r\n${this.motd}`
     this.scrollback += viewport
     const result = { viewport, waitReason: 'stdin_read', sessionStatus: this.statusValue, truncated: false }
     let consumed = false
