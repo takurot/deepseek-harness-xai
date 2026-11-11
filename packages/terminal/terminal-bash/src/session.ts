@@ -261,7 +261,15 @@ export class LocalPtySession implements TerminalBackendSession {
   private promptSeen = false
   private promptTextSeen = false
   private promptTail = ''
-  private stdinWaitOutput: { line: string; tail: string; accepted: boolean } | undefined
+  private stdinWaitOutput: {
+    line: string
+    completionLine: string | undefined
+    startedAt: number
+    tail: string
+    accepted: boolean
+    completed: boolean
+    interrupted: boolean
+  } | undefined
   private shellPgid: number | undefined
   private initializing = false
   private lastOutputAt = Date.now()
@@ -345,8 +353,11 @@ export class LocalPtySession implements TerminalBackendSession {
       () => { this.interrupt(operation) },
     )
     this.active = operation
+    const previousFraming = this.stdinWaitOutput
     this.prepareStdinWaitOutput(request)
-    this.resetReadinessEvidence()
+    if (this.stdinWaitOutput?.completionLine === undefined || this.stdinWaitOutput !== previousFraming) {
+      this.resetReadinessEvidence()
+    }
 
     if (request.signal !== undefined) {
       const onAbort = (): void => { operation.cancel() }
@@ -430,11 +441,18 @@ export class LocalPtySession implements TerminalBackendSession {
   }
 
   private prepareStdinWaitOutput(request: TerminalSendRequest): void {
-    const line = request.stdinWaitAfterOutput
-    if (line === undefined) {
+    const required = request.stdinWaitAfterOutput
+    if (required === undefined) {
       this.stdinWaitOutput = undefined
-    } else if (request.text.length > 0 || request.submit || this.stdinWaitOutput?.line !== line) {
-      this.stdinWaitOutput = { line, tail: '\n', accepted: false }
+      return
+    }
+    const line = typeof required === 'string' ? required : required.startLine
+    const completionLine = typeof required === 'string' ? undefined : required.completionLine
+    if (request.text.length > 0 || request.submit || this.stdinWaitOutput?.line !== line
+      || this.stdinWaitOutput.completionLine !== completionLine) {
+      this.stdinWaitOutput = {
+        line, completionLine, startedAt: Date.now(), tail: '\n', accepted: false, completed: false, interrupted: false,
+      }
     }
   }
 
@@ -465,7 +483,12 @@ export class LocalPtySession implements TerminalBackendSession {
 
   async signal(signal: TerminalSignal): Promise<TerminalSignalResult> {
     if (this.closing) throw new Error('PTY session is closing')
+    const framing = this.stdinWaitOutput
+    if (signal === 'SIGINT' && framing?.completionLine !== undefined) this.resetReadinessEvidence()
     const targetPgid = await this.terminal.signalForeground(signal)
+    if (signal === 'SIGINT' && framing?.completionLine !== undefined && this.stdinWaitOutput === framing) {
+      framing.interrupted = true
+    }
     return { delivered: true, targetPgid }
   }
 
@@ -544,15 +567,34 @@ export class LocalPtySession implements TerminalBackendSession {
 
   private appendOutput(text: string): void {
     if (text.length === 0) return
-    const required = this.stdinWaitOutput
-    if (required !== undefined && !required.accepted) {
-      const output = required.tail + text
-      required.accepted = output.includes(`\n${required.line}\n`)
-      required.tail = required.accepted ? '' : output.slice(-(required.line.length + 1))
-    }
+    this.appendStdinWaitOutput(text)
     this.lastOutputAt = Date.now()
     this.scrollback.append(text)
     this.active?.append(text)
+  }
+
+  private appendStdinWaitOutput(text: string): void {
+    const required = this.stdinWaitOutput
+    if (required === undefined || required.completed) return
+    while (true) {
+      const line = required.accepted ? required.completionLine : required.line
+      if (line === undefined) return
+      const output = required.tail + text
+      const marker = `\n${line}\n`
+      const position = output.indexOf(marker)
+      if (position < 0) {
+        required.tail = output.slice(-(line.length + 1))
+        return
+      }
+      if (required.accepted) {
+        required.completed = true
+        required.tail = ''
+        return
+      }
+      required.accepted = true
+      required.tail = '\n'
+      text = output.slice(position + marker.length)
+    }
   }
 
   private schedulePoll(operation: LocalSendOperation, delayMs = this.config.pollIntervalMs): void {
@@ -584,16 +626,24 @@ export class LocalPtySession implements TerminalBackendSession {
       if (this.promptSeen && foreground !== undefined && this.shellPgid === undefined) {
         this.shellPgid = foreground.processGroupId
       }
+      const required = this.stdinWaitOutput
+      const framedPromptReady = required?.completionLine === undefined || required.completed || required.interrupted
       if (this.promptSeen && this.promptTextSeen && idleFor >= this.config.pollIntervalMs
-        && foreground?.processGroupId === this.shellPgid) {
+        && foreground?.processGroupId === this.shellPgid && framedPromptReady) {
         this.settleActive('stdin_read')
         return
       }
-      const elapsed = Date.now() - operation.startedAt
+      const elapsed = Date.now() - (required?.completionLine === undefined ? operation.startedAt : required.startedAt)
       const startupHasOutput = !this.initializing || !this.scrollback.isEmpty
       const acceptsStdinWait = startupHasOutput && foreground !== undefined
         && operation.acceptsStdinWait(foreground.processGroupId, foreground.inputWaiting)
-      if (elapsed >= this.config.exactProbeAfterMs && acceptsStdinWait && this.stdinWaitOutput?.accepted !== false) {
+      const differentGroup = foreground !== undefined && this.shellPgid !== undefined
+        && foreground.processGroupId !== this.shellPgid
+      const outputAllowsNativeWait = required === undefined || (required.completionLine === undefined
+        ? required.accepted : required.completed || (required.accepted && differentGroup))
+      const nativeWaitReady = required?.completionLine === undefined
+        ? acceptsStdinWait : foreground?.inputWaiting === true
+      if (elapsed >= this.config.exactProbeAfterMs && nativeWaitReady && outputAllowsNativeWait) {
         this.settleActive('stdin_read')
         return
       }
@@ -774,7 +824,7 @@ export class LocalPtySession implements TerminalBackendSession {
     try {
       const activeWrite = this.activeWrite
       if (activeWrite !== undefined && !await activeWrite) return
-      await this.terminal.signalForeground('SIGINT')
+      await this.signal('SIGINT')
     } catch (error: unknown) {
       if (this.active === operation && !this.closing) this.onTransportFailure(error)
       return

@@ -60,7 +60,11 @@ interface TerminalBackendSession {
 
 一个活跃会话同时只接受一个活动发送。该操作向通用后台任务提供读取后即推进的输出游标，并向前台调用方提供最终结果。`TerminalReadResult` 则为有界的会话 scrollback 单独分页。
 
-`TerminalSendRequest.stdinWaitAfterOutput` 可选地要求先出现一行完整的清理后输出（不含换行符），再由原生 stdin 等待就绪结算发送。携带相同行条件、不提交且文本为空的后续发送保留接受状态，即使输出保留区已经丢弃该行。新输入、提交、更改或省略行条件会清除该证据。已验证的受控提示符可以在所需行到达前结算。
+`TerminalSendRequest.stdinWaitAfterOutput` 接受字符串或 `{ startLine, completionLine }`。每个值指定一行完整的清理后输出，不含换行符。字符串形式要求先出现指定行，再接受原生 stdin 等待就绪；已验证的受控提示符仍可在该行到达前结算。
+
+对象形式要求先出现起始行、再出现完成行，shell 进程组中的等待或普通受控提示符才可结算。起始行到达后，已证明的不同进程组原生输入等待可以提前结算；未知的 shell 进程组不能证明这一区别。成功投递的 `SIGINT` 仅允许同一保留命令在完成前通过受控提示符结算。完成行加原生就绪不要求受控提示符。
+
+携带等价值、不提交且文本为空的后续发送会跨输出消费、裁剪与推断空闲保留已观察的行及已确认信号。对象形式从命令帧的输入时刻计算精确探测等待时间，不会在每次空文本续读时重新计时。新输入、提交、更改值或形式、或省略该字段会清除证据。在重置后才完成投递的信号不能授权后继命令。
 
 ```ts type-equiv
 /** Live backend-owned send; exactly one may be active per PTY session. */
