@@ -1,0 +1,6 @@
+- id: credentials
+  disabled: true
+
+- insert:
+    - id: keychain-long-grant-fixture
+      name: './fixture.mjs'

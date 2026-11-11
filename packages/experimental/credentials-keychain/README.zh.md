@@ -44,7 +44,7 @@ kind: "package-reference"
 
 ### 平台
 
-macOS 通过系统 `osascript` JavaScript 桥接调用 Security API 写入，并用 `security` 读取和删除；两者均无需安装。Linux 使用 libsecret 的 `secret-tool` 以及运行中的 Secret Service 会话（GNOME Keyring 或 KeePassXC）；无头服务器通常两者都没有。预构建 POSIX 锁绑定支持 arm64 和 x64 上的 macOS 与 Linux；其他架构须使用 `credentials-local`。Windows 暂无受支持的存储。不支持的平台、缺失的工具或无法访问的存储会在插件加载时失败，而不是在第一次查找时才失败。
+macOS 通过系统 `osascript` JavaScript 桥接执行 Security API 操作，并用 `security` 处理旧条目；两者均无需安装。Linux 使用 libsecret 的 `secret-tool` 以及运行中的 Secret Service 会话（GNOME Keyring 或 KeePassXC）；无头服务器通常两者都没有。预构建 POSIX 锁绑定支持 arm64 和 x64 上的 macOS 与 Linux；其他架构须使用 `credentials-local`。Windows 暂无受支持的存储。不支持的平台、缺失的工具或无法访问的存储会在插件加载时失败，而不是在第一次查找时才失败。
 
 ### 迁移现有密钥
 
@@ -53,7 +53,7 @@ macOS 通过系统 `osascript` JavaScript 桥接调用 Security API 写入，并
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
-每个引用是一个钥匙串条目，账户为 `ref:<NAME>`；每条记录是一个条目，账户为 `record:<scope>/<id>`，内容为其 JSON。账户为 `index` 的条目列出记录键，因为平台工具无法按服务枚举条目。机密值通过 stdin 或 stdout 传给工具，绝不经过参数向量——同一用户的其他进程可以通过 `ps` 读取参数向量。macOS 写入通过 stdin 向 Security API 传递 JSON，保留长 grant、Unicode、引号、换行和末尾空格，不受交互式输入行长度限制。base64 存储与已有条目兼容。新条目信任 `/usr/bin/osascript` 和 `/usr/bin/security`；更新保留已有访问设置。写入失败时不报告辅助程序输出。
+引用使用逻辑账户 `ref:<NAME>`；记录使用 `record:<scope>/<id>`，内容为其 JSON。账户为 `index` 的条目列出记录键，因为平台工具无法按服务枚举条目。机密值通过 stdin 或 stdout 传给工具，绝不经过参数向量——同一用户的其他进程可以通过 `ps` 读取参数向量。macOS 操作通过 stdin 向 Security API 传递 JSON，保留长 grant、Unicode、引号、换行和末尾空格，不受交互式输入行长度限制。原生条目使用账户 `v2:<account>` 和 base64 值；同一 JXA 身份读取和写入，不改变旧条目的访问设置。读取优先使用原生后继条目，仅在后继不存在时通过 `security` 回退到无版本条目。写入保留旧物理副本，直到删除。删除先移除旧条目，再移除后继，避免删除失败时暴露旧凭据。不要对同一服务运行旧提供方：它们看不到后继，可能读到陈旧的旧值。参见[升级指南](../../../docs/upgrade-guide/v0.2.2-alpha.3/keychain-macos-native-items/guide.zh.md)。
 
 记录在创建事务之前，以及读取已存记录或事务替代值时，使用[共享 JSON 校验](../../credentials/credentials/README.zh.md#understand-the-implementation)。无效数据会在任何条目改变之前终止操作；解析错误不暴露已存文本或原因链。
 
@@ -88,7 +88,7 @@ macOS 通过系统 `osascript` JavaScript 桥接调用 Security API 写入，并
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **同 UID 进程仍可读取密钥**——`security` 与 `secret-tool` 客户端会不经提示地回应你 OS 用户的任何进程，因此智能体 shell 可以执行 `security find-generic-password -s dsh -a ref:NAME -w`。本包去掉的是明文文件，而不是这条读取路径；要堵上它，需要限定为已签名 harness 二进制的访问列表，以及拒绝钥匙串访问的沙箱配置。
+- **同 UID 进程仍可读取密钥**——智能体 shell 可以使用你的 OS 用户权限，通过 `osascript` 访问 macOS 原生条目、`security` 访问旧条目，或 `secret-tool` 访问 Linux 条目。本包去掉的是明文文件，而不是这条读取路径；要堵上它，需要限定为已签名 harness 二进制的访问列表，以及拒绝钥匙串访问的沙箱配置。
 - **外部变更不可见**——在“钥匙串访问”或其他工具中所做的编辑不会发出事件，下一次解析时才会看到。
 - **只有协作进程共享锁**——旧版提供方与外部机密存储写入方不获取该锁；升级或更新同一服务前须停止它们。
 - **不支持 Windows**，Linux 需要 Secret Service 会话。
