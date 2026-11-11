@@ -124,6 +124,33 @@ gh pr create --repo takurot/deepseek-harness-xai --base master --head <branch> -
 
 Write the description with [dsh-pr-description](../.agents/skills/dsh-pr-description/SKILL.md) and the [PR template](../.github/pull_request_template.md): Motivation with an Issue reference, Changes, Testing with its test design, and AI Usage. Use `Fixes #<number>` when the merge resolves the Issue and `Refs #<number>` when it only gives context. Split independent changes into separate PRs.
 
+## Check fork CI
+
+[Fork CI](../.github/workflows/fork-ci.yml) runs on pull requests and master pushes. The `all checks passed` result requires every Fork CI job to succeed, including `node 24 / static`, `node 24 / typecheck and lint`, `node 24 / dependency audit`, `node 24 / coverage`, `node 24 / snapshots and artifacts`, `node 24.9 / compatibility`, and `node 26 / compatibility`. Check the separate CI Python and Node Addon System workflows when the PR triggers them.
+
+Use the run ID from the check's Actions link. Read the failed steps before rerunning failed jobs.
+
+```sh
+gh pr checks <number> --repo takurot/deepseek-harness-xai
+gh run view <run-id> --repo takurot/deepseek-harness-xai
+gh run view <run-id> --log-failed --repo takurot/deepseek-harness-xai
+gh run rerun <run-id> --failed --repo takurot/deepseek-harness-xai
+gh workflow list --all --repo takurot/deepseek-harness-xai
+```
+
+The coverage, artifact and compatibility jobs attach resource summaries and measurement artifacts. Read elapsed time and maximum resident memory per command, disk availability at each recorded stage, and the pnpm cache result. Record runner time from job start and completion timestamps.
+
+The fork disables these upstream workflows in Actions settings. Use `gh workflow list --all` above to verify their live state.
+
+| Purpose | Disabled workflows |
+|---|---|
+| Upstream checks | [`ci.yml`](../.github/workflows/ci.yml), [`ci-master.yml`](../.github/workflows/ci-master.yml), [`ci-windows.yml`](../.github/workflows/ci-windows.yml), [`sandbox.yml`](../.github/workflows/sandbox.yml) |
+| Real API tests | [`e2e.yml`](../.github/workflows/e2e.yml), [`pi-ai-provider-e2e.yml`](../.github/workflows/pi-ai-provider-e2e.yml) |
+| PR and Issue policy | [`expected-filenames.yml`](../.github/workflows/expected-filenames.yml), [`issue-lifecycle.yml`](../.github/workflows/issue-lifecycle.yml), [`issue-policy.yml`](../.github/workflows/issue-policy.yml), [`pr-check-after-approve.yml`](../.github/workflows/pr-check-after-approve.yml), [`pr-check-on-base-branch.yml`](../.github/workflows/pr-check-on-base-branch.yml), [`pr-check-on-head-branch.yml`](../.github/workflows/pr-check-on-head-branch.yml), [`weighted-approval-review-event.yml`](../.github/workflows/weighted-approval-review-event.yml), [`weighted-approval.yml`](../.github/workflows/weighted-approval.yml) |
+| Preview and documentation | [`build-preview-cloudflare.yml`](../.github/workflows/build-preview-cloudflare.yml), [`docs-pages.yml`](../.github/workflows/docs-pages.yml) |
+| Desktop and CUA packaging | [`cua-helper-package.yml`](../.github/workflows/cua-helper-package.yml), [`desktop-publish.yml`](../.github/workflows/desktop-publish.yml), [`macos-intel-package.yml`](../.github/workflows/macos-intel-package.yml), [`macos-package.yml`](../.github/workflows/macos-package.yml), [`windows-package.yml`](../.github/workflows/windows-package.yml) |
+| Release and publishing | [`node-addon-system-release.yml`](../.github/workflows/node-addon-system-release.yml), [`publish-ssh-helper.yml`](../.github/workflows/publish-ssh-helper.yml), [`python-release.yml`](../.github/workflows/python-release.yml), [`release-publish.yml`](../.github/workflows/release-publish.yml), [`release-vendor-publish.yml`](../.github/workflows/release-vendor-publish.yml), [`release-vendor.yml`](../.github/workflows/release-vendor.yml), [`release.yml`](../.github/workflows/release.yml) |
+
 ## Review and completion
 
 Review correctness and security separately, and verify each finding by reproducing it or tracing the code rather than accepting it by severity. Fix every valid High or higher finding before merge and add a regression test.

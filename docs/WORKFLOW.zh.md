@@ -124,6 +124,33 @@ gh pr create --repo takurot/deepseek-harness-xai --base master --head <branch> -
 
 用 [dsh-pr-description](../.agents/skills/dsh-pr-description/SKILL.md) 和 [PR 模板](../.github/pull_request_template.md)编写描述：带 Issue 引用的 Motivation、Changes、含测试设计的 Testing，以及 AI Usage。合并后该 Issue 即被解决时使用 `Fixes #<number>`，仅提供背景时使用 `Refs #<number>`。把相互独立的变更拆成单独的 PR。
 
+## 查看 fork CI
+
+[Fork CI](../.github/workflows/fork-ci.yml) 在 pull request 和 master 推送时运行。作业名称为 `node 24 / static`、`node 24 / typecheck and lint`, `node 24 / dependency audit`、`node 24 / coverage`、`node 24 / snapshots and artifacts`、`node 24.9 / compatibility` 和 `node 26 / compatibility`。`all checks passed` 要求所有 Fork CI 作业成功。如果 PR 触发了独立的 CI Python 和 Node Addon System 工作流，请查看各自的结果。
+
+从检查的 Actions 链接中获取运行 ID。重新运行失败作业前，先查看失败步骤。
+
+```sh
+gh pr checks <number> --repo takurot/deepseek-harness-xai
+gh run view <run-id> --repo takurot/deepseek-harness-xai
+gh run view <run-id> --log-failed --repo takurot/deepseek-harness-xai
+gh run rerun <run-id> --failed --repo takurot/deepseek-harness-xai
+gh workflow list --all --repo takurot/deepseek-harness-xai
+```
+
+覆盖率、构建产物和兼容性作业会附带资源摘要和测量产物。查看各命令的耗时和最大常驻内存、各记录阶段的可用磁盘空间及 pnpm 缓存结果。根据作业的开始和完成时间记录运行器用时。
+
+fork 在 Actions 设置中停用了以下上游工作流。使用上面的 `gh workflow list --all` 查看实时状态。
+
+| 用途 | 已停用的工作流 |
+|---|---|
+| 上游检查 | [`ci.yml`](../.github/workflows/ci.yml), [`ci-master.yml`](../.github/workflows/ci-master.yml), [`ci-windows.yml`](../.github/workflows/ci-windows.yml), [`sandbox.yml`](../.github/workflows/sandbox.yml) |
+| 真实 API 测试 | [`e2e.yml`](../.github/workflows/e2e.yml), [`pi-ai-provider-e2e.yml`](../.github/workflows/pi-ai-provider-e2e.yml) |
+| PR 与 Issue 策略 | [`expected-filenames.yml`](../.github/workflows/expected-filenames.yml), [`issue-lifecycle.yml`](../.github/workflows/issue-lifecycle.yml), [`issue-policy.yml`](../.github/workflows/issue-policy.yml), [`pr-check-after-approve.yml`](../.github/workflows/pr-check-after-approve.yml), [`pr-check-on-base-branch.yml`](../.github/workflows/pr-check-on-base-branch.yml), [`pr-check-on-head-branch.yml`](../.github/workflows/pr-check-on-head-branch.yml), [`weighted-approval-review-event.yml`](../.github/workflows/weighted-approval-review-event.yml), [`weighted-approval.yml`](../.github/workflows/weighted-approval.yml) |
+| 预览与文档 | [`build-preview-cloudflare.yml`](../.github/workflows/build-preview-cloudflare.yml), [`docs-pages.yml`](../.github/workflows/docs-pages.yml) |
+| 桌面端与 CUA 打包 | [`cua-helper-package.yml`](../.github/workflows/cua-helper-package.yml), [`desktop-publish.yml`](../.github/workflows/desktop-publish.yml), [`macos-intel-package.yml`](../.github/workflows/macos-intel-package.yml), [`macos-package.yml`](../.github/workflows/macos-package.yml), [`windows-package.yml`](../.github/workflows/windows-package.yml) |
+| 发布 | [`node-addon-system-release.yml`](../.github/workflows/node-addon-system-release.yml), [`publish-ssh-helper.yml`](../.github/workflows/publish-ssh-helper.yml), [`python-release.yml`](../.github/workflows/python-release.yml), [`release-publish.yml`](../.github/workflows/release-publish.yml), [`release-vendor-publish.yml`](../.github/workflows/release-vendor-publish.yml), [`release-vendor.yml`](../.github/workflows/release-vendor.yml), [`release.yml`](../.github/workflows/release.yml) |
+
 ## 评审与完成
 
 分别评审正确性与安全性，并通过复现问题或追踪代码来核实每条发现，而不是按严重程度直接采纳。合并前修复所有有效的 High 及以上发现，并添加回归测试。
