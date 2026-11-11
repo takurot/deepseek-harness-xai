@@ -108,6 +108,7 @@ type StubMode =
   | 'with-echo'
   | 'exit-after-send'
   | 'prompt-collision'
+  | 'interrupted-echo'
 
 const START_PATTERN = /__DSH_PERSISTENT_PWSH_START_[^_]+(?:-[^_]+)*__/
 const END_PATTERN = /__DSH_PERSISTENT_PWSH_END_[^:]+:/
@@ -140,7 +141,7 @@ class StubTerminalSession implements TerminalBackendSession {
           const start = START_PATTERN.exec(request.text)?.[0]
           const end = END_PATTERN.exec(request.text)?.[0]
           const output = this.mode === 'end-on-abort'
-            ? `${start ?? ''}\ninterrupted\n${end ?? ''}130\n${this.motd}`
+            ? `\n${start ?? ''}\ninterrupted\n${end ?? ''}130\n${this.motd}`
             : 'partial output'
           this.scrollback += output
           resolve(this.result(output, 'stdin_read'))
@@ -156,7 +157,7 @@ class StubTerminalSession implements TerminalBackendSession {
     if (this.mode === 'prompt-after-idle') {
       if (request.text.length > 0) {
         const start = START_PATTERN.exec(request.text)?.[0]
-        const output = `${start ?? ''}\npartial syntax output\n`
+        const output = `\n${start ?? ''}\npartial syntax output\n`
         this.scrollback += output
         return this.operation(Promise.resolve(this.result(output, 'inferred_idle')))
       }
@@ -174,6 +175,11 @@ class StubTerminalSession implements TerminalBackendSession {
     this.pendingText = ''
     const start = START_PATTERN.exec(sent)?.[0]
     const end = END_PATTERN.exec(sent)?.[0]
+    if (this.mode === 'interrupted-echo') {
+      const output = `${sent}\n^C\n${this.motd}`
+      this.scrollback += output
+      return this.operation(Promise.resolve(this.result(output, 'stdin_read')))
+    }
     if (this.mode === 'with-echo') {
       // The PSReadLine echo renders the submitted wrapper before the real
       // markers; the tool must strip it from the captured result.
@@ -194,11 +200,11 @@ class StubTerminalSession implements TerminalBackendSession {
       return this.operation(Promise.resolve(settled))
     }
     if (this.mode === 'incremental-fallback') {
-      const incremental = `${start ?? ''}\nincrement\n${this.motd}`
+      const incremental = `\n${start ?? ''}\nincrement\n${this.motd}`
       return this.operation(Promise.resolve(this.result(this.motd, 'stdin_read')), incremental)
     }
     if (this.mode === 'status-tail' || this.mode === 'continue-status-tail') {
-      const prefix = this.mode === 'status-tail' ? `${start ?? ''}\nkept  \ndsh> \n${end ?? ''}` : ''
+      const prefix = this.mode === 'status-tail' ? `\n${start ?? ''}\nkept  \ndsh> \n${end ?? ''}` : ''
       const fragment = this.statusChunks.shift()
       if (fragment === undefined) throw new Error('missing scripted completion fragment')
       const output = prefix + fragment
@@ -207,7 +213,7 @@ class StubTerminalSession implements TerminalBackendSession {
       return this.operation(Promise.resolve(this.result(output, 'inferred_idle')))
     }
     if (this.mode === 'torn-status') {
-      const output = `${start ?? ''}\nhello from stub\n${end ?? ''}`
+      const output = `\n${start ?? ''}\nhello from stub\n${end ?? ''}`
       this.scrollback += output
       this.mode = 'finish-torn-status'
       return this.operation(Promise.resolve(this.result(output, 'inferred_idle')))
@@ -228,10 +234,10 @@ class StubTerminalSession implements TerminalBackendSession {
         : this.mode === 'prompt-collision' ? this.motd
           : 'hello from stub'
     const exitCode = this.mode === 'nonzero' ? 7 : 0
-    const output = `${start ?? ''}\n${commandOutput}\n${end ?? ''}${exitCode}\n${this.motd}`
+    const output = `\n${start ?? ''}\n${commandOutput}\n${end ?? ''}${exitCode}\n${this.motd}`
     this.scrollback += output
     if (this.mode === 'exit' || this.mode === 'signal-exit' || this.mode === 'unknown-exit') {
-      const exitedOutput = `${start ?? ''}\nhello from stub\n`
+      const exitedOutput = `\n${start ?? ''}\nhello from stub\n`
       this.scrollback = this.scrollback.slice(0, -output.length) + exitedOutput
       this.statusValue = this.mode === 'signal-exit'
         ? { kind: 'exited', exitCode: null, signal: 'SIGTERM' }
@@ -336,6 +342,33 @@ async function setup(
 }
 
 describe('tool-pwsh-persistent', () => {
+  it('requests the same complete START output line across empty polling sends', async () => {
+    const { ctx, owner, stub } = await setup()
+    await call(ctx, owner, 'first')
+    const session = stub.sessions[0]!
+    session.mode = 'idle-then-normal'
+    const sends = vi.spyOn(session, 'startSend')
+    expect(text(await call(ctx, owner, 'second'))).toBe('hello from stub')
+    expect(sends).toHaveBeenCalledTimes(2)
+    const initial = sends.mock.calls[0]![0]
+    const start = START_PATTERN.exec(initial.text)?.[0]
+    expect(start).toBeDefined()
+    expect(initial).toMatchObject({ submit: true, stdinWaitAfterOutput: start })
+    expect(sends.mock.calls[1]![0]).toMatchObject({ text: '', submit: false, stdinWaitAfterOutput: start })
+  })
+
+  it('excludes wrapper source when interrupted before an emitted START line', async () => {
+    const { ctx, owner, stub } = await setup()
+    await call(ctx, owner, 'first')
+    const session = stub.sessions[0]!
+    session.mode = 'interrupted-echo'
+    const output = text(await call(ctx, owner, 'interrupted'))
+    expect(output).toContain('^C\nstub> ')
+    expect(output).not.toContain('$LASTEXITCODE')
+    expect(output).not.toContain('__DSH_PERSISTENT_PWSH')
+    expect(session.closed).toEqual([])
+  })
+
   it('registers a configurable schema and reuses one owner shell', async () => {
     const { ctx, owner, stub, fiber } = await setup({
       backendType: 'stub',

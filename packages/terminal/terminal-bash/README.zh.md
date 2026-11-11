@@ -65,6 +65,8 @@ kind: "package-reference"
 
 两种方言暴露相同的就绪约定，因此消费方与方言无关。当 shell 再次就绪时发送即结算：受控提示符被验证之后、前台进程组被证明在等待 stdin（Linux）之后、输出静默（`inferred_idle`）之后，或到达绝对 `timeoutMs`。若提示符标记已到达而其可打印尾部尚未到达，send 会在 `idleSilenceMs + handoffGraceMs` 之外继续等待 `promptTailGraceMs`，因为标记与尾部由同一次提示符渲染写出。`inferred_idle` 或 `timeout` 结果并不证明前台命令已退出。
 
+发送可以通过 [`stdinWaitAfterOutput`](../../../docs/subsystems/terminal.zh.md) 要求先出现一行完整的清理后输出，再接受原生 stdin 等待证据。已验证的受控提示符可以在该行到达前结算发送。
+
 ### 沙箱与安全运行
 
 shell 在整个生命周期内运行在有效的沙箱边界之下。当所有者仍有打开的会话或进行中的 spawn 时，改变有效沙箱模式会被拒绝——请先等待创建完成并关闭会话，避免以更宽权限打开的终端在权限降级后继续存在。后端只提供终端专属的环境覆盖；共享凭据清理由子进程提供方负责。

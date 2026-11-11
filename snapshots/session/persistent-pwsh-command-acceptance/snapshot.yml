@@ -1,0 +1,10 @@
+version: 1
+scenario: persistent-pwsh-command-acceptance
+profile: headless
+composition: persistent-pwsh-command-acceptance
+recording: authored
+header:
+  class: persistent-pwsh-command-acceptance
+  pin: true
+  systemPromptSource: persistent-pwsh-tool-turn
+  toolSchemasSource: persistent-pwsh-tool-turn
