@@ -85,70 +85,103 @@ export function spawnRunner(command: string, args: readonly string[], stdin?: st
 /** Exit code of `security` for a missing item. */
 const MACOS_ITEM_NOT_FOUND = 44
 
-/** A constant JXA program; all item data arrives on stdin, never as executable source. */
-const MACOS_WRITE_SCRIPT = String.raw`
+/** Native statuses are distinct from the legacy security tool's exit codes. */
+const MACOS_STATUS_NOT_FOUND = -25300
+
+/** One JXA host owns successor items; request values arrive only through stdin. */
+const MACOS_SCRIPT = String.raw`
 ObjC.import('Foundation')
 ObjC.import('Security')
 function run() {
   try {
+    $.SecKeychainSetUserInteractionAllowed(false)
     const input = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile
     const request = JSON.parse(ObjC.unwrap($.NSString.alloc.initWithDataEncoding(input, $.NSUTF8StringEncoding)))
     const query = $.NSMutableDictionary.alloc.init
     query.setObjectForKey(ObjC.castRefToObject($.kSecClassGenericPassword), ObjC.castRefToObject($.kSecClass))
     query.setObjectForKey($(request.service), ObjC.castRefToObject($.kSecAttrService))
     query.setObjectForKey($(request.account), ObjC.castRefToObject($.kSecAttrAccount))
+    if (request.operation === 'get') {
+      query.setObjectForKey($.NSNumber.numberWithBool(true), ObjC.castRefToObject($.kSecReturnData))
+      const data = Ref()
+      const status = $.SecItemCopyMatching(query, data)
+      if (status !== 0) return JSON.stringify({ status: status })
+      const secret = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(ObjC.castRefToObject(data[0]), $.NSUTF8StringEncoding))
+      return JSON.stringify({ status: status, secret: secret })
+    }
+    if (request.operation === 'delete') return JSON.stringify({ status: $.SecItemDelete(query) })
     const attributes = $.NSMutableDictionary.alloc.init
     attributes.setObjectForKey($(request.secret).dataUsingEncoding($.NSUTF8StringEncoding), ObjC.castRefToObject($.kSecValueData))
     let status = $.SecItemUpdate(query, attributes)
     if (status === -25300) {
-      const security = Ref()
-      status = $.SecTrustedApplicationCreateFromPath('/usr/bin/security', security)
-      if (status !== 0) return String(status)
-      const script = Ref()
-      status = $.SecTrustedApplicationCreateFromPath('/usr/bin/osascript', script)
-      if (status !== 0) return String(status)
+      const application = Ref()
+      status = $.SecTrustedApplicationCreateFromPath('/usr/bin/osascript', application)
+      if (status !== 0) return JSON.stringify({ status: status })
       const access = Ref()
-      status = $.SecAccessCreate($(request.service), $([ObjC.castRefToObject(security[0]), ObjC.castRefToObject(script[0])]), access)
-      if (status !== 0) return String(status)
+      status = $.SecAccessCreate($(request.service), $([ObjC.castRefToObject(application[0])]), access)
+      if (status !== 0) return JSON.stringify({ status: status })
       query.setObjectForKey(ObjC.castRefToObject(access[0]), ObjC.castRefToObject($.kSecAttrAccess))
       query.addEntriesFromDictionary(attributes)
       status = $.SecItemAdd(query, null)
     }
-    return String(status)
+    return JSON.stringify({ status: status })
   } catch (error) {
     return 'invalid'
   }
 }
 `
 
+/** Result admitted from the native helper, without retaining its raw output in failures. */
+type MacosResult = { status: number } | { status: 0; secret: string }
+
 /**
- * macOS Keychain: Security APIs write stdin JSON through the system JXA bridge;
- * `security` reads and deletes existing items. Base64 storage preserves the
- * format used by earlier interactive writes.
+ * macOS successor items use one JXA identity for reads and writes. Unversioned
+ * items retain their original security-tool permissions until explicitly deleted.
  * @param service - keychain service name.
  * @param run - command runner.
- * @returns the backend.
+ * @returns the backend, preferring successor values over legacy values.
  */
 export function macosBackend(service: string, run: KeychainCommandRunner): KeychainBackend {
+  const failure = (operation: string): Error => new Error(`credentials-keychain: macOS ${operation} failed; unlock the Keychain and verify access, then inspect the store before retrying`)
+  const native = async (operation: 'get' | 'set' | 'delete', account: string, secret?: string): Promise<MacosResult> => {
+    const request = { operation, service, account: `v2:${account}`, ...(secret === undefined ? {} : { secret: Buffer.from(secret).toString('base64') }) }
+    const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', MACOS_SCRIPT], JSON.stringify(request))
+    if (result.code !== 0) throw failure(operation)
+    let value: unknown
+    try {
+      value = JSON.parse(result.stdout)
+    } catch (_error) {
+      // Parser text can contain credential bytes.
+      throw failure(operation)
+    }
+    if (typeof value !== 'object' || value === null || !('status' in value)
+      || typeof value.status !== 'number' || !Number.isSafeInteger(value.status)) throw failure(operation)
+    if (operation === 'get' && value.status === 0) {
+      if (!('secret' in value) || typeof value.secret !== 'string' || Object.keys(value).length !== 2) throw failure(operation)
+      return { status: value.status, secret: value.secret }
+    }
+    if (Object.keys(value).length !== 1) throw failure(operation)
+    return { status: value.status }
+  }
   return {
     async get(account) {
-      const result = await run('security', ['find-generic-password', '-s', service, '-a', account, '-w'])
-      if (result.code === MACOS_ITEM_NOT_FOUND) return undefined
-      if (result.code !== 0) throw commandFailure('security find-generic-password', result)
-      return Buffer.from(result.stdout.trim(), 'base64').toString('utf8')
+      const result = await native('get', account)
+      if ('secret' in result) return Buffer.from(result.secret, 'base64').toString('utf8')
+      if (result.status !== MACOS_STATUS_NOT_FOUND) throw failure('get')
+      const legacy = await run('security', ['find-generic-password', '-s', service, '-a', account, '-w'])
+      if (legacy.code === MACOS_ITEM_NOT_FOUND) return undefined
+      if (legacy.code !== 0) throw commandFailure('security find-generic-password', legacy)
+      return Buffer.from(legacy.stdout.trim(), 'base64').toString('utf8')
     },
     async set(account, secret) {
-      const encoded = Buffer.from(secret, 'utf8').toString('base64')
-      const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', MACOS_WRITE_SCRIPT], JSON.stringify({ service, account, secret: encoded }))
-      if (result.code !== 0 || result.stdout.trim() !== '0') {
-        throw new Error('credentials-keychain: Keychain write failed; verify the store is accessible before retrying')
-      }
+      if ((await native('set', account, secret)).status !== 0) throw failure('set')
     },
     async delete(account) {
-      const result = await run('security', ['-i'], `delete-generic-password -s ${service} -a ${account}\n`)
-      if (result.code !== 0 && result.code !== MACOS_ITEM_NOT_FOUND) {
-        throw commandFailure('security delete-generic-password', result)
-      }
+      // Removing legacy first prevents a failed successor removal from revealing an older value.
+      const legacy = await run('security', ['-i'], `delete-generic-password -s ${service} -a ${account}\n`)
+      if (legacy.code !== 0 && legacy.code !== MACOS_ITEM_NOT_FOUND) throw commandFailure('security delete-generic-password', legacy)
+      const result = await native('delete', account)
+      if (result.status !== 0 && result.status !== MACOS_STATUS_NOT_FOUND) throw failure('delete')
     },
   }
 }

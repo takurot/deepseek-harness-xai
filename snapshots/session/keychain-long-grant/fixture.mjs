@@ -26,11 +26,18 @@ class FixtureKeychain extends KeychainCredentialProvider {
         const request = JSON.parse(stdin)
         assert.equal(request.service, service)
         assert.equal(typeof request.account, 'string')
-        assert.equal(typeof request.secret, 'string')
-        assert.equal(args.join(' ').includes(request.secret), false)
-        items[request.account] = request.secret
+        if (request.operation === 'get') {
+          return result(0, JSON.stringify(Object.hasOwn(items, request.account) ? { status: 0, secret: items[request.account] } : { status: -25300 }))
+        }
+        if (request.operation === 'delete') delete items[request.account]
+        else {
+          assert.equal(request.operation, 'set')
+          assert.equal(typeof request.secret, 'string')
+          assert.equal(args.join(' ').includes(request.secret), false)
+          items[request.account] = request.secret
+        }
         await writeFile(filename, JSON.stringify(items))
-        return result(0, '0\n')
+        return result(0, '{"status":0}')
       }
       assert.equal(command, 'security')
       if (args[0] === 'find-generic-password') {
