@@ -9460,7 +9460,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TerminalSendRequest',
-    declaration: 'export interface TerminalSendRequest {\n    text: string;\n    submit: boolean;\n    stdinWaitAfterOutput?: string;\n    signal?: AbortSignal;\n}',
+    declaration: 'export interface TerminalSendRequest {\n    text: string;\n    submit: boolean;\n    stdinWaitAfterOutput?: string | {\n        startLine: string;\n        completionLine: string;\n    };\n    signal?: AbortSignal;\n}',
   },
   {
     name: 'TerminalSendResult',

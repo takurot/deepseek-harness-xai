@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-alpha.3/persistent-pwsh-input-waits/guide.md
+/:
+  en: 5a972c932cdf392c
+  zh: db324fdfdc05baee
+/persistent-pwsh-input-waits:
+  en: 5e2ebeff2e8fc549
+  zh: 9ac883672a923251
+/persistent-pwsh-input-waits/change:
+  en: 0623639bf73e2b8c
+  zh: d0d6c07d931d8d75
+/persistent-pwsh-input-waits/migration:
+  en: 756f1fd2c3b3a0d0
+  zh: 2ef1164ee655a6f5

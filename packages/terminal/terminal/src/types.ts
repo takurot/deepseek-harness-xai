@@ -67,11 +67,13 @@ export interface TerminalSendRequest {
   /** Whether to write the backend's Enter sequence after {@link text}. */
   submit: boolean
   /**
-   * Complete sanitized output line required before native stdin-wait readiness; excludes line breaks.
-   * Empty, unsubmitted follow-ups with the same line retain observed output, including after inferred idle.
-   * New input, submit, or a changed/absent line resets this evidence. Controlled prompts remain sufficient.
+   * String: complete sanitized line required before native stdin readiness; controlled prompts remain sufficient.
+   * Object: exact START and completion lines; same-shell waits and ordinary prompts require completion.
+   * A known different foreground group may wait after START; delivered SIGINT permits a fresh prompt.
+   * Lines exclude line breaks. Equivalent empty, unsubmitted follow-ups retain evidence across inferred idle.
+   * New input, submit, changed values/variant, or absence resets the evidence.
    */
-  stdinWaitAfterOutput?: string
+  stdinWaitAfterOutput?: string | { startLine: string; completionLine: string }
   /** Cancellation for the wait; backends also interrupt the foreground command. */
   signal?: AbortSignal
 }
