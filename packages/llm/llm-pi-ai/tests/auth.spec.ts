@@ -127,7 +127,7 @@ describe('pi-ai credential store over harness records', () => {
     const granted = { type: 'oauth' as const, access: 'at', refresh: 'rt', expires: 42, issued: new Date(0) }
 
     await expect(store.modify('github-copilot', () => Promise.resolve(granted)))
-      .rejects.toThrow(/JSON cannot represent/)
+      .rejects.toThrow(/payload must be a plain mapping/)
   })
 
   it('shows the mutation the current credential and leaves it alone when declined', async () => {
