@@ -8,6 +8,7 @@ interface Job {
   needs?: string[]
   if?: string
   steps?: Array<{
+    if?: string
     run?: string
     uses?: string
     env?: Record<string, string>
@@ -45,6 +46,14 @@ describe('Fork CI workflow', () => {
     expect(checkout?.with?.['fetch-depth']).toBe(0)
   })
 
+  it('retains raw and classified audit evidence even when the required policy fails', () => {
+    const steps = job('dependency-audit').steps ?? []
+    expect(steps.some(step => step.run === 'pnpm run dependency-audit')).toBe(true)
+    const upload = steps.find(step => step.uses?.startsWith('actions/upload-artifact@'))
+    expect(upload).toMatchObject({ if: 'always()', with: { path: 'temp/dependency-audit/', 'if-no-files-found': 'error' } })
+    expect(steps.map(step => step.run).join('\n')).not.toContain('|| true')
+  })
+
   it('gates on static, lint, and an aggregate verdict that fails on skipped needs', () => {
     const runs = (job: Job): string[] => (job.steps ?? []).flatMap(step => step.run === undefined ? [] : [step.run])
     expect(runs(job('static'))).toContain('pnpm run check:ci:static')
@@ -53,7 +62,7 @@ describe('Fork CI workflow', () => {
       'pnpm run check:ci:lint:contracts-ready',
     ]))
     const verdict = job('all-checks-passed')
-    expect(verdict.needs?.sort()).toEqual(['lint', 'static'])
+    expect(verdict.needs?.sort()).toEqual(['dependency-audit', 'lint', 'static'])
     expect(verdict.if).toContain('!cancelled()')
     expect(runs(verdict).join('\n')).toContain('exit 1')
   })

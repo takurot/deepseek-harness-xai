@@ -1,0 +1,26 @@
+{
+  "formatVersion": 1,
+  "exceptions": [
+    {
+      "advisory": "GHSA-g3hv-75wg-m249",
+      "package": "minimatch",
+      "version": "10.2.6",
+      "importer": "packages/experimental/subagent-oar",
+      "chain": [
+        {
+          "name": "@earendil-works/pi-coding-agent",
+          "version": "1.3.0",
+          "locator": "@earendil-works/pi-coding-agent@1.3.0(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.32.2(supports-color@9.4.0)(zod@4.6.7))(@smithy/signature-v4@5.7.4)(supports-color@9.4.0)(ws@8.21.3)(zod@4.6.7)"
+        },
+        {
+          "name": "minimatch",
+          "version": "10.2.6",
+          "locator": "minimatch@10.2.6"
+        }
+      ],
+      "expires": "2026-11-25",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/40",
+      "reason": "Trigger absence is inferred from the pinned external and bundled minimatch level-1 defaults and resource/model-filter calls with default or nocase-only options. Project/package patterns are reachable; the 64 KiB cap is not a demonstrated mitigation. Qualify the parent/pi-ai/OAR updates and both copies in Issue 40. Caller options and embedded identity require recorded source review outside this CI membership check; a level-2 caller or changed/unresolved embedded identity invalidates this rationale."
+    }
+  ]
+}

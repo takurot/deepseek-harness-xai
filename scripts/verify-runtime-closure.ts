@@ -7,6 +7,7 @@
 import { globSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { readWorkspaceManifests } from './check-workspace-constraints.ts'
 import { parseArgs } from 'node:util'
 import { isCordisGroupEntry, loadCordisYaml, presetDefinitions } from './cordis-yaml.ts'
 
@@ -36,6 +37,7 @@ export interface RuntimeClosureResult {
   failures: string[]
   presetCount: number
   workspacePackageCount: number
+  workspacePackages: Array<{ name: string; manifestPath: string }>
 }
 
 /**
@@ -51,52 +53,71 @@ export async function verifyRuntimeClosure(
   includePresets = true,
 ): Promise<RuntimeClosureResult> {
   const runtimeManifest = await loadManifest(resolve(root, manifestPath))
-  const runtimeName = runtimeManifest.name ?? manifestPath
-  const workspace = await loadWorkspacePackages(root)
   const runtimeDependencies = runtimeManifest.dependencies ?? {}
+  const membership = await collectRuntimeClosure(root, manifestPath)
   const platforms = includePresets ? await loadJson<RuntimePlatformManifest>(resolve(root, 'python/sdk-runtime/platforms.json')) : {}
   const presetPaths = includePresets ? globSync(AGENT_PRESET_GLOB, { cwd: root }).sort() : []
   const targets = Object.keys(platforms).sort()
+  const failures: string[] = []
+  if (includePresets && presetPaths.length === 0) failures.push(`no agent presets matched ${AGENT_PRESET_GLOB}`)
+  if (includePresets && targets.length === 0) failures.push('python/sdk-runtime/platforms.json defines no runtime targets')
+  failures.push(...await missingPresetPlugins(root, runtimeDependencies, presetPaths, targets))
+  for (const peer of membership.requiredWorkspacePeers) {
+    if (runtimeDependencies[peer.name]?.startsWith('workspace:') !== true) failures.push(peer.chain)
+  }
+  return {
+    failures,
+    presetCount: (await Promise.all(presetPaths.map(async path => presetDefinitions(loadCordisYaml(await readFile(resolve(root, path), 'utf8'))).length))).reduce((a, b) => a + b, 0),
+    workspacePackageCount: membership.workspacePackages.length,
+    workspacePackages: membership.workspacePackages,
+  }
+}
+
+/** Workspace dependency membership and required peers, without installation or deploy validation. */
+export interface RuntimeClosureMembership {
+  workspacePackages: Array<{ name: string; manifestPath: string }>
+  requiredWorkspacePeers: Array<{ name: string; chain: string }>
+}
+
+/**
+ * Follow declared runtime and optional workspace dependencies, excluding development dependencies.
+ * @param root Repository root containing pnpm-workspace.yaml.
+ * @param manifestPath Root manifest path relative to the repository.
+ * @returns Sorted membership and required workspace peers; this does not validate installed peer resolution.
+ */
+export async function collectRuntimeClosure(root: string, manifestPath: string): Promise<RuntimeClosureMembership> {
+  const runtimeManifest = await loadManifest(resolve(root, manifestPath))
+  const runtimeName = runtimeManifest.name ?? manifestPath
+  const workspace = await loadWorkspacePackages(root)
+  const runtimeDependencies = { ...runtimeManifest.dependencies, ...runtimeManifest.optionalDependencies }
   const parents = new Map<string, string | undefined>()
   const queue: string[] = []
-
+  const requiredWorkspacePeers: RuntimeClosureMembership['requiredWorkspacePeers'] = []
   for (const dependency of Object.keys(runtimeDependencies).sort()) {
     if (!workspace.has(dependency)) continue
     parents.set(dependency, undefined)
     queue.push(dependency)
   }
-
-  const failures: string[] = []
-  if (includePresets && presetPaths.length === 0) failures.push(`no agent presets matched ${AGENT_PRESET_GLOB}`)
-  if (includePresets && targets.length === 0) failures.push('python/sdk-runtime/platforms.json defines no runtime targets')
-  failures.push(...await missingPresetPlugins(root, runtimeDependencies, presetPaths, targets))
   for (let index = 0; index < queue.length; index += 1) {
     const packageName = queue[index]
     if (packageName === undefined) continue
     const current = workspace.get(packageName)
     if (current === undefined) continue
-    const peers = current.manifest.peerDependencies ?? {}
-    const peerMeta = current.manifest.peerDependenciesMeta ?? {}
-    for (const peer of Object.keys(peers).sort()) {
-      if (!workspace.has(peer) || peerMeta[peer]?.optional === true) continue
-      if (runtimeDependencies[peer]?.startsWith('workspace:') === true) continue
-      failures.push(`${formatChain(runtimeName, packageName, parents)} -> ${peer}`)
+    for (const peer of Object.keys(current.manifest.peerDependencies ?? {}).sort()) {
+      if (!workspace.has(peer) || current.manifest.peerDependenciesMeta?.[peer]?.optional === true) continue
+      requiredWorkspacePeers.push({ name: peer, chain: `${formatChain(runtimeName, packageName, parents)} -> ${peer}` })
     }
-    const dependencies = {
-      ...current.manifest.dependencies,
-      ...current.manifest.optionalDependencies,
-    }
+    const dependencies = { ...current.manifest.dependencies, ...current.manifest.optionalDependencies }
     for (const dependency of Object.keys(dependencies).sort()) {
       if (!workspace.has(dependency) || parents.has(dependency)) continue
       parents.set(dependency, packageName)
       queue.push(dependency)
     }
   }
-
   return {
-    failures,
-    presetCount: (await Promise.all(presetPaths.map(async path => presetDefinitions(loadCordisYaml(await readFile(resolve(root, path), 'utf8'))).length))).reduce((a, b) => a + b, 0),
-    workspacePackageCount: queue.length,
+    workspacePackages: [...workspace.entries()].filter(([name]) => parents.has(name))
+      .map(([name, current]) => ({ name, manifestPath: current.path })).sort((a, b) => a.name.localeCompare(b.name)),
+    requiredWorkspacePeers,
   }
 }
 
@@ -203,12 +224,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function loadWorkspacePackages(root: string): Promise<Map<string, WorkspacePackage>> {
-  const paths = globSync(['packages/*/*/package.json', 'vendor/*/package.json'], { cwd: root })
-    .sort()
-    .map(relative => resolve(root, relative))
   const result = new Map<string, WorkspacePackage>()
-  for (const path of paths) {
-    const manifest = await loadManifest(path)
+  for (const { dir } of readWorkspaceManifests(root)) {
+    const path = dir === '.' ? 'package.json' : `${dir}/package.json`
+    const manifest = await loadManifest(resolve(root, path))
     if (manifest.name !== undefined) result.set(manifest.name, { path, manifest })
   }
   return result
