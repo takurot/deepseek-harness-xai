@@ -18,6 +18,7 @@
  * @module @deepseek-ai/dsh-credentials-keychain
  */
 
+import { constants as bufferConstants } from 'node:buffer'
 import { userInfo } from 'node:os'
 import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
@@ -36,8 +37,14 @@ import type {
 import type { LaunchEnvironmentEntry } from '@deepseek-ai/dsh-launch-environment'
 import { createBackend, spawnRunner } from './backend.ts'
 import type { KeychainBackend, KeychainCommandRunner } from './backend.ts'
+import { KeychainCommandError, resolveCommandOptions } from './command-runner.ts'
+import type { KeychainCommandSpec } from './command-runner.ts'
+import type { KeychainCommandResult } from './backend.ts'
 import { withServiceLock } from './service-lock.ts'
 
+export { KeychainCommandError, resolveCommandOptions } from './command-runner.ts'
+export type { KeychainCommandOptions, KeychainCommandSpec } from './command-runner.ts'
+export { KeychainStorageLimitError } from './backend.ts'
 export { KeychainLockError } from './service-lock.ts'
 
 export type { KeychainCommandResult, KeychainCommandRunner, KeychainBackend } from './backend.ts'
@@ -62,7 +69,7 @@ export class KeychainCommitError extends Error {
   /** Storage may already contain the replacement; inspect after attempting recovery. */
   readonly outcome = 'unknown'
 
-  constructor() {
+  constructor(readonly commandReason?: KeychainCommandError['reason']) {
     super('credentials-keychain: record commit outcome is unknown; reopen the provider to attempt recovery, then inspect the credential before retrying')
     this.name = 'KeychainCommitError'
   }
@@ -85,6 +92,12 @@ export interface Config {
   service?: string
   /** Maximum time to acquire the OS-user/service lock, in milliseconds; defaults to 30,000. */
   lockWaitMs?: number
+  /** Deadline for each OS command, in milliseconds; defaults to 30,000. */
+  commandTimeoutMs?: number
+  /** Combined stdout/stderr bytes and complete item read-back budget; defaults to 4,194,304. */
+  commandOutputLimitBytes?: number
+  /** Milliseconds between group TERM and KILL; defaults to 1000. */
+  commandKillGraceMs?: number
 }
 
 /**
@@ -133,12 +146,18 @@ export class KeychainCredentialProvider extends CredentialProvider {
   static Config: z<Config> = z.object({
     service: z.string().default(DEFAULT_SERVICE),
     lockWaitMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULT_LOCK_WAIT_MS),
+    commandTimeoutMs: z.number().step(1).min(1).max(2_147_483_647).default(30_000),
+    commandOutputLimitBytes: z.number().step(1).min(1)
+      .max(Math.min(bufferConstants.MAX_LENGTH, bufferConstants.MAX_STRING_LENGTH)).default(4_194_304),
+    commandKillGraceMs: z.number().step(1).min(1).max(2_147_483_647).default(1000),
   })
 
   private readonly backend: KeychainBackend
   private readonly service: string
   private readonly lockWaitMs: number
-  private readonly lockAbort = new AbortController()
+  private readonly shutdown = new AbortController()
+  private readonly commandSpec: KeychainCommandSpec
+  private readonly commands = new Set<Promise<KeychainCommandResult>>()
   private lockFd: number | undefined
   /** Serializes local writes and record reads before acquiring the service lock. */
   private operations: Promise<void> = Promise.resolve()
@@ -151,17 +170,30 @@ export class KeychainCredentialProvider extends CredentialProvider {
     if (!Number.isSafeInteger(this.lockWaitMs) || this.lockWaitMs < 1) {
       throw new TypeError('credentials-keychain: lockWaitMs must be a positive safe integer')
     }
-    this.backend = this.createBackend(this.service, (command, args, stdin) => spawnRunner(command, args, stdin, this.lockFd))
+    this.commandSpec = resolveCommandOptions({
+      timeoutMs: config.commandTimeoutMs,
+      outputLimitBytes: config.commandOutputLimitBytes,
+      killGraceMs: config.commandKillGraceMs,
+      signal: this.shutdown.signal,
+    })
+    this.backend = this.createBackend(this.service, (command, args, stdin) => {
+      if (this.closed) return Promise.reject(new KeychainCommandError('cancelled', 'not-started'))
+      const pending = spawnRunner(command, args, stdin, this.lockFd, this.commandSpec)
+      this.commands.add(pending)
+      void pending.then(() => { this.commands.delete(pending) }, () => { this.commands.delete(pending) })
+      return pending
+    }, this.commandSpec.outputLimitBytes)
   }
 
   /**
    * Build the platform backend; the single place a different store is chosen.
    * @param service - validated service name.
    * @param run - runner inheriting the currently held service-lock descriptor.
+   * @param outputLimitBytes - complete item read-back budget.
    * @returns the backend for this process's platform.
    */
-  protected createBackend(service: string, run: KeychainCommandRunner): KeychainBackend {
-    return createBackend(process.platform, service, run)
+  protected createBackend(service: string, run: KeychainCommandRunner, outputLimitBytes: number): KeychainBackend {
+    return createBackend(process.platform, service, run, outputLimitBytes)
   }
 
   /** Private lock directory shared by every profile of this OS user. */
@@ -172,8 +204,8 @@ export class KeychainCredentialProvider extends CredentialProvider {
   async* [Service.init](): AsyncGenerator<() => Promise<void> | void, void, void> {
     yield async () => {
       this.closed = true
-      this.lockAbort.abort(new Error('credentials-keychain is disposed'))
-      await this.operations
+      this.shutdown.abort(new Error('credentials-keychain is disposed'))
+      await Promise.allSettled([this.operations, ...this.commands])
     }
     // Reading the index proves the store is reachable before any consumer resolves a key.
     await this.enqueue(async () => {
@@ -295,12 +327,16 @@ export class KeychainCredentialProvider extends CredentialProvider {
 
   /** Retain the intent until every item agrees; an error may occur after its store effect. */
   private async commitRecord(intent: RecordIntent): Promise<void> {
+    const journal = JSON.stringify(intent)
+    this.backend.assertCanStore(journal)
+    if (intent.record !== null) this.backend.assertCanStore(intent.record)
+    if (intent.keys.length > 0) this.backend.assertCanStore(JSON.stringify(intent.keys))
     try {
-      await this.backend.set(JOURNAL_ACCOUNT, JSON.stringify(intent))
+      await this.backend.set(JOURNAL_ACCOUNT, journal)
       await this.applyRecord(intent)
-    } catch (_error) {
+    } catch (error) {
       // Backend errors may contain secret output and do not establish whether the operation took effect.
-      throw new KeychainCommitError()
+      throw new KeychainCommitError(error instanceof KeychainCommandError ? error.reason : undefined)
     }
   }
 
@@ -319,9 +355,9 @@ export class KeychainCredentialProvider extends CredentialProvider {
     const intent = this.parseIntent(text)
     try {
       await this.applyRecord(intent)
-    } catch (_error) {
+    } catch (error) {
       // Recovery retains its journal whenever cleanup has not taken effect.
-      throw new KeychainCommitError()
+      throw new KeychainCommitError(error instanceof KeychainCommandError ? error.reason : undefined)
     }
   }
 
@@ -352,7 +388,7 @@ export class KeychainCredentialProvider extends CredentialProvider {
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closed) return Promise.reject(new Error('credentials-keychain is disposed'))
     const run = this.operations.then(() => withServiceLock(
-      this.lockDirectory(), this.service, this.lockWaitMs, this.lockAbort.signal,
+      this.lockDirectory(), this.service, this.lockWaitMs, this.shutdown.signal,
       async (fd) => {
         this.lockFd = fd
         try { return await operation() } finally { this.lockFd = undefined }
@@ -368,11 +404,19 @@ export class KeychainCredentialProvider extends CredentialProvider {
     let parsed: unknown
     try {
       parsed = JSON.parse(text)
-    } catch (error) {
-      throw new Error('credentials-keychain: the record index is not valid JSON', { cause: error })
+    } catch (_error) {
+      // Parser diagnostics can contain secret-store output.
+      throw new Error('credentials-keychain: the record index is not valid JSON')
     }
     if (!Array.isArray(parsed)) throw new Error('credentials-keychain: the record index is not a list')
-    return parsed.map(item => parseCredentialKey(String(item)))
+    return parsed.map((item: unknown) => {
+      try {
+        if (typeof item !== 'string') throw new Error('invalid index entry')
+        return parseCredentialKey(item)
+      } catch (_error) {
+        throw new Error('credentials-keychain: invalid record index entry; preserve the store and repair it before continuing')
+      }
+    })
   }
 
 }

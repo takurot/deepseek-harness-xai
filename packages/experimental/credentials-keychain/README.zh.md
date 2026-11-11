@@ -37,6 +37,9 @@ kind: "package-reference"
 |---|---|---|
 | `service` | `dsh` | 所有条目共用的钥匙串服务名。只允许字母、数字、`.`、`_` 与 `-`；其他字符在加载时失败 |
 | `lockWaitMs` | `30000` | 获取 OS 用户/服务写锁的最长等待时间；以毫秒为单位的正安全整数 |
+| `commandTimeoutMs` | `30000` | 一个 OS 命令及其所属进程组的期限，以毫秒为单位 |
+| `commandOutputLimitBytes` | `4194304` | stdout/stderr 合计字节上限，也在保存前检查完整条目的读回大小 |
+| `commandKillGraceMs` | `1000` | 期限、取消或输出超限后，向进程组发送 TERM 与 KILL 之间的毫秒数 |
 
 ### 密钥来自哪里
 
@@ -61,10 +64,17 @@ macOS 通过系统 `osascript` JavaScript 桥接执行 Security API 操作，并
 
 原生 POSIX 锁绑定在 `<OS 用户主目录>/.dsh-keychain-locks/` 下使用持久文件，以服务名的 SHA-256 哈希命名。该标识不依赖 `DSH_HOME`、profile 或工作目录。目录/文件的所有权或权限不安全时，在访问存储前失败。运行器以描述符 3 向辅助程序传递锁定的打开文件描述；只有全部副本关闭后内核才释放锁。获取超时不会启动操作。释放提供方时取消锁获取并等待已接受的操作结束；已开始的 mutation 回调由调用方负责取消。
 
+命令定时器接受最大 2147483647 毫秒的正整数；输出预算还受 Node Buffer 和字符串上限约束。最先发生的期限、取消或输出失败始终作为报告原因，即使 TERM 处理器以退出码 0 结束。释放提供方时停止新命令、中断活动命令和锁获取，并等待队列工作及未入队的引用读取结束。完成前等待主进程及其进程组释放描述符；已开始的 mutation 回调仍自行负责网络取消。命令失败通过稳定的 `KeychainCommandError` 原因报告，不包含原始输出或解析器 cause。底层非零命令结果仅保留空 stdout，并在 stderr 非空时以 `!` 标记。
+
+写入前，后端检查完整读回大小，包括 macOS JSON/base64 封装。记录提交在首次存储效果前检查记录、目标索引及 journal。`KeychainStorageLimitError`（`KEYCHAIN_STORAGE_LIMIT`，outcome 为 `unchanged`）保留已有条目。执行中失败可能使结果未知，绝不自动重试；记录失败保留存在的可修复 journal。`KeychainCommitError.commandReason` 为失败的提交或修复保留安全的命令原因。
+
+Linux 每个条目最多保存 8192 个 UTF-8 字节，因为 [secret-tool stdin 实现](https://github.com/GNOME/libsecret/blob/main/tool/secret-tool.c) 使用固定容量；增大 `commandOutputLimitBytes` 不会提高此上限。该限制适用于完整序列化的记录、索引、journal 及引用。更大写入在修改存储前失败。管道读取不附加换行，二进制 SecretValue 传输保留内嵌 NUL 字节。
+
 | 文件 | 作用 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 提供方、配置、分层、记录、写入队列 |
-| [`src/backend.ts`](src/backend.ts) | macOS 与 Secret Service 后端、命令运行器 |
+| [`src/backend.ts`](src/backend.ts) | macOS 与 Secret Service 后端及存储预检 |
+| [`src/command-runner.ts`](src/command-runner.ts) | 命令预算、安全失败及进程组清理 |
 | [`src/service-lock.ts`](src/service-lock.ts) | 私有锁文件校验与有期限的 POSIX 锁获取 |
 
 <a id="further-exploration"></a>

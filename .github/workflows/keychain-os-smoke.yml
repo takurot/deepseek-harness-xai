@@ -1,0 +1,76 @@
+name: Keychain OS smoke
+
+on:
+  pull_request:
+    paths:
+      - 'packages/experimental/credentials-keychain/**'
+      - 'packages/credentials/credentials/**'
+      - 'native/system/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/keychain-os-smoke.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/experimental/credentials-keychain/**'
+      - 'packages/credentials/credentials/**'
+      - 'native/system/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/keychain-os-smoke.yml'
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-os:
+    name: real secret store / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    env:
+      DSH_TELEMETRY_DISABLED: '1'
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: pnpm/action-setup@v5.0.0
+        with:
+          run_install: false
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install workspace and native lock binding
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build:native-system
+      - name: Install Linux secret store tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes dbus-x11 gnome-keyring libsecret-tools libglib2.0-bin
+      - name: Exercise isolated Linux Secret Service
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          keychain_data_root="$(mktemp -d "$RUNNER_TEMP/keychain-data.XXXXXX")"
+          keychain_runtime_root="$(mktemp -d "$RUNNER_TEMP/keychain-runtime.XXXXXX")"
+          export XDG_DATA_HOME="$keychain_data_root"
+          export XDG_RUNTIME_DIR="$keychain_runtime_root"
+          chmod 700 "$keychain_data_root" "$keychain_runtime_root"
+          trap 'rm -rf "$keychain_data_root" "$keychain_runtime_root"' EXIT
+          DSH_KEYCHAIN_OS_E2E=1 dbus-run-session -- pnpm exec vitest run --config vitest.e2e.config.ts packages/experimental/credentials-keychain/tests/secret-service.e2e.ts --retry 0
+      - name: Exercise isolated macOS Keychain
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          keychain="$RUNNER_TEMP/dsh-smoke.keychain-db"
+          security create-keychain -p '' "$keychain"
+          trap 'security delete-keychain "$keychain"' EXIT
+          security default-keychain -d user -s "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security unlock-keychain -p '' "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          pnpm exec vitest run --config vitest.e2e.config.ts packages/experimental/credentials-keychain/tests/keychain.e2e.ts packages/experimental/credentials-keychain/tests/helper-lock.e2e.ts --retry 0

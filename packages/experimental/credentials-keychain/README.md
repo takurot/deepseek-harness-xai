@@ -37,6 +37,9 @@ Load it in place of `dsh-credentials-local`; both implement the same service, so
 |---|---|---|
 | `service` | `dsh` | Keychain service name shared by every item. Letters, digits, `.`, `_`, and `-` only; anything else fails at load |
 | `lockWaitMs` | `30000` | Maximum time to acquire the OS-user/service writer lock; a positive safe integer in milliseconds |
+| `commandTimeoutMs` | `30000` | Deadline for one OS command and its owned process group, in milliseconds |
+| `commandOutputLimitBytes` | `4194304` | Combined stdout/stderr byte limit, also checked against complete item read-back before saving |
+| `commandKillGraceMs` | `1000` | Milliseconds between group TERM and KILL after deadline, cancellation, or output overflow |
 
 ### Where keys come from
 
@@ -61,10 +64,17 @@ Records use the [shared JSON validation](../../credentials/credentials/README.md
 
 The native POSIX lock binding owns a persistent file under `<OS user home>/.dsh-keychain-locks/`, named by the service's SHA-256 hash. This identity does not depend on `DSH_HOME`, the profile, or the working directory. Unsafe directory/file ownership or permissions fail before store access. The runner passes the locked open-file description to helpers as descriptor 3; the kernel releases it only after all copies close. Acquisition expiry never starts the operation. Disposal cancels acquisition and drains accepted operations; cancellation of an already-running mutation callback remains its caller's responsibility.
 
+Command timers accept positive integers up to 2147483647 milliseconds; output budgets also respect Node's Buffer and string limits. The first deadline, cancellation, or output failure remains the reported reason even if a TERM handler exits with code 0. Disposal stops new commands, aborts active commands and lock acquisition, and drains queued work and unqueued reference reads. Completion waits for the leader and its process group to release descriptors; an already-running mutation callback still owns its network cancellation. Failed commands expose stable `KeychainCommandError` reasons without raw output or parser causes. Low-level nonzero command results retain only an empty stdout and `!` when stderr was present.
+
+Before a write, the backend checks its complete read-back, including macOS JSON/base64 framing. Record commits check the record, target index, and journal before the first storage effect. `KeychainStorageLimitError` (`KEYCHAIN_STORAGE_LIMIT`, outcome `unchanged`) leaves existing items intact. In-flight failures can have unknown effects and are never automatically retried; record failures retain a repairable journal when present. `KeychainCommitError.commandReason` preserves a safe command reason for a failed commit or repair.
+
+Linux saves at most 8192 UTF-8 bytes per item because the [secret-tool stdin implementation](https://github.com/GNOME/libsecret/blob/main/tool/secret-tool.c) uses that fixed capacity; increasing `commandOutputLimitBytes` does not raise it. This applies to complete serialized records, indexes, and journals as well as references. Larger writes fail before changing the store. Piped lookups add no newline, and the binary SecretValue transport preserves embedded NUL bytes.
+
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Provider, config, layering, records, write queue |
-| [`src/backend.ts`](src/backend.ts) | macOS and Secret Service backends, command runner |
+| [`src/backend.ts`](src/backend.ts) | macOS and Secret Service backends and storage preflight |
+| [`src/command-runner.ts`](src/command-runner.ts) | Command budgets, safe failures and process-group cleanup |
 | [`src/service-lock.ts`](src/service-lock.ts) | Private lock-file validation and bounded POSIX lock acquisition |
 
 <a id="further-exploration"></a>

@@ -23,6 +23,7 @@ async function fixture(kind: 'local' | 'keychain') {
   const items = new Map<string, string>()
   const events: string[] = []
   const backend: KeychainBackend = {
+    assertCanStore() {},
     get: async account => items.get(account),
     set: async (account, value) => { items.set(account, value) },
     delete: async (account) => { items.delete(account) },

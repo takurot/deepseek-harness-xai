@@ -12,6 +12,7 @@ const [root, lockRoot, service, waitText, pause] = process.argv.slice(2) as [str
 const release = Promise.withResolvers<undefined>()
 
 class FileBackend implements KeychainBackend {
+  assertCanStore(): void {}
   private paused = false
 
   constructor(private readonly run: KeychainCommandRunner) {}

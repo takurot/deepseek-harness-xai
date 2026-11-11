@@ -8,16 +8,17 @@
  * @module @deepseek-ai/dsh-credentials-keychain/backend
  */
 
-import { spawn } from 'node:child_process'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { KeychainCommandError, resolveCommandOptions } from './command-runner.ts'
+export { spawnRunner } from './command-runner.ts'
+export type { KeychainCommandOptions, KeychainCommandSpec } from './command-runner.ts'
 
 /** Outcome of one finished command. */
 export interface KeychainCommandResult {
   /** Exit code; `null` when a signal ended the child. */
   code: number | null
-  /** Captured standard output. */
+  /** Captured standard output for exit 0; empty on a failed exit. */
   stdout: string
-  /** Captured standard error. */
+  /** Captured standard error for exit 0; `!` records only presence on a failed exit. */
   stderr: string
 }
 
@@ -33,6 +34,12 @@ export type KeychainCommandRunner = (command: string, args: readonly string[], s
 
 /** One secret per account under a fixed service; values are opaque to the backend. */
 export interface KeychainBackend {
+  /**
+   * Refuse unreadable or platform-truncated item text before store access.
+   * @param secret - complete candidate item text.
+   * @throws KeychainStorageLimitError before any storage effect.
+   */
+  assertCanStore(secret: string): void
   /**
    * Read one secret.
    * @param account - account name.
@@ -55,34 +62,19 @@ export interface KeychainBackend {
   delete(account: string): Promise<void>
 }
 
-/**
- * The spawn-backed {@link KeychainCommandRunner}.
- * @param command - executable name resolved through `PATH`.
- * @param args - argument vector; must never carry a secret.
- * @param stdin - text written to the child's stdin before it is closed.
- * @param lockFd - held service-lock descriptor inherited as fd 3 until the helper exits.
- * @returns the exit code and captured output.
- */
-export function spawnRunner(command: string, args: readonly string[], stdin?: string, lockFd?: number): Promise<KeychainCommandResult> {
-  return new Promise((resolve, reject) => {
-    // Node's tuple overload describes only three descriptors; the first three remain pipes.
-    const child = spawn(command, [...args], { stdio: ['pipe', 'pipe', 'pipe', lockFd ?? 'ignore'] }) as ChildProcessWithoutNullStreams
-    const stdout: Buffer[] = []
-    const stderr: Buffer[] = []
-    child.stdout.on('data', (chunk: Buffer) => { stdout.push(chunk) })
-    child.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk) })
-    child.once('error', reject)
-    child.once('close', (code) => {
-      resolve({
-        code,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-      })
-    })
-    // A child that exits before reading stdin closes the pipe; the exit code reports that failure.
-    child.stdin.once('error', () => {})
-    child.stdin.end(stdin)
-  })
+/** A candidate item was refused before any storage effect. */
+export class KeychainStorageLimitError extends Error {
+  /** Stable machine-readable input-refusal code. */
+  readonly code = 'KEYCHAIN_STORAGE_LIMIT'
+  /** No storage command ran for the refused input. */
+  readonly outcome = 'unchanged'
+
+  constructor(readonly reason: 'read-budget' | 'platform-input') {
+    super(reason === 'read-budget'
+      ? 'credentials-keychain: value exceeds the complete command read-back budget; increase commandOutputLimitBytes before saving'
+      : 'credentials-keychain: value exceeds the secret-tool 8192-byte stdin limit; use another credential provider before saving')
+    this.name = 'KeychainStorageLimitError'
+  }
 }
 
 /** Exit code of `security` for a missing item. */
@@ -142,14 +134,20 @@ type MacosResult = { status: number } | { status: 0; secret: string }
  * items retain their original security-tool permissions until explicitly deleted.
  * @param service - keychain service name.
  * @param run - command runner.
+ * @param outputLimitBytes - complete command read-back budget.
  * @returns the backend, preferring successor values over legacy values.
  */
-export function macosBackend(service: string, run: KeychainCommandRunner): KeychainBackend {
-  const failure = (operation: string): Error => new Error(`credentials-keychain: macOS ${operation} failed; unlock the Keychain and verify access, then inspect the store before retrying`)
+export function macosBackend(service: string, run: KeychainCommandRunner, outputLimitBytes?: number): KeychainBackend {
+  const limit = resolveCommandOptions({ outputLimitBytes }).outputLimitBytes
+  const assertCanStore = (secret: string): void => {
+    const result = JSON.stringify({ status: 0, secret: Buffer.from(secret, 'utf8').toString('base64') }) + '\n'
+    if (Buffer.byteLength(result) > limit) throw new KeychainStorageLimitError('read-budget')
+  }
+  const failure = (_operation: string): Error => new KeychainCommandError('invalid-result', 'unknown')
   const native = async (operation: 'get' | 'set' | 'delete', account: string, secret?: string): Promise<MacosResult> => {
     const request = { operation, service, account: `v2:${account}`, ...(secret === undefined ? {} : { secret: Buffer.from(secret).toString('base64') }) }
     const result = await run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', MACOS_SCRIPT], JSON.stringify(request))
-    if (result.code !== 0) throw failure(operation)
+    if (result.code !== 0) throw new KeychainCommandError('exit', 'unknown', result.code)
     let value: unknown
     try {
       value = JSON.parse(result.stdout)
@@ -167,6 +165,7 @@ export function macosBackend(service: string, run: KeychainCommandRunner): Keych
     return { status: value.status }
   }
   return {
+    assertCanStore,
     async get(account) {
       const result = await native('get', account)
       if ('secret' in result) {
@@ -175,21 +174,23 @@ export function macosBackend(service: string, run: KeychainCommandRunner): Keych
         if (bytes.toString('base64') !== result.secret || !Buffer.from(value, 'utf8').equals(bytes)) throw failure('get')
         return value
       }
-      if (result.status !== MACOS_STATUS_NOT_FOUND) throw failure('get')
+      if (result.status !== MACOS_STATUS_NOT_FOUND) throw new KeychainCommandError('store', 'unknown', undefined, result.status)
       const legacy = await run('security', ['find-generic-password', '-s', service, '-a', account, '-w'])
       if (legacy.code === MACOS_ITEM_NOT_FOUND) return undefined
       if (legacy.code !== 0) throw commandFailure('security find-generic-password', legacy)
       return Buffer.from(legacy.stdout.trim(), 'base64').toString('utf8')
     },
     async set(account, secret) {
-      if ((await native('set', account, secret)).status !== 0) throw failure('set')
+      assertCanStore(secret)
+      const result = await native('set', account, secret)
+      if (result.status !== 0) throw new KeychainCommandError('store', 'unknown', undefined, result.status)
     },
     async delete(account) {
       // Removing legacy first prevents a failed successor removal from revealing an older value.
       const legacy = await run('security', ['-i'], `delete-generic-password -s ${service} -a ${account}\n`)
       if (legacy.code !== 0 && legacy.code !== MACOS_ITEM_NOT_FOUND) throw commandFailure('security delete-generic-password', legacy)
       const result = await native('delete', account)
-      if (result.status !== 0 && result.status !== MACOS_STATUS_NOT_FOUND) throw failure('delete')
+      if (result.status !== 0 && result.status !== MACOS_STATUS_NOT_FOUND) throw new KeychainCommandError('store', 'unknown', undefined, result.status)
     },
   }
 }
@@ -200,10 +201,18 @@ export function macosBackend(service: string, run: KeychainCommandRunner): Keych
  * empty stderr; any diagnostic text means the service itself failed.
  * @param service - attribute value identifying the harness items.
  * @param run - command runner.
+ * @param outputLimitBytes - complete command read-back budget.
  * @returns the backend.
  */
-export function secretServiceBackend(service: string, run: KeychainCommandRunner): KeychainBackend {
+export function secretServiceBackend(service: string, run: KeychainCommandRunner, outputLimitBytes?: number): KeychainBackend {
+  const limit = resolveCommandOptions({ outputLimitBytes }).outputLimitBytes
+  const assertCanStore = (secret: string): void => {
+    const bytes = Buffer.byteLength(secret, 'utf8')
+    if (bytes > 8192) throw new KeychainStorageLimitError('platform-input')
+    if (bytes > limit) throw new KeychainStorageLimitError('read-budget')
+  }
   return {
+    assertCanStore,
     async get(account) {
       const result = await run('secret-tool', ['lookup', 'service', service, 'account', account])
       if (result.code === 0) return result.stdout
@@ -211,6 +220,7 @@ export function secretServiceBackend(service: string, run: KeychainCommandRunner
       throw commandFailure('secret-tool lookup', result)
     },
     async set(account, secret) {
+      assertCanStore(secret)
       const result = await run(
         'secret-tool',
         ['store', `--label=${service}: ${account}`, 'service', service, 'account', account],
@@ -232,17 +242,19 @@ export function secretServiceBackend(service: string, run: KeychainCommandRunner
  * @param platform - `process.platform` value.
  * @param service - service name shared by every item.
  * @param run - command runner.
+ * @param outputLimitBytes - complete command read-back budget.
  * @returns the backend for macOS or Linux.
  * @throws on any other platform, which has no supported store yet.
  */
-export function createBackend(platform: NodeJS.Platform, service: string, run: KeychainCommandRunner): KeychainBackend {
-  if (platform === 'darwin') return macosBackend(service, run)
-  if (platform === 'linux') return secretServiceBackend(service, run)
+export function createBackend(
+  platform: NodeJS.Platform, service: string, run: KeychainCommandRunner, outputLimitBytes?: number,
+): KeychainBackend {
+  if (platform === 'darwin') return macosBackend(service, run, outputLimitBytes)
+  if (platform === 'linux') return secretServiceBackend(service, run, outputLimitBytes)
   throw new Error(`credentials-keychain: platform "${platform}" has no supported secret store; use credentials-local`)
 }
 
-/** Failure carrying the tool's diagnostic text; the secret is never in the arguments or output of a failed call. */
-function commandFailure(what: string, result: KeychainCommandResult): Error {
-  const detail = result.stderr.trim()
-  return new Error(`credentials-keychain: ${what} failed with exit code ${String(result.code)}${detail.length > 0 ? `: ${detail}` : ''}`)
+/** Stable failures retain no secret-bearing output. */
+function commandFailure(_what: string, result: KeychainCommandResult): Error {
+  return new KeychainCommandError('exit', 'unknown', result.code)
 }

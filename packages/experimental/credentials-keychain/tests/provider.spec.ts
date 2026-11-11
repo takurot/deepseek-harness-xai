@@ -17,6 +17,7 @@ import { KeychainCredentialProvider, resolveService } from '../src/index.ts'
 import type { Config, KeychainBackend, KeychainCommandRunner } from '../src/index.ts'
 
 class MemoryBackend implements KeychainBackend {
+  assertCanStore(): void {}
   readonly items = new Map<string, string>()
   readonly lockRoot = mkdtempSync(join(tmpdir(), 'keychain-lock-test-'))
 
@@ -416,6 +417,18 @@ describe('lifecycle', () => {
     }
   })
 
+  it('keeps corrupt index values out of parser failures and their causes', async () => {
+    for (const text of ['PRIVATE_INDEX_VALUE', JSON.stringify(['PRIVATE_INDEX_VALUE']), JSON.stringify([42])]) {
+      const backend = new MemoryBackend()
+      backend.items.set('index', text)
+      TestProvider.backend = backend
+      const failure = await Promise.resolve(new Context().plugin(TestProvider, {})).then(() => undefined, (error: unknown) => error)
+      expect(failure).toBeInstanceOf(Error)
+      expect(String(failure)).not.toContain('PRIVATE_INDEX_VALUE')
+      expect((failure as Error).cause).toBeUndefined()
+    }
+  })
+
   it('refuses writes after disposal', async () => {
     TestProvider.backend = new MemoryBackend()
     const ctx = new Context()
@@ -443,6 +456,7 @@ describe('lifecycle', () => {
       protected override lockDirectory(): string { return root }
       protected override createBackend(_service: string, run: KeychainCommandRunner): KeychainBackend {
         return {
+          assertCanStore() {},
           async get() {
             const result = await run(process.execPath, ['-e', 'process.stdout.write(String(require("node:fs").fstatSync(3).isFile()))'])
             expect(result.stdout).toBe('true')

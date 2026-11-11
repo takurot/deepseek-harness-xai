@@ -62,9 +62,9 @@ describe('macosBackend', () => {
 
   it('does not fall back to legacy on native permission failures', async () => {
     const { run, calls } = fake({ stdout: '{"status":-25293}' })
-    await expect(macosBackend('dsh', run).get('a')).rejects.toThrow('macOS get failed')
+    await expect(macosBackend('dsh', run).get('a')).rejects.toThrow('OS command store')
     expect(calls).toHaveLength(1)
-    await expect(macosBackend('dsh', run).set('a', 'secret')).rejects.toThrow('macOS set failed')
+    await expect(macosBackend('dsh', run).set('a', 'secret')).rejects.toThrow('OS command store')
   })
 
   it('rejects malformed helper responses without retaining secret output or parser causes', async () => {
@@ -81,13 +81,13 @@ describe('macosBackend', () => {
       expect(String(error)).not.toContain('PRIVATE_VALUE')
       expect((error as Error).cause).toBeUndefined()
     }
-    await expect(macosBackend('dsh', fake({ stdout: '{"status":0,"secret":"private"}' }).run).set('a', 'private')).rejects.toThrow('macOS set failed')
+    await expect(macosBackend('dsh', fake({ stdout: '{"status":0,"secret":"private"}' }).run).set('a', 'private')).rejects.toThrow('OS command invalid-result')
   })
 
   it('rejects noncanonical base64 and malformed UTF-8 without falling back', async () => {
     for (const secret of ['!', 'Zg', '====', '/w==', 'YWJj\n']) {
       const { run, calls } = fake({ stdout: JSON.stringify({ status: 0, secret }) })
-      await expect(macosBackend('dsh', run).get('a')).rejects.toThrow('macOS get failed')
+      await expect(macosBackend('dsh', run).get('a')).rejects.toMatchObject({ reason: 'invalid-result', outcome: 'unknown' })
       expect(calls).toHaveLength(1)
     }
     const value = '\uFEFF日本語\0\n '
@@ -121,7 +121,7 @@ describe('macosBackend', () => {
     const run: KeychainCommandRunner = async command => command === '/usr/bin/osascript'
       ? { code: 0, stdout: '{"status":-25300}', stderr: '' }
       : { code: 1, stdout: '', stderr: 'denied' }
-    await expect(macosBackend('dsh', run).get('a')).rejects.toThrow('security find-generic-password failed')
+    await expect(macosBackend('dsh', run).get('a')).rejects.toThrow('OS command exit')
     expect(await macosBackend('dsh', macStore().run).get('a')).toBeUndefined()
     await macosBackend('dsh', async command => command === '/usr/bin/osascript'
       ? { code: 0, stdout: '{"status":-25300}', stderr: '' } : { code: 44, stdout: '', stderr: '' }).delete('a')
@@ -145,10 +145,10 @@ describe('secretServiceBackend', () => {
   it('treats exit 1 with empty stderr as missing and any diagnostic as a failure', async () => {
     expect(await secretServiceBackend('dsh', fake({ code: 1 }).run).get('a')).toBeUndefined()
     await secretServiceBackend('dsh', fake({ code: 1 }).run).delete('a')
-    await expect(secretServiceBackend('dsh', fake({ code: 1, stderr: 'no dbus' }).run).get('a')).rejects.toThrow('no dbus')
-    await expect(secretServiceBackend('dsh', fake({ code: 1, stderr: 'no dbus' }).run).delete('a')).rejects.toThrow('no dbus')
-    await expect(secretServiceBackend('dsh', fake({ code: 2 }).run).get('a')).rejects.toThrow('secret-tool lookup failed with exit code 2')
-    await expect(secretServiceBackend('dsh', fake({ code: 2 }).run).set('a', 'b')).rejects.toThrow('secret-tool store failed')
+    await expect(secretServiceBackend('dsh', fake({ code: 1, stderr: 'no dbus' }).run).get('a')).rejects.toThrow('OS command exit')
+    await expect(secretServiceBackend('dsh', fake({ code: 1, stderr: 'no dbus' }).run).delete('a')).rejects.toThrow('OS command exit')
+    await expect(secretServiceBackend('dsh', fake({ code: 2 }).run).get('a')).rejects.toThrow('OS command exit (exit 2)')
+    await expect(secretServiceBackend('dsh', fake({ code: 2 }).run).set('a', 'b')).rejects.toThrow('OS command exit')
   })
 })
 
@@ -169,7 +169,7 @@ describe('createBackend', () => {
 describe('spawnRunner', () => {
   it('captures output, passes stdin, and reports exit codes', async () => {
     const result = await spawnRunner(process.execPath, ['-e', 'process.stdin.pipe(process.stdout);process.stderr.write("e");process.exitCode=3'], 'in')
-    expect(result).toEqual({ code: 3, stdout: 'in', stderr: 'e' })
+    expect(result).toEqual({ code: 3, stdout: '', stderr: '!' })
   })
 
   it('tolerates a child that never reads stdin', async () => {
@@ -179,5 +179,33 @@ describe('spawnRunner', () => {
 
   it('rejects when the executable is missing', async () => {
     await expect(spawnRunner('dsh-no-such-command', [])).rejects.toThrow()
+  })
+})
+
+
+describe('storage preflight', () => {
+  it('includes the entire macOS read JSON, base64 and final newline before any write', async () => {
+    const wire = '{"status":0,"secret":"YWJj"}\n'
+    const exact = Buffer.byteLength(wire)
+    const allowed = fake({ stdout: '{"status":0}\n' })
+    await macosBackend('dsh', allowed.run, exact).set('ref:K', 'abc')
+    expect(allowed.calls).toHaveLength(1)
+    const denied = fake({})
+    await expect(macosBackend('dsh', denied.run, exact - 1).set('ref:K', 'abc'))
+      .rejects.toMatchObject({ code: 'KEYCHAIN_STORAGE_LIMIT', outcome: 'unchanged', reason: 'read-budget' })
+    expect(denied.calls).toHaveLength(0)
+  })
+
+  it('accepts exact Linux byte limits and refuses intrinsic overflow before any command', async () => {
+    const exact = fake({})
+    await secretServiceBackend('dsh', exact.run, 8192).set('ref:K', 'x'.repeat(8192))
+    expect(exact.calls).toHaveLength(1)
+    const denied = fake({})
+    await expect(secretServiceBackend('dsh', denied.run, 16384).set('ref:K', 'x'.repeat(8193)))
+      .rejects.toMatchObject({ reason: 'platform-input', outcome: 'unchanged' })
+    await expect(secretServiceBackend('dsh', denied.run, 3).set('ref:K', '日本語'))
+      .rejects.toMatchObject({ reason: 'read-budget', outcome: 'unchanged' })
+    expect(denied.calls).toHaveLength(0)
+    expect(() =>{  secretServiceBackend('dsh', denied.run).assertCanStore('embedded\0日本語') }).not.toThrow()
   })
 })
