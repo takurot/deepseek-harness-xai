@@ -46,6 +46,86 @@ export function isCredentialRefName(value: string): boolean {
   return REF_PATTERN.test(value)
 }
 
+/** Own enumerable data fields; inspecting a durable input must not execute accessors. */
+function recordFields(value: unknown, subject: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new TypeError(`${subject} must be a plain mapping`)
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) throw new TypeError(`${subject} holds fields JSON cannot represent`)
+  return Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(value)).map(([key, descriptor]) => {
+    if (!descriptor.enumerable || !('value' in descriptor)) {
+      throw new TypeError(`${subject} holds fields JSON cannot represent`)
+    }
+    const field: unknown = descriptor.value
+    return [key, field]
+  }))
+}
+
+/** Copy a JSON value without invoking user-supplied conversion methods. */
+function copyRecordJson(value: unknown, subject: string, seen: Set<object>): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError(`${subject} holds a non-finite number`)
+    if (Object.is(value, -0)) throw new TypeError(`${subject} holds negative zero, which JSON does not preserve`)
+    return value
+  }
+  if (typeof value !== 'object') throw new TypeError(`${subject} is not JSON-serializable`)
+  if (seen.has(value)) throw new TypeError(`${subject} is cyclic`)
+  seen.add(value)
+  let result: unknown
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype || Reflect.ownKeys(value).length !== value.length + 1) {
+      throw new TypeError(`${subject} must be a dense JSON array without extra fields`)
+    }
+    result = Array.from({ length: value.length }, (_, index) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+      if (descriptor === undefined || !descriptor.enumerable || !('value' in descriptor)) {
+        throw new TypeError(`${subject} must be a dense JSON array without accessors`)
+      }
+      const nested: unknown = descriptor.value
+      return copyRecordJson(nested, subject, seen)
+    })
+  } else {
+    result = Object.fromEntries(Object.entries(recordFields(value, subject))
+      .map(([key, nested]) => [key, copyRecordJson(nested, subject, seen)]))
+  }
+  seen.delete(value)
+  return result
+}
+
+/**
+ * Admit a durable credential record and copy its JSON data without interpreting grant contents.
+ * Undefined API-key optionals normalize to absent fields. Other fields must survive JSON storage.
+ * @param value - parsed stored data or a replacement about to be persisted.
+ * @param subject - trusted diagnostic context containing no secret values.
+ * @returns an independent record with ordinary JSON values and no accessors.
+ * @throws TypeError describing the violated rule without quoting supplied fields or values.
+ */
+export function decodeCredentialRecord(value: unknown, subject: string): CredentialRecord {
+  const fields = recordFields(value, subject)
+  const kind = fields['kind']
+  if (kind !== 'api-key' && kind !== 'grant') {
+    throw new TypeError(`${subject} has ${kind === undefined ? 'no' : 'unknown'} kind`)
+  }
+  const allowed = kind === 'api-key' ? ['kind', 'key', 'env'] : ['kind', 'payload']
+  if (Object.keys(fields).some(key => !allowed.includes(key))) throw new TypeError(`${subject} has unknown field`)
+  if (kind === 'grant') {
+    if (!Object.hasOwn(fields, 'payload')) throw new TypeError(`${subject} has no payload`)
+    return { kind, payload: copyRecordJson(fields['payload'], `${subject} payload`, new Set()) }
+  }
+  const key = fields['key']
+  if (key !== undefined && (typeof key !== 'string' || key.length === 0)) {
+    throw new TypeError(`${subject} has a non-string or empty key; omit the field instead`)
+  }
+  const rawEnv = fields['env']
+  const env = rawEnv === undefined ? undefined : Object.fromEntries(Object.entries(recordFields(rawEnv, `${subject} env`)).map(([name, entry]) => {
+    if (!isCredentialRefName(name)) throw new TypeError(`${subject} env names must match POSIX identifiers`)
+    if (typeof entry !== 'string' || entry.length === 0) throw new TypeError(`${subject} env values must be a non-empty string`)
+    return [name, entry]
+  }))
+  return { kind, ...key === undefined ? {} : { key }, ...env === undefined ? {} : { env } }
+}
+
 /**
  * Whether a raw string could be a {@link credentialKey} segment at all.
  * Consumers whose addressing units come from somewhere else — a settings dict

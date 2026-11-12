@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-alpha.3/keychain-record-recovery/guide.md
+/:
+  en: 3b518021360397b6
+  zh: e44b296a6eaa06a1
+/recover-keychain-records-before-downgrading:
+  en: 78ac739baafcc773
+  zh: ec9e322fc82480dc
+/recover-keychain-records-before-downgrading/change:
+  en: 08a85af44a52c9c8
+  zh: 90123b3360915f51
+/recover-keychain-records-before-downgrading/migration:
+  en: 380500748f7de08e
+  zh: be780c5412bff41d

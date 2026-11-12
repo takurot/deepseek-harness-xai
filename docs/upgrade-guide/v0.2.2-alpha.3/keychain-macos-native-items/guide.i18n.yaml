@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-alpha.3/keychain-macos-native-items/guide.md
+/:
+  en: 5367f2f8830e2a45
+  zh: 63dc928176ef4655
+/use-the-native-macos-credential-items:
+  en: a2cf619e5010e6e4
+  zh: 0d8129a47303d8c1
+/use-the-native-macos-credential-items/change:
+  en: ada05334e92e560e
+  zh: 591145b8995eb2f6
+/use-the-native-macos-credential-items/migration:
+  en: b7bf83baa7c3b522
+  zh: feabb8baea6a1e45

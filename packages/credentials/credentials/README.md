@@ -126,6 +126,8 @@ One doctrine and four consequences:
 
 `modifyRecord` is the only record write path because a correct write depends on the current value: a token refresh is read-decide-replace, and the mutation sees the record as it stands at the moment the write is exclusive — returning `undefined` leaves the entry untouched. Exclusion holds across processes where the backing store supports it, which is what stops two processes rotating one refresh token from losing whichever wrote first. Reads mirror the reference half but never layer: nothing can shadow a record, and a `grant` payload is returned exactly as its owner wrote it, because only the owning plugin can interpret it.
 
+The durable providers use `decodeCredentialRecord` before saving or admitting stored records. API-key optionals normalize to absent fields; grant payloads accept only finite JSON values other than negative zero, dense arrays, and plain data objects. Unknown fields, lossy values, cycles, accessors, and conversion methods are refused without quoting their contents. Validation checks JSON storage, while each grant owner validates the payload’s meaning.
+
 ### Source map
 
 | File | Role |

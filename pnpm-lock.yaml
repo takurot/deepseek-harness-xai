@@ -35,6 +35,9 @@ importers:
 
   .:
     devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:~
+        version: link:vendor/cordis
       '@deepseek-ai/dsh-action-cards':
         specifier: workspace:*
         version: link:packages/experimental/action-cards
@@ -47,6 +50,12 @@ importers:
       '@deepseek-ai/dsh-computer-use':
         specifier: workspace:*
         version: link:packages/computer-use/computer-use
+      '@deepseek-ai/dsh-credentials':
+        specifier: workspace:*
+        version: link:packages/credentials/credentials
+      '@deepseek-ai/dsh-credentials-keychain':
+        specifier: workspace:*
+        version: link:packages/experimental/credentials-keychain
       '@deepseek-ai/dsh-cua':
         specifier: workspace:*
         version: link:packages/experimental/cua
@@ -146,6 +155,9 @@ importers:
       '@deepseek-ai/dsh-working-directory':
         specifier: workspace:*
         version: link:packages/session/working-directory
+      '@deepseek-ai/node-addon-system':
+        specifier: workspace:~
+        version: link:native/system/packages/entry
       '@stylistic/eslint-plugin':
         specifier: ^5.10.0
         version: 5.10.0(eslint@10.5.0(jiti@2.7.0)(supports-color@9.4.0))
@@ -9657,6 +9669,9 @@ importers:
 
   packages/experimental/credentials-keychain:
     dependencies:
+      '@deepseek-ai/node-addon-system':
+        specifier: workspace:~
+        version: link:../../../native/system/packages/entry
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery

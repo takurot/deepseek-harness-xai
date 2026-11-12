@@ -45,9 +45,9 @@ export interface ApiKeyRecord {
 
 /**
  * The product of one authorization grant, kept verbatim for its owner. The
- * seam never reads, validates, or reshapes {@link payload}: it is written in
- * the owning plugin's format and only that plugin can interpret it. The single
- * constraint is that it survives a JSON round trip.
+ * seam checks that {@link payload} survives JSON storage without interpreting
+ * its contents. Its format belongs to the owning plugin, which alone validates
+ * its meaning. Durable providers copy admitted JSON values without accessors.
  */
 export interface GrantRecord {
   /** Discriminant. */
