@@ -63,7 +63,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 提供方保持请求匿名且有界：只接受不含内嵌凭据且不超过 2,048 个字符的 `http:` 与 `https:` URL。请求经过进程级 dispatcher，因此已安装的代理策略生效，目标地址由系统解析器选择；任何目标地址都被允许。同源重定向会被跟随；跨源重定向会失败并要求重新调用。提供方还强制执行字节、字符、跳数和时间上限，拒绝不支持的内容类型，并发送显式产品 `User-Agent`。
 
-当标头没有声明 charset 且响应是 HTML 时，提供方读取页面自身的声明：字节顺序标记，否则是前 1,024 字节内第一个 `<meta charset>` 或 `<meta http-equiv="content-type">`（WHATWG 预扫描的简化版）。标头 charset 始终优先。`<meta>` 中解码器不支持的标签会以 `WEB_UNSUPPORTED_CONTENT_TYPE` 失败，而不是返回乱码；`<meta>` 中的 UTF-16 标签按 UTF-8 读取。没有声明的页面仍按 UTF-8。只读取声明，不做猜测：没有统计式检测。
+当标头没有声明 charset 且响应是 HTML 时，提供方读取页面自身的声明：字节顺序标记，否则是完整包含在前 1,024 字节内的第一个 `<meta charset>` 或 `<meta http-equiv="content-type">`。有界预扫描跳过注释及其他标签，包括带引号的属性值；未终止的标签或注释消耗剩余字节。属性名按 ASCII 不区分大小写匹配，重复属性以首次出现为准，`charset` 优先于 `content`，与属性顺序无关；`content` 要求 `http-equiv` 的值精确匹配 `content-type`。标头 charset 始终优先。`<meta>` 中解码器不支持的标签会以 `WEB_UNSUPPORTED_CONTENT_TYPE` 失败，而不是返回乱码；`<meta>` 中的 UTF-16 标签按 UTF-8 读取。没有声明的页面仍按 UTF-8。只读取声明，不做猜测：没有统计式检测。
 
 对于以逗号或空白拼接、且含有 UTF-8 标签的畸形 charset 声明（例如 `charset=utf-8,gbk`），提供方严格按 UTF-8 解码。恢复路径拒绝非法 UTF-8，不会尝试其他编码。字节上限在字符内部截断时，恢复路径省略不完整的末尾序列并返回 `truncated: true`；使用恢复路径的完整响应必须通过 EOF 检查。合法的单标签声明仍在遇到非法字节时使用替换字符。
 

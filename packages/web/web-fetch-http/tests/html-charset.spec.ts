@@ -33,6 +33,48 @@ describe('sniffHtmlCharset', () => {
     expect(sniffHtmlCharset(ascii('<meta name="a"><meta charset="euc-kr"><meta charset="gbk">'))).toBe('euc-kr')
   })
 
+  it.each([
+    ['<meta name="example charset=shift_jis" charset="utf-8">', 'utf-8'],
+    ['<meta name="example http-equiv=content-type" content="charset=shift_jis">', undefined],
+    ['<div title="<meta charset=shift_jis>">UTF-8</div>', undefined],
+    ["<div title='<meta charset=shift_jis>'><meta charset=utf-8>", 'utf-8'],
+    ['<meta name="a > b" charset=gbk>', 'gbk'],
+    ['<metadata charset=shift_jis><meta charset=utf-8>', 'utf-8'],
+    ['<meta:extra charset=shift_jis><meta charset=utf-8>', 'utf-8'],
+    ['<meta http-equiv="content-type-extra" content="charset=shift_jis">', undefined],
+    ['<meta http-equiv=" content-type" content="charset=shift_jis">', undefined],
+    ['<meta charset=gbk CHARSET=utf-8>', 'gbk'],
+    ['<meta charset charset=gbk><meta charset=utf-8>', 'utf-8'],
+    ['<meta content="charset=gbk" content="charset=utf-8" http-equiv=content-type>', 'gbk'],
+    ['<meta http-equiv=refresh http-equiv=content-type content="charset=gbk">', undefined],
+    ['<meta content="charset=gbk" charset=utf-8 http-equiv=content-type>', 'utf-8'],
+    ['<meta charset=utf-8 content="charset=gbk" http-equiv=content-type>', 'utf-8'],
+    ['<meta\tCHARSET\n=\f"GBK"\r>', 'gbk'],
+    ['<meta\u00a0charset=gbk>', undefined],
+    ['<!-- <meta charset=gbk>', undefined],
+    ['<div title="unfinished><meta charset=gbk>', undefined],
+    ['<meta name="unfinished><meta charset=gbk>', undefined],
+    ['<meta charset="gbk"', undefined],
+    ['<div title=unfinished<meta charset=gbk>', undefined],
+    ['<meta charset=x-unsupported><meta charset=utf-8>', 'x-unsupported'],
+    ['<3 not-a-tag><meta charset=gbk>', 'gbk'],
+    ['<', undefined],
+    ['<meta =charset=shift_jis><meta charset=utf-8>', 'utf-8'],
+    ['<meta http-equiv=content-type>', undefined],
+    ['<meta http-equiv=content-type content="charset=\'GBK\'">', 'gbk'],
+    ['<meta http-equiv=content-type content=\'charset="GBK"\'>', 'gbk'],
+  ])('reads only complete meta attributes in %s', (html, expected) => {
+    expect(sniffHtmlCharset(ascii(html))).toBe(expected)
+  })
+
+  it('requires the complete declaration to fit within 1024 bytes', () => {
+    const tag = '<meta charset="gbk">'
+    expect(sniffHtmlCharset(ascii(`${' '.repeat(1024 - tag.length)}${tag}`))).toBe('gbk')
+    expect(sniffHtmlCharset(ascii(`${' '.repeat(1025 - tag.length)}${tag}`))).toBeUndefined()
+    expect(sniffHtmlCharset(ascii(`${'日'.repeat(334)}  ${tag}`))).toBe('gbk')
+    expect(sniffHtmlCharset(ascii(`${'日'.repeat(334)}   ${tag}`))).toBeUndefined()
+  })
+
   it('looks only at the first 1024 bytes', () => {
     expect(sniffHtmlCharset(ascii(`${' '.repeat(1100)}<meta charset="gbk">`))).toBeUndefined()
     expect(sniffHtmlCharset(ascii(`${' '.repeat(1000)}<meta charset="gbk">`))).toBe('gbk')
@@ -99,6 +141,16 @@ describe('HttpFetchProvider HTML charset sniffing', () => {
     serve('text/html', concat(ascii(`<meta charset="${label}"><p>`), bytes, ascii('</p>')))
     const result = await fetchPage()
     expect(result.body).toEqual({ kind: 'html', content: `<meta charset="${label}"><p>${text}</p>` })
+  })
+
+  it.each([
+    '<meta name="example charset=shift_jis" charset="utf-8">',
+    '<meta name="example http-equiv=content-type" content="charset=shift_jis">',
+    '<div title="<meta charset=shift_jis>">UTF-8</div>',
+  ])('keeps UTF-8 Japanese bytes intact with misleading markup %s', async (markup) => {
+    const page = `${markup}<p>日本語</p>`
+    serve('text/html', ascii(page))
+    expect((await fetchPage()).body.content).toBe(page)
   })
 
   it('decodes the http-equiv form', async () => {
