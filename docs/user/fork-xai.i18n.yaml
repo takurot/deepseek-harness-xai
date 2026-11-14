@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for fork-xai.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/user/fork-xai.md
+/run-the-fork-with-xai-search:
+  en: 2a6777c88d6ca0b5
+  zh: 59b997a35f9a01d9
+/run-the-fork-with-xai-search/prepare-the-checkout:
+  en: 523581c6c7e13afb
+  zh: bad60910606549d5
+/run-the-fork-with-xai-search/enable-xai-search:
+  en: 549b66bce251b447
+  zh: 1911427f656b7126
+/run-the-fork-with-xai-search/route-the-conversation-through-xai:
+  en: 8a1591a2807784d7
+  zh: 94d9d9726565a437
+/run-the-fork-with-xai-search/opt-in-to-the-os-keychain:
+  en: 7565b1b2d1af025a
+  zh: c66417811eb3f40f
+/run-the-fork-with-xai-search/verify-the-checkout-without-api-calls:
+  en: eaae988ad1972896
+  zh: 15272ec1ff126d7f

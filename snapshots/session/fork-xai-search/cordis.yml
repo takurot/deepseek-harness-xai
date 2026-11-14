@@ -1,0 +1,14 @@
+# Select xAI while retaining the shipped DeepSeek provider.
+- id: web
+  config:
+    searchProvider: xai
+    fetchProvider: http
+
+- insert:
+    - id: web-search-xai
+      name: '@deepseek-ai/dsh-web-search-xai'
+      config:
+        apiKeyEnv: XAI_API_KEY
+        sources: [web]
+    - id: xai-http-fixture
+      name: '../../../apps/cli/tests/fixtures/xai-source-http.ts'
