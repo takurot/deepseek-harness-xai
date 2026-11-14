@@ -117,15 +117,21 @@ export function decoderForCharset(charset: string | undefined): TextDecoder {
 /** Bytes of an HTML document inspected for a charset declaration, per the WHATWG prescan. */
 const SNIFF_BYTES = 1024
 
-/** Attribute value after `charset=`: quoted or bare, stopping at quote, whitespace, `;`, `/`, or `>`. */
-const CHARSET_VALUE = /charset\s*=\s*["']?\s*([^\s"'>;/]+)/i
+/** ASCII whitespace recognized by the HTML prescan. */
+const HTML_SPACE = /[\t\n\f\r ]/
+
+/** Charset parameter inside a meta content attribute, rather than HTML markup. */
+const CHARSET_VALUE = /charset[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r ;]+))/i
 
 /**
- * Find the charset an HTML document announces about itself: a byte order mark,
- * else the first `<meta charset>` or `<meta http-equiv="content-type">`
- * declaration in the first 1024 bytes. This is a simplified WHATWG prescan, a
- * declaration reader rather than a statistical detector. Callers apply it only
- * when the response header declares no charset.
+ * Find a byte order mark, else the first complete meta charset declaration in
+ * the first 1024 bytes. Attribute names are ASCII case-insensitive, their first
+ * occurrence wins, and charset takes precedence over content regardless of
+ * attribute order. Content requires an exact http-equiv="content-type" value.
+ * Comments and other tags, including quoted values, are skipped. Incomplete
+ * comments, values, or tags consume the remaining prescan bytes. Unsupported
+ * labels are returned unchanged except for ASCII case and surrounding space.
+ * Callers apply this declaration reader only when the header has no charset.
  *
  * @param bytes - the start of the response body.
  * @returns the lower-cased label, or `undefined` when the document declares none.
@@ -134,15 +140,65 @@ export function sniffHtmlCharset(bytes: Uint8Array): string | undefined {
   if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) return 'utf-8'
   if (bytes[0] === 0xFF && bytes[1] === 0xFE) return 'utf-16le'
   if (bytes[0] === 0xFE && bytes[1] === 0xFF) return 'utf-16be'
-  const head = new TextDecoder('latin1').decode(bytes.subarray(0, SNIFF_BYTES)).replace(/<!--[\s\S]*?-->/g, '')
-  for (const [tag] of head.matchAll(/<meta\b[^>]*>/gi)) {
-    const httpEquiv = /http-equiv\s*=\s*["']?content-type/i.test(tag)
-    // Quoted values are blanked so a `charset=` inside another attribute's value does not count as the attribute.
-    if (!httpEquiv && !/\scharset\s*=/i.test(tag.replace(/"[^"]*"|'[^']*'/g, '""'))) continue
-    const label = CHARSET_VALUE.exec(tag)?.[1]
-    if (label !== undefined) return label.toLowerCase()
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, SNIFF_BYTES))
+  let cursor = 0
+  while (cursor < head.length) {
+    if (head[cursor] !== '<') { cursor++; continue }
+    if (head.startsWith('<!--', cursor)) {
+      const end = head.indexOf('-->', cursor + 4)
+      if (end === -1) return undefined
+      cursor = end + 3
+      continue
+    }
+    cursor++
+    if (!/[a-zA-Z/!?]/.test(head[cursor] ?? '')) continue
+    const tagStart = cursor
+    while (cursor < head.length && !/[\t\n\f\r />]/.test(head.charAt(cursor))) cursor++
+    const isMeta = asciiLower(head.slice(tagStart, cursor)) === 'meta'
+    const attributes = new Map<string, string>()
+    while (cursor < head.length && head[cursor] !== '>') {
+      if (HTML_SPACE.test(head.charAt(cursor)) || head[cursor] === '/') { cursor++; continue }
+      const nameStart = cursor++
+      while (cursor < head.length && !/[\t\n\f\r /=>]/.test(head.charAt(cursor))) cursor++
+      const name = asciiLower(head.slice(nameStart, cursor))
+      while (cursor < head.length && HTML_SPACE.test(head.charAt(cursor))) cursor++
+      let value = ''
+      if (head[cursor] === '=') {
+        cursor++
+        while (cursor < head.length && HTML_SPACE.test(head.charAt(cursor))) cursor++
+        const quote = head[cursor]
+        if (quote === '"' || quote === "'") {
+          const valueStart = ++cursor
+          while (cursor < head.length && head[cursor] !== quote) cursor++
+          if (cursor === head.length) return undefined
+          value = head.slice(valueStart, cursor++)
+        } else {
+          const valueStart = cursor
+          while (cursor < head.length && !/[\t\n\f\r >]/.test(head.charAt(cursor))) cursor++
+          value = head.slice(valueStart, cursor)
+        }
+      }
+      if (isMeta && !attributes.has(name)) attributes.set(name, value)
+    }
+    if (cursor === head.length) return undefined
+    cursor++
+    if (!isMeta) continue
+    let label = attributes.get('charset')
+    if (label === undefined && asciiLower(attributes.get('http-equiv') ?? '') === 'content-type') {
+      const match = CHARSET_VALUE.exec(attributes.get('content') ?? '')
+      label = match?.[1] ?? match?.[2] ?? match?.[3]
+    }
+    if (label !== undefined) {
+      label = asciiLower(label.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, ''))
+      if (label !== '') return label
+    }
   }
   return undefined
+}
+
+/** Lower-case ASCII letters without folding non-ASCII attribute names or values. */
+function asciiLower(value: string): string {
+  return value.replace(/[A-Z]/g, letter => letter.toLowerCase())
 }
 
 /**
