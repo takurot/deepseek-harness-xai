@@ -1,6 +1,6 @@
 /**
  * Deterministic HTTP provider for the web-fetch snapshot scenario: a small
- * UTF-8 HTML page with a malformed charset declaration on an
+ * UTF-8 HTML page with misleading charset text in a meta attribute on an
  * OS-assigned loopback port behind the real HTTP transport. Recording
  * and replay therefore exercise fetch and markdown rendering without external
  * network while retaining the recorded request URL.
@@ -12,9 +12,10 @@ import { applyLoopbackServerEffect } from '../loopback-fixture-server.mjs'
 const RECORDED_URL = 'http://public.test:43117/menu.html'
 
 const PAGE = `<!doctype html>
-<html><head><title>Menu</title><style>.x{color:red}</style><script>ignored()</script></head>
+<html><head><meta name="example charset=shift_jis" charset="utf-8"><title>Menu</title><style>.x{color:red}</style><script>ignored()</script></head>
 <body>
 <h1>Café menu</h1>
+<p>日本語</p>
 <p>Prices include <strong>service &amp; <em>tax</em></strong> &mdash; updated daily.</p>
 <ul><li>Espresso</li><li>Flat white</li></ul>
 <table><thead><tr><th>Drink</th><th>Price</th></tr></thead><tbody><tr><td>Espresso</td><td>€2</td></tr><tr><td>Flat white</td><td>€3</td></tr></tbody></table>
@@ -62,7 +63,7 @@ export async function apply(ctx) {
       label: 'web-fetch-fixture-server',
       requestListener: (req, res) => {
         if (req.url === '/menu.html') {
-          res.writeHead(200, { 'content-type': 'text/html; charset=gbk,utf-8' })
+          res.writeHead(200, { 'content-type': 'text/html' })
           res.end(PAGE)
           return
         }
