@@ -1,0 +1,17 @@
+- insert:
+    - id: xai-search-timeout-fixture
+      name: './xai-search-timeout-fixture.mjs'
+
+- insert:
+    - id: web-search-xai
+      name: '../../../packages/experimental/web-search-xai/src/index.ts'
+      config:
+        apiKey: snapshot-key
+        baseURL: http://127.0.0.1:43118/v1
+        timeoutMs: 1000
+
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    searchProvider: xai
+    fetchProvider: http

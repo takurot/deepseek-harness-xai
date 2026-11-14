@@ -7,6 +7,7 @@
  * @module @deepseek-ai/dsh-web-search-xai/provider
  */
 
+import { deadline, MAX_TIMER_DELAY_MS, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import { WebError } from '@deepseek-ai/dsh-web'
 import type { WebSearchProvider, WebSearchRequest, WebSearchResult, WebSearchSource } from '@deepseek-ai/dsh-web'
 
@@ -54,7 +55,7 @@ export interface XaiSearchProviderOptions {
   model: string
   /** Server-side search tools to enable. */
   sources: readonly XaiSearchSource[]
-  /** Whole-request timeout in milliseconds. */
+  /** Timeout from HTTP request through body consumption; caller cancellation wins when it occurs first. */
   timeoutMs: number
 }
 
@@ -111,7 +112,7 @@ export class XaiSearchProvider implements WebSearchProvider {
   available(): boolean {
     const options = this.resolveOptions()
     return URL.canParse(options.baseURL) && options.sources.length > 0
-      && Number.isInteger(options.timeoutMs) && options.timeoutMs > 0
+      && Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= MAX_TIMER_DELAY_MS
   }
 
   async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
@@ -125,8 +126,8 @@ export class XaiSearchProvider implements WebSearchProvider {
       input: `Perform a web search for the query: ${request.query}`,
       tools: options.sources.map(source => ({ type: source === 'x' ? 'x_search' : 'web_search' })),
     }
-    const timeout = AbortSignal.timeout(options.timeoutMs)
-    let response: Response
+    const operation = deadline(signal, options.timeoutMs, 'XAI_SEARCH_TIMEOUT')
+    let response: Response | undefined
     try {
       response = await fetch(endpoint, {
         method: 'POST',
@@ -138,24 +139,23 @@ export class XaiSearchProvider implements WebSearchProvider {
           'user-agent': USER_AGENT,
         },
         body: JSON.stringify(body),
-        signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
+        signal: operation.signal,
       })
+      throwIfCancelled(operation.signal, signal)
+      if (!response.ok) throw await httpError(response, operation.signal)
+      const parsed = await response.json() as XaiResponse
+      throwIfCancelled(operation.signal, signal)
+      return mapXaiResponse(parsed)
     } catch (error: unknown) {
-      if (signal?.aborted === true || isNamed(error, 'AbortError')) throw aborted(signal, error)
-      if (isNamed(error, 'TimeoutError')) {
-        throw new WebError(`xAI search timed out after ${String(options.timeoutMs)} ms`, 'WEB_TIMEOUT', { cause: error })
-      }
-      throw new WebError(`xAI search request failed: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
-    }
-
-    if (!response.ok) throw await httpError(response, signal)
-
-    try {
-      return mapXaiResponse(await response.json() as XaiResponse)
-    } catch (error: unknown) {
-      if (signal?.aborted === true || isNamed(error, 'AbortError')) throw aborted(signal, error)
+      throwIfCancelled(operation.signal, signal)
+      if (isNamed(error, 'AbortError')) throw aborted(undefined, error)
       if (error instanceof WebError) throw error
-      throw new WebError(`xAI returned an unprocessable response body: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
+      const message = response === undefined
+        ? `xAI search request failed: ${String(error)}`
+        : `xAI returned an unprocessable response body: ${String(error)}`
+      throw new WebError(message, 'WEB_PROVIDER_ERROR', { cause: error })
+    } finally {
+      operation[Symbol.dispose]()
     }
   }
 
@@ -192,12 +192,23 @@ async function httpError(response: Response, signal?: AbortSignal): Promise<WebE
     const detail = typeof parsed.error === 'string' ? parsed.error : parsed.error?.message ?? parsed.message
     if (detail !== undefined && detail.length > 0) message += `: ${detail}`
   } catch (error: unknown) {
-    if (signal?.aborted === true || isNamed(error, 'AbortError')) return aborted(signal, error)
+    if (signal?.aborted === true || isNamed(error, 'AbortError')) throw error
     // A non-JSON error body is normal for gateway 5xx/429s; the status above is already in the message.
   }
+  signal?.throwIfAborted()
   if (status === 401 || status === 403) return new WebError(message, 'WEB_PROVIDER_AUTH_FAILED')
   if (status === 429) return new WebError(message, 'WEB_PROVIDER_RATE_LIMITED')
   return new WebError(message, 'WEB_PROVIDER_ERROR')
+}
+
+/** Classify the operation's winning reason without reclassifying a caller-owned timeout. */
+function throwIfCancelled(operation: AbortSignal, caller?: AbortSignal): void {
+  if (!operation.aborted) return
+  const timeout = timeoutOf(operation, 'XAI_SEARCH_TIMEOUT')
+  if (timeout !== undefined && !(caller?.aborted === true && operation.reason === caller.reason)) {
+    throw new WebError(`xAI search timed out after ${String(timeout.timeoutMs)} ms`, 'WEB_TIMEOUT', { cause: timeout })
+  }
+  throw aborted(operation)
 }
 
 /** Throw the stable cancellation error when the caller already aborted. */

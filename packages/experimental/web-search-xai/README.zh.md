@@ -42,7 +42,7 @@ kind: "package-reference"
 | `baseURL` | `https://api.x.ai/v1` | Responses API 基址，会追加 `/responses`。无法解析的值会使该提供方不可用 |
 | `model` | `grok-4.7` | 执行搜索回合的 Grok 模型 |
 | `sources` | `[web]` | 启用的服务端工具：`web` 加入 `web_search`，`x` 加入 `x_search`。空列表会使该提供方不可用 |
-| `timeoutMs` | `60000` | 整个请求的超时；到期以 `WEB_TIMEOUT` 失败 |
+| `timeoutMs` | `60000` | HTTP 请求及响应体超时，范围为 `1` 至 `2147483647` 毫秒；到期以 `WEB_TIMEOUT` 失败 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md)列出所有可接受的字段。
 
@@ -52,7 +52,7 @@ kind: "package-reference"
 
 ### 失败与恢复
 
-HTTP 401 与 403 以 `WEB_PROVIDER_AUTH_FAILED` 失败，429 以 `WEB_PROVIDER_RATE_LIMITED` 失败，其他状态与传输失败以 `WEB_PROVIDER_ERROR` 失败，超时为 `WEB_TIMEOUT`，取消为 `WEB_ABORTED`。重定向视为错误。
+HTTP 401 与 403 以 `WEB_PROVIDER_AUTH_FAILED` 失败，429 以 `WEB_PROVIDER_RATE_LIMITED` 失败，其他状态与传输失败以 `WEB_PROVIDER_ERROR` 失败，超时为 `WEB_TIMEOUT`，取消为 `WEB_ABORTED`。凭据解析完成后开始计时，覆盖 HTTP 标头及成功和错误响应体。以最先发生的中断原因为准：调用方取消始终为 `WEB_ABORTED`，即使其原因是另一个超时。重定向视为错误。
 
 <a id="understand-the-implementation"></a>
 ## 理解实现

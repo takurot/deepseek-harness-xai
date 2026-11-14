@@ -1481,6 +1481,14 @@ describe('headless recorded-session snapshots', () => {
           },
           inspect: async (cwd) => {
             actualLogs = await persistedSessions(cwd)
+            if (scenario.name === 'xai-search-timeout') {
+              const results = records(actualLogs[0]!.content).filter(event => event.type === 'tool/result')
+              expect(results).toHaveLength(1)
+              expect(results[0]!.data).toMatchObject({
+                message: { isError: true, content: [{ type: 'text', text: 'Error: xAI search timed out after 1000 ms' }] },
+                error: { name: 'WebError', code: 'WEB_TIMEOUT' },
+              })
+            }
             if (scenario.name === 'empty-response-retry-current') {
               const events = parseSessionLog(actualLogs[0]!.content)
               expect(events.filter(event => event.type === 'assistant/attempt' || event.type === 'llm/retry'

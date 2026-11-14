@@ -49,6 +49,10 @@ describe('web-search-xai plugin', () => {
     expect(JSON.parse(bodyOf(spy.mock.calls[0]![1]?.body))).toMatchObject({ model: 'grok-cfg' })
   })
 
+  it('rejects a timeout above the Node timer limit at load', async () => {
+    await expect(boot({ apiKey: 'k', timeoutMs: 2_147_483_648 })).rejects.toThrow()
+  })
+
   it('rejects an invalid sources value at load', async () => {
     await expect(boot({ apiKey: 'k', sources: ['bing'] })).rejects.toThrow()
   })
