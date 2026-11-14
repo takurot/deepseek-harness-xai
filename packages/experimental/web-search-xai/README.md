@@ -42,7 +42,7 @@ Mount the provider in a composition that already loads the web service. It regis
 | `baseURL` | `https://api.x.ai/v1` | Responses API base; `/responses` is appended. An unparseable value makes the provider unavailable |
 | `model` | `grok-4.7` | Grok model that runs the search turn |
 | `sources` | `[web]` | Server-side tools to enable: `web` adds `web_search`, `x` adds `x_search`. An empty list makes the provider unavailable |
-| `timeoutMs` | `60000` | Whole-request timeout; expiry fails as `WEB_TIMEOUT` |
+| `timeoutMs` | `60000` | HTTP request and body timeout, from `1` to `2147483647` ms; expiry fails as `WEB_TIMEOUT` |
 
 The generated [configuration catalog](../../../docs/config-catalog.md) lists every accepted field.
 
@@ -52,7 +52,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md) lists eve
 
 ### Failures and recovery
 
-HTTP 401 and 403 fail as `WEB_PROVIDER_AUTH_FAILED`, 429 as `WEB_PROVIDER_RATE_LIMITED`, other statuses and transport failures as `WEB_PROVIDER_ERROR`, a timeout as `WEB_TIMEOUT`, and cancellation as `WEB_ABORTED`. Redirects are errors.
+HTTP 401 and 403 fail as `WEB_PROVIDER_AUTH_FAILED`, 429 as `WEB_PROVIDER_RATE_LIMITED`, other statuses and transport failures as `WEB_PROVIDER_ERROR`, a timeout as `WEB_TIMEOUT`, and cancellation as `WEB_ABORTED`. The deadline covers HTTP headers and both success and error bodies, after credential resolution. The first cancellation cause wins: caller cancellation remains `WEB_ABORTED`, even when its reason is another timeout. Redirects are errors.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation

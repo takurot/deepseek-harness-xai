@@ -4819,7 +4819,7 @@ export interface Config {
 
 - `inject`: `web`
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/experimental/web-search-xai/src/index.ts:42`](../packages/experimental/web-search-xai/src/index.ts)
+- `source`: [`packages/experimental/web-search-xai/src/index.ts:43`](../packages/experimental/web-search-xai/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config (all optional — defaults come from the schema). */
@@ -4834,7 +4834,7 @@ export interface Config {
   model: Volatile<string>
   /** Server-side search tools: `web`, `x` (X posts and profiles). */
   sources: Volatile<XaiSearchSource[]>
-  /** Whole-request timeout in milliseconds. */
+  /** HTTP request and body timeout in milliseconds, at most the Node timer limit. */
   timeoutMs: Volatile<number>
 }
 

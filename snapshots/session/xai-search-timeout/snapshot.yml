@@ -1,0 +1,10 @@
+version: 1
+scenario: xai-search-timeout
+profile: headless
+composition: xai-search-timeout
+recording: live
+header:
+  class: xai-search-timeout
+  pin: true
+  systemPromptSource: text-turn
+  toolSchemasSource: text-turn

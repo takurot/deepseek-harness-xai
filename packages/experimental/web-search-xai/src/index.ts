@@ -7,6 +7,7 @@
  */
 import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
@@ -50,7 +51,7 @@ export interface Config {
   model: Volatile<string>
   /** Server-side search tools: `web`, `x` (X posts and profiles). */
   sources: Volatile<XaiSearchSource[]>
-  /** Whole-request timeout in milliseconds. */
+  /** HTTP request and body timeout in milliseconds, at most the Node timer limit. */
   timeoutMs: Volatile<number>
 }
 
@@ -61,7 +62,7 @@ export const Config = z.object({
   baseURL: z.string().default(XAI_DEFAULT_BASE_URL).volatile(),
   model: z.string().default(XAI_DEFAULT_MODEL).volatile(),
   sources: z.array(z.union([z.const('web'), z.const('x')])).default(['web']).volatile(),
-  timeoutMs: z.number().step(1).min(1).default(XAI_DEFAULT_TIMEOUT_MS).volatile(),
+  timeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).default(XAI_DEFAULT_TIMEOUT_MS).volatile(),
 })
 /* jscpd:ignore-end */
 
