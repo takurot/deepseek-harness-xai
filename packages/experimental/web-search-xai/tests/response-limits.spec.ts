@@ -38,10 +38,16 @@ function streamed(chunks: readonly Uint8Array[], status = 200, headers: HeadersI
   return { response: new Response(body, { status, headers }), body, cancel }
 }
 
+function parseRequestBody(body: RequestInit['body']): unknown {
+  if (typeof body !== 'string') throw new Error('expected JSON request body')
+  return JSON.parse(body)
+}
+
 async function expectOverflow(response: Response, maxResponseBytes: number): Promise<void> {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(response)
-  await expect(new XaiSearchProvider(() => options(maxResponseBytes)).search({ query: 'q' }))
-    .rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR', message: expect.stringMatching(/(?:size|bytes|limit|exceed)/iu) })
+  const pending = new XaiSearchProvider(() => options(maxResponseBytes)).search({ query: 'q' })
+  await expect(pending).rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR' })
+  await expect(pending).rejects.toThrow(/(?:size|bytes|limit|exceed)/iu)
 }
 
 afterEach(() => { vi.restoreAllMocks() })
@@ -125,8 +131,9 @@ describe('xAI response byte budget', () => {
     try {
       await expect(new XaiSearchProvider(() => ({ ...options(bytes.byteLength), baseURL })).search({ query: 'q' }))
         .resolves.toMatchObject({ content: 'x'.repeat(1_000) })
-      await expect(new XaiSearchProvider(() => ({ ...options(compressed.byteLength), baseURL })).search({ query: 'q' }))
-        .rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR', message: expect.stringMatching(/byte limit/u) })
+      const pending = new XaiSearchProvider(() => ({ ...options(compressed.byteLength), baseURL })).search({ query: 'q' })
+      await expect(pending).rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR' })
+      await expect(pending).rejects.toThrow(/byte limit/u)
     } finally {
       server.closeAllConnections()
       await new Promise<void>((resolve, reject) => { server.close((error) => { if (error === undefined) resolve(); else reject(error) }) })
@@ -203,8 +210,9 @@ describe('xAI response byte budget', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [],
     })))
-    await expect(new XaiSearchProvider(() => options()).search({ query: 'q' }))
-      .rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR', message: expect.stringMatching(/incomplete/iu) })
+    const pending = new XaiSearchProvider(() => options()).search({ query: 'q' })
+    await expect(pending).rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR' })
+    await expect(pending).rejects.toThrow(/incomplete/iu)
   })
 })
 
@@ -219,7 +227,7 @@ describe('xAI output budget configuration', () => {
   it('sends the configured visible output token budget', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(answer()))
     await new XaiSearchProvider(() => options(5_000_000, 42)).search({ query: 'q' })
-    expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body))).toMatchObject({ max_output_tokens: 42 })
+    expect(parseRequestBody(fetch.mock.calls[0]![1]?.body)).toMatchObject({ max_output_tokens: 42 })
   })
 
   it('snapshots both budgets before awaiting credentials', async () => {
@@ -234,8 +242,8 @@ describe('xAI output budget configuration', () => {
     release('test-key')
     await expect(pending).rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR' })
     await expect(provider.search({ query: 'second' })).resolves.toMatchObject({ content: 'a' })
-    expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body))).toMatchObject({ max_output_tokens: 42 })
-    expect(JSON.parse(String(fetch.mock.calls[1]![1]?.body))).toMatchObject({ max_output_tokens: 84 })
+    expect(parseRequestBody(fetch.mock.calls[0]![1]?.body)).toMatchObject({ max_output_tokens: 42 })
+    expect(parseRequestBody(fetch.mock.calls[1]![1]?.body)).toMatchObject({ max_output_tokens: 84 })
   })
 
   it('applies the default token budget through plugin configuration', async () => {
@@ -245,7 +253,7 @@ describe('xAI output budget configuration', () => {
       await ctx.plugin(xaiPlugin, { apiKey: 'test-key' })
       const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(answer()))
       await ctx.web.search({ query: 'q' })
-      expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body))).toMatchObject({ max_output_tokens: 128_000 })
+      expect(parseRequestBody(fetch.mock.calls[0]![1]?.body)).toMatchObject({ max_output_tokens: 128_000 })
     } finally { await ctx.fiber.dispose() }
   })
 
@@ -256,7 +264,7 @@ describe('xAI output budget configuration', () => {
       await ctx.plugin(xaiPlugin, { apiKey: 'test-key', maxResponseBytes: 16, maxOutputTokens: 42 })
       const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(answer()))
       await expect(ctx.web.search({ query: 'q' })).rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR' })
-      expect(JSON.parse(String(fetch.mock.calls[0]![1]?.body))).toMatchObject({ max_output_tokens: 42 })
+      expect(parseRequestBody(fetch.mock.calls[0]![1]?.body)).toMatchObject({ max_output_tokens: 42 })
     } finally { await ctx.fiber.dispose() }
   })
 
