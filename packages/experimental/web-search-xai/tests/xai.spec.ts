@@ -12,8 +12,9 @@ const OPTIONS: XaiSearchProviderOptions = {
   resolveApiKey: () => Promise.resolve('xai-key'),
 }
 
-function answer(annotations: { type?: string; url?: string; start_index?: number; end_index?: number; title?: string }[], text = 'The answer.'): XaiResponse {
+function answer(annotations: { type: string; url?: string; start_index?: number; end_index?: number; title?: string }[], text = 'The answer.'): XaiResponse {
   return {
+    status: 'completed',
     output: [
       { type: 'web_search_call' },
       { type: 'message', content: [{ type: 'output_text', text, annotations }] },
@@ -49,6 +50,7 @@ describe('mapXaiResponse', () => {
 
   it('joins several output_text blocks and ignores non-message output items', () => {
     const result = mapXaiResponse({
+      status: 'completed',
       output: [
         { type: 'message', content: [{ type: 'output_text', text: 'one', annotations: [{ type: 'url_citation', url: 'https://a.test/' }] }] },
         { type: 'message', content: [{ type: 'output_text', text: 'two', annotations: [] }, { type: 'refusal' }] },
@@ -61,7 +63,7 @@ describe('mapXaiResponse', () => {
   it('fails with WEB_PROVIDER_ERROR when the response carries no structured citation', () => {
     expect(() => mapXaiResponse(answer([]))).toThrow(WebError)
     try { mapXaiResponse(answer([])) } catch (error) { expect((error as WebError).code).toBe('WEB_PROVIDER_ERROR') }
-    expect(() => mapXaiResponse({ output: [] })).toThrow(/no cited sources/u)
+    expect(() => mapXaiResponse({ status: 'completed', output: [] })).toThrow(/no cited sources/u)
   })
 
   it('does not scrape URLs out of the answer text', () => {
@@ -293,9 +295,10 @@ describe('XaiSearchProvider', () => {
   })
 })
 
-describe('mapXaiResponse malformed input', () => {
-  it('skips empty text, annotations without a usable url, and other annotation types', () => {
+describe('mapXaiResponse optional typed fields', () => {
+  it('skips empty text, absent optional fields, and other annotation types', () => {
     const result = mapXaiResponse({
+      status: 'completed',
       output: [
         { type: 'message' },
         { type: 'message', content: [
@@ -310,9 +313,5 @@ describe('mapXaiResponse malformed input', () => {
       ],
     })
     expect(result).toEqual({ content: '', sources: [{ url: 'https://ok.test/' }], truncated: false })
-  })
-
-  it('fails on a body without an output array', () => {
-    expect(() => mapXaiResponse({})).toThrow(/no cited sources/u)
   })
 })

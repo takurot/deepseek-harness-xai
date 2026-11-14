@@ -9,6 +9,7 @@
   ],
   "references": [
     { "path": "../../util/timeout" },
+    { "path": "../../util/values" },
     { "path": "../../llm/llm" },
     { "path": "../../util/launch-environment" },
     { "path": "../../../vendor/cosmokit" },

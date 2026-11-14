@@ -1,0 +1,17 @@
+- insert:
+    - id: xai-search-incomplete-fixture
+      name: './xai-search-incomplete-fixture.mjs'
+
+- insert:
+    - id: web-search-xai
+      name: '@deepseek-ai/dsh-web-search-xai'
+      config:
+        apiKey: snapshot-key
+        baseURL: http://127.0.0.1:43119/v1
+        timeoutMs: 1000
+
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    searchProvider: xai
+    fetchProvider: http

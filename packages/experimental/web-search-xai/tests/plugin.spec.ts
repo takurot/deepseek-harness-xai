@@ -41,6 +41,7 @@ describe('web-search-xai plugin', () => {
   it('searches with the configured endpoint, model, and literal key', async () => {
     const ctx = await boot({ apiKey: 'k', baseURL: 'https://cfg.test/v1', model: 'grok-cfg' })
     const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      status: 'completed',
       output: [{ type: 'message', content: [{ type: 'output_text', text: 'a', annotations: [{ type: 'url_citation', url: 'https://a.test/' }] }] }],
     }), { status: 200 }))
     const result = await ctx.web.search({ query: 'q' })
@@ -73,6 +74,7 @@ describe('web-search-xai readiness', () => {
 })
 
 const CITED = JSON.stringify({
+  status: 'completed',
   output: [{ type: 'message', content: [{ type: 'output_text', text: 'a', annotations: [{ type: 'url_citation', url: 'https://a.test/' }] }] }],
 })
 
