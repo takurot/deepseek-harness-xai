@@ -51,7 +51,7 @@ export interface Config {
   model: Volatile<string>
   /** Server-side search tools: `web`, `x` (X posts and profiles). */
   sources: Volatile<XaiSearchSource[]>
-  /** HTTP request and body timeout in milliseconds, at most the Node timer limit. */
+  /** Whole-search timeout including credentials and response reading, at most the Node timer limit. */
   timeoutMs: Volatile<number>
 }
 

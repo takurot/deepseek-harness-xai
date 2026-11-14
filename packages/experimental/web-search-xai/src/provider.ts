@@ -20,7 +20,7 @@ export const XAI_DEFAULT_BASE_URL = 'https://api.x.ai/v1'
 /** Default Grok model for the search turn; the xAI tools documentation uses it in its examples. */
 export const XAI_DEFAULT_MODEL = 'grok-4.7'
 
-/** Default whole-request timeout in milliseconds. */
+/** Default whole-search timeout in milliseconds. */
 export const XAI_DEFAULT_TIMEOUT_MS = 60_000
 
 /** A server-side search tool the provider can enable. */
@@ -45,7 +45,7 @@ export interface XaiResponse {
 export interface XaiSearchProviderOptions {
   /** Literal API key; when present it wins over {@link resolveApiKey}. */
   apiKey?: string
-  /** Resolve the current API key for one search operation. */
+  /** Resolve the current API key for one search operation; cancellation ends waiting without stopping this read. */
   resolveApiKey?: () => Promise<string | undefined>
   /** Credential reference named by missing-credential diagnostics. */
   apiKeyEnv?: string
@@ -55,7 +55,7 @@ export interface XaiSearchProviderOptions {
   model: string
   /** Server-side search tools to enable. */
   sources: readonly XaiSearchSource[]
-  /** Timeout from HTTP request through body consumption; caller cancellation wins when it occurs first. */
+  /** Timeout from credential resolution through body consumption; caller cancellation wins when it occurs first. */
   timeoutMs: number
 }
 
@@ -118,17 +118,17 @@ export class XaiSearchProvider implements WebSearchProvider {
   async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
     const options = this.resolveOptions()
     throwIfAborted(signal)
-    const apiKey = await this.apiKey(options, signal)
-    throwIfAborted(signal)
-    const endpoint = `${options.baseURL}/responses`
-    const body = {
-      model: options.model,
-      input: `Perform a web search for the query: ${request.query}`,
-      tools: options.sources.map(source => ({ type: source === 'x' ? 'x_search' : 'web_search' })),
-    }
     const operation = deadline(signal, options.timeoutMs, 'XAI_SEARCH_TIMEOUT')
     let response: Response | undefined
     try {
+      const apiKey = await this.apiKey(options, operation.signal)
+      throwIfCancelled(operation.signal, signal)
+      const endpoint = `${options.baseURL}/responses`
+      const body = {
+        model: options.model,
+        input: `Perform a web search for the query: ${request.query}`,
+        tools: options.sources.map(source => ({ type: source === 'x' ? 'x_search' : 'web_search' })),
+      }
       response = await fetch(endpoint, {
         method: 'POST',
         redirect: 'error',
@@ -166,12 +166,11 @@ export class XaiSearchProvider implements WebSearchProvider {
    * @returns the resolved key.
    * @throws {@link WebError} `WEB_PROVIDER_CREDENTIAL_MISSING` when no key resolves; `WEB_PROVIDER_ERROR` when the resolver fails.
    */
-  private async apiKey(options: XaiSearchProviderOptions, signal?: AbortSignal): Promise<string> {
+  private async apiKey(options: XaiSearchProviderOptions, signal: AbortSignal): Promise<string> {
     if (options.apiKey !== undefined && options.apiKey.length > 0) return options.apiKey
     let resolved: string | undefined
-    try { resolved = await options.resolveApiKey?.() }
+    try { resolved = await abortable(options.resolveApiKey?.() ?? Promise.resolve(undefined), signal) }
     catch (error: unknown) {
-      if (signal?.aborted === true) throw aborted(signal, error)
       throw new WebError(`xAI search credential resolution failed: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
     }
     if (resolved !== undefined && resolved.length > 0) return resolved
@@ -181,6 +180,19 @@ export class XaiSearchProvider implements WebSearchProvider {
       'WEB_PROVIDER_CREDENTIAL_MISSING',
     )
   }
+}
+
+/** Observe credential settlement after cancellation while releasing the search's abort listener. */
+function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort)
+      reject(aborted(signal))
+    }
+    void operation.finally(() => { signal.removeEventListener('abort', onAbort) }).then(resolve, reject)
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 /** Map a non-2xx response to the web error taxonomy: 401/403 authentication, 429 rate limit, other provider error. */

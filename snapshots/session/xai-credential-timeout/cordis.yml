@@ -1,0 +1,20 @@
+- insert:
+    - id: xai-credential-timeout-fixture
+      name: './xai-credential-timeout-fixture.mjs'
+
+- insert:
+    - id: web-search-xai
+      name: '@deepseek-ai/dsh-web-search-xai'
+      config:
+        apiKeyEnv: DSH_SNAPSHOT_HANG_KEY
+        baseURL: https://xai-credential-snapshot.invalid/v1
+        timeoutMs: 1000
+
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    searchProvider: xai
+    fetchProvider: http
+
+- id: credentials
+  disabled: true
