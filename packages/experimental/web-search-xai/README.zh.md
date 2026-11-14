@@ -48,7 +48,7 @@ kind: "package-reference"
 
 ### 搜索返回什么
 
-`content` 是响应中各 `output_text` 的拼接。`sources[]` 为每个不同的 `url_citation` 注解保留一条仅含 URL 的条目；xAI 注解的 `title` 是可见的引用编号，因此不用作标题。服务负责执行 `maxResults`。没有 `url_citation` 的响应以 `WEB_PROVIDER_ERROR` 失败。
+`content` 是响应中各 `output_text` 的拼接。`sources[]` 为每个不同的 `url_citation` 注解保留一条仅含 URL 的条目；xAI 注解的 `title` 是可见的引用编号，因此不用作标题。服务负责执行 `maxResults`；`truncated` 表示来源数量受到限制。只有 `completed` 响应能够成功。`incomplete` 响应即使包含引用，也以 `WEB_PROVIDER_ERROR` 失败，并丢弃其部分回答。使用的字段缺失或无效、状态尚未终结或未知，以及没有 `url_citation` 的响应，也以 `WEB_PROVIDER_ERROR` 失败。未知的字符串类型和未使用的额外字段会被忽略。
 
 ### 失败与恢复
 
@@ -91,7 +91,7 @@ HTTP 401 与 403 以 `WEB_PROVIDER_AUTH_FAILED` 失败，429 以 `WEB_PROVIDER_R
 
 #### 模型看到的内容
 
-通过 `dsh-tool-web`，对话模型看到回答文本与去重后的来源 URL。失败以上述消息呈现：`xAI API error (HTTP <status>)` 及 xAI 的详情、`xAI search timed out after <n> ms`、`xAI search aborted`、`xAI returned no cited sources; ...`，以及指明凭据引用的缺少密钥消息。
+通过 `dsh-tool-web`，对话模型看到回答文本与去重后的来源 URL。失败以上述消息呈现：`xAI API error (HTTP <status>)` 及 xAI 的详情、`xAI search timed out after <n> ms`、`xAI search aborted`、`xAI returned an incomplete search response`、`xAI returned an invalid response field: <path>`、`xAI returned no cited sources; ...`，以及指明凭据引用的缺少密钥消息。
 
 #### Token 影响
 

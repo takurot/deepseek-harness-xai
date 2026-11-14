@@ -8,6 +8,7 @@
  */
 
 import { deadline, MAX_TIMER_DELAY_MS, timeoutOf } from '@deepseek-ai/dsh-timeout'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { WebError } from '@deepseek-ai/dsh-web'
 import type { WebSearchProvider, WebSearchRequest, WebSearchResult, WebSearchSource } from '@deepseek-ai/dsh-web'
 
@@ -31,14 +32,15 @@ const USER_AGENT = 'deepseek-harness/0.0.1'
 
 /** One content block of a Responses API `message` output item; only `output_text` is read. */
 interface XaiContentBlock {
-  readonly type?: string
+  readonly type: string
   readonly text?: string
-  readonly annotations?: readonly { readonly type?: string; readonly url?: string }[]
+  readonly annotations?: readonly { readonly type: string; readonly url?: string }[]
 }
 
 /** The parts of a Responses API body the provider reads. */
 export interface XaiResponse {
-  readonly output?: readonly { readonly type?: string; readonly content?: readonly XaiContentBlock[] }[]
+  readonly status: 'completed' | 'incomplete'
+  readonly output: readonly { readonly type: string; readonly content?: readonly XaiContentBlock[] }[]
 }
 
 /** Resolved provider options (the plugin's `apply` supplies credential and constant defaults). */
@@ -66,13 +68,19 @@ export interface XaiSearchProviderOptions {
  * `maxResults` truncation, so `truncated` is always `false` here.
  * @param response - the parsed Responses API body.
  * @returns the normalized result.
- * @throws {@link WebError} `WEB_PROVIDER_ERROR` when the response cites no source.
+ * @throws {@link WebError} `WEB_PROVIDER_ERROR` when the response is incomplete or cites no source.
  */
 export function mapXaiResponse(response: XaiResponse): WebSearchResult {
+  switch (response.status) {
+    case 'completed': break
+    case 'incomplete': throw new WebError('xAI returned an incomplete search response', 'WEB_PROVIDER_ERROR')
+    /* v8 ignore next -- XaiResponse has closed typed statuses; the HTTP parser validates admission. */
+    default: return assertNever(response.status)
+  }
   const texts: string[] = []
   const seen = new Set<string>()
   const sources: WebSearchSource[] = []
-  for (const item of response.output ?? []) {
+  for (const item of response.output) {
     if (item.type !== 'message') continue
     for (const block of item.content ?? []) {
       if (block.type !== 'output_text') continue
@@ -92,6 +100,61 @@ export function mapXaiResponse(response: XaiResponse): WebSearchResult {
     )
   }
   return { content: texts.join('\n\n'), sources, truncated: false }
+}
+
+/** Parse only the Responses API fields consumed by the search mapper. */
+function parseXaiResponse(value: unknown): XaiResponse {
+  const response = record(value, 'response')
+  if (response.status !== 'completed' && response.status !== 'incomplete') invalid('status')
+  const output = array(response.output, 'output').map((value, index) => {
+    const path = `output[${String(index)}]`
+    const item = record(value, path)
+    const type = string(item.type, `${path}.type`)
+    if (type !== 'message') return { type }
+    const content = array(item.content, `${path}.content`).map((value, index) => {
+      const blockPath = `${path}.content[${String(index)}]`
+      const block = record(value, blockPath)
+      const type = string(block.type, `${blockPath}.type`)
+      if (type !== 'output_text') return { type }
+      const text = string(block.text, `${blockPath}.text`)
+      const annotations = array(block.annotations, `${blockPath}.annotations`).map((value, index) => {
+        const annotationPath = `${blockPath}.annotations[${String(index)}]`
+        const annotation = record(value, annotationPath)
+        const type = string(annotation.type, `${annotationPath}.type`)
+        if (type !== 'url_citation') return { type }
+        const url = string(annotation.url, `${annotationPath}.url`)
+        if (url.length === 0) invalid(`${annotationPath}.url`)
+        return { type, url }
+      })
+      return { type, text, annotations }
+    })
+    return { type, content }
+  })
+  return { status: response.status, output }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function record(value: unknown, path: string): Record<string, unknown> {
+  if (!isRecord(value)) invalid(path)
+  return value
+}
+
+function array(value: unknown, path: string): unknown[] {
+  if (!Array.isArray(value)) invalid(path)
+  return value
+}
+
+function string(value: unknown, path: string): string {
+  if (typeof value !== 'string') invalid(path)
+  return value
+}
+
+/** Reject malformed data without including provider text in the diagnostic. */
+function invalid(path: string): never {
+  throw new WebError(`xAI returned an invalid response field: ${path}`, 'WEB_PROVIDER_ERROR')
 }
 
 /** The xAI-backed search provider. HTTP redirects fail as `WEB_PROVIDER_ERROR`. */
@@ -143,17 +206,17 @@ export class XaiSearchProvider implements WebSearchProvider {
       })
       throwIfCancelled(operation.signal, signal)
       if (!response.ok) throw await httpError(response, operation.signal)
-      const parsed = await response.json() as XaiResponse
+      const parsed: unknown = await response.json()
       throwIfCancelled(operation.signal, signal)
-      return mapXaiResponse(parsed)
+      return mapXaiResponse(parseXaiResponse(parsed))
     } catch (error: unknown) {
       throwIfCancelled(operation.signal, signal)
       if (isNamed(error, 'AbortError')) throw aborted(undefined, error)
       if (error instanceof WebError) throw error
       const message = response === undefined
         ? `xAI search request failed: ${String(error)}`
-        : `xAI returned an unprocessable response body: ${String(error)}`
-      throw new WebError(message, 'WEB_PROVIDER_ERROR', { cause: error })
+        : 'xAI returned an unprocessable response body'
+      throw new WebError(message, 'WEB_PROVIDER_ERROR', response === undefined ? { cause: error } : undefined)
     } finally {
       operation[Symbol.dispose]()
     }
@@ -200,9 +263,13 @@ async function httpError(response: Response, signal?: AbortSignal): Promise<WebE
   const status = response.status
   let message = `xAI API error (HTTP ${String(status)})`
   try {
-    const parsed = await response.json() as { error?: string | { message?: string }; message?: string }
-    const detail = typeof parsed.error === 'string' ? parsed.error : parsed.error?.message ?? parsed.message
-    if (detail !== undefined && detail.length > 0) message += `: ${detail}`
+    const parsed: unknown = await response.json()
+    if (isRecord(parsed)) {
+      const detail = typeof parsed.error === 'string' ? parsed.error
+        : isRecord(parsed.error) && typeof parsed.error.message === 'string' ? parsed.error.message
+          : typeof parsed.message === 'string' ? parsed.message : undefined
+      if (detail !== undefined && detail.length > 0) message += `: ${detail}`
+    }
   } catch (error: unknown) {
     if (signal?.aborted === true || isNamed(error, 'AbortError')) throw error
     // A non-JSON error body is normal for gateway 5xx/429s; the status above is already in the message.

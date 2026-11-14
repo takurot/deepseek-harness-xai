@@ -1,0 +1,10 @@
+version: 1
+scenario: xai-search-incomplete
+profile: headless
+composition: xai-search-incomplete
+recording: live
+header:
+  class: xai-search-incomplete
+  pin: true
+  systemPromptSource: text-turn
+  toolSchemasSource: text-turn

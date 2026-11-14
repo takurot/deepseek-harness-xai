@@ -48,7 +48,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md) lists eve
 
 ### What a search returns
 
-`content` is the joined `output_text` of the response. `sources[]` holds one URL-only entry per distinct `url_citation` annotation; xAI's annotation `title` is the visible citation number, so it is not used as a title. The service enforces `maxResults`. A response with no `url_citation` fails as `WEB_PROVIDER_ERROR`.
+`content` is the joined `output_text` of the response. `sources[]` holds one URL-only entry per distinct `url_citation` annotation; xAI's annotation `title` is the visible citation number, so it is not used as a title. The service enforces `maxResults`; `truncated` means it capped the source count. Only a `completed` response succeeds. An `incomplete` response fails as `WEB_PROVIDER_ERROR`, even when it contains citations, and its partial answer is discarded. Missing or invalid consumed fields, nonterminal or unknown statuses, and a response with no `url_citation` also fail as `WEB_PROVIDER_ERROR`. Unknown string item types and unused extra fields are ignored.
 
 ### Failures and recovery
 
@@ -91,7 +91,7 @@ Independent of the conversation request cache.
 
 #### What the model sees
 
-Through `dsh-tool-web`, the conversation model sees the answer text and deduplicated source URLs. Failures appear as the messages above: `xAI API error (HTTP <status>)` with xAI's detail, `xAI search timed out after <n> ms`, `xAI search aborted`, `xAI returned no cited sources; ...`, and the missing-key message naming the credential reference.
+Through `dsh-tool-web`, the conversation model sees the answer text and deduplicated source URLs. Failures appear as the messages above: `xAI API error (HTTP <status>)` with xAI's detail, `xAI search timed out after <n> ms`, `xAI search aborted`, `xAI returned an incomplete search response`, `xAI returned an invalid response field: <path>`, `xAI returned no cited sources; ...`, and the missing-key message naming the credential reference.
 
 #### Token effect
 
