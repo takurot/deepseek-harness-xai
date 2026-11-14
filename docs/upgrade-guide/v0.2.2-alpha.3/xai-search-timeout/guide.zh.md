@@ -9,10 +9,10 @@ description: "xAI 搜索拒绝超过 Node 定时器上限的超时值，并将�
 
 ## 变更
 
-实验性的 `web-search-xai` 插件接受 `1` 至 `2147483647` 范围内的整数 `timeoutMs`。此前更大的值可通过加载，但 Node 可能将其缩短为一毫秒；现在配置验证会拒绝这些值。响应体读取期间期限到期现在报告 `WEB_TIMEOUT`，而不是 `WEB_ABORTED` 或 HTTP 错误。调用方取消仍为 `WEB_ABORTED`。
+实验性的 `web-search-xai` 插件接受 `1` 至 `2147483647` 范围内的整数 `timeoutMs`。此前更大的值可通过加载，但 Node 可能将其缩短为一毫秒；现在配置验证会拒绝这些值。响应体读取期间期限到期现在报告 `WEB_TIMEOUT`，而不是 `WEB_ABORTED` 或 HTTP 错误。调用方取消仍为 `WEB_ABORTED`。同一期限现在从凭据解析之前开始，因此停滞的凭据读取以 `WEB_TIMEOUT` 失败，取消会结束等待而不发送 HTTP 请求。
 
 ## 迁移
 
 1. 检查 `cordis.yml`、补丁及已保存插件设置中的 `web-search-xai.config.timeoutMs`。将大于 `2147483647` 的值替换为受支持的整数。默认值仍为 `60000`。
-2. 如果应用处理搜索错误，应对 HTTP 请求及响应体读取期间的期限到期均处理 `WEB_TIMEOUT`。
-3. 启动现有 `dsh` 配置并确认插件可加载。响应体读取超过期限的搜索应以 `WEB_TIMEOUT` 失败。
+2. 如果应用处理搜索错误，应对 凭据解析、HTTP 请求及响应体读取期间的期限到期均处理 `WEB_TIMEOUT`。
+3. 启动现有 `dsh` 配置并确认插件可加载。凭据读取或响应体读取超过期限的搜索应以 `WEB_TIMEOUT` 失败。

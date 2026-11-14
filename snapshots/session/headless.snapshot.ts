@@ -1481,7 +1481,7 @@ describe('headless recorded-session snapshots', () => {
           },
           inspect: async (cwd) => {
             actualLogs = await persistedSessions(cwd)
-            if (scenario.name === 'xai-search-timeout') {
+            if (scenario.name === 'xai-search-timeout' || scenario.name === 'xai-credential-timeout') {
               const results = records(actualLogs[0]!.content).filter(event => event.type === 'tool/result')
               expect(results).toHaveLength(1)
               expect(results[0]!.data).toMatchObject({
