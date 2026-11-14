@@ -9,6 +9,8 @@ const OPTIONS: XaiSearchProviderOptions = {
   model: 'grok-test',
   sources: ['web'],
   timeoutMs: 5_000,
+  maxResponseBytes: 5_000_000,
+  maxOutputTokens: 128_000,
 }
 
 function credentialRead() {
@@ -159,10 +161,10 @@ describe('xAI credential waiting', () => {
     const controller = new AbortController()
     const listeners = vi.spyOn(AbortSignal.prototype, 'addEventListener')
     const operation = new XaiSearchProvider(() => ({ ...OPTIONS, resolveApiKey: credential.read })).search({ query: 'q' }, controller.signal)
+    expect(listeners).toHaveBeenCalledOnce()
     credential.resolve('resolved-key')
     await expect(operation).resolves.toMatchObject({ sources: [{ url: 'https://a.test/' }] })
     expect(fetch.mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: 'Bearer resolved-key' })
-    expect(listeners).toHaveBeenCalledOnce()
     const operationSignal = listeners.mock.contexts[0]
     assert(operationSignal instanceof AbortSignal)
     expect(getEventListeners(operationSignal, 'abort')).toHaveLength(0)

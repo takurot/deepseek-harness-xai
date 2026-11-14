@@ -24,6 +24,12 @@ export const XAI_DEFAULT_MODEL = 'grok-4.7'
 /** Default whole-search timeout in milliseconds. */
 export const XAI_DEFAULT_TIMEOUT_MS = 60_000
 
+/** Default maximum response bytes after Fetch decompression. */
+export const XAI_DEFAULT_MAX_RESPONSE_BYTES = 5_000_000
+
+/** Default visible output token budget; reasoning and search charges are separate. */
+export const XAI_DEFAULT_MAX_OUTPUT_TOKENS = 128_000
+
 /** A server-side search tool the provider can enable. */
 export type XaiSearchSource = 'web' | 'x'
 
@@ -59,6 +65,10 @@ export interface XaiSearchProviderOptions {
   sources: readonly XaiSearchSource[]
   /** Timeout from credential resolution through body consumption; caller cancellation wins when it occurs first. */
   timeoutMs: number
+  /** Maximum response bytes after Fetch decompression, before JSON decoding. */
+  maxResponseBytes: number
+  /** Visible output token budget; excludes reasoning and search tool charges. */
+  maxOutputTokens: number
 }
 
 /**
@@ -175,6 +185,7 @@ export class XaiSearchProvider implements WebSearchProvider {
   available(): boolean {
     const options = this.resolveOptions()
     return URL.canParse(options.baseURL) && options.sources.length > 0
+      && positiveSafeInteger(options.maxResponseBytes) && positiveSafeInteger(options.maxOutputTokens)
       && Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= MAX_TIMER_DELAY_MS
   }
 
@@ -189,6 +200,7 @@ export class XaiSearchProvider implements WebSearchProvider {
       const endpoint = `${options.baseURL}/responses`
       const body = {
         model: options.model,
+        max_output_tokens: options.maxOutputTokens,
         input: `Perform a web search for the query: ${request.query}`,
         tools: options.sources.map(source => ({ type: source === 'x' ? 'x_search' : 'web_search' })),
       }
@@ -205,8 +217,9 @@ export class XaiSearchProvider implements WebSearchProvider {
         signal: operation.signal,
       })
       throwIfCancelled(operation.signal, signal)
-      if (!response.ok) throw await httpError(response, operation.signal)
-      const parsed: unknown = await response.json()
+      const text = await readBody(response, options.maxResponseBytes, operation.signal)
+      if (!response.ok) throw httpError(response.status, text)
+      const parsed: unknown = JSON.parse(text)
       throwIfCancelled(operation.signal, signal)
       return mapXaiResponse(parseXaiResponse(parsed))
     } catch (error: unknown) {
@@ -245,7 +258,7 @@ export class XaiSearchProvider implements WebSearchProvider {
   }
 }
 
-/** Observe credential settlement after cancellation while releasing the search's abort listener. */
+/** Observe operation settlement after cancellation while releasing the search's abort listener. */
 function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const onAbort = (): void => {
@@ -258,26 +271,56 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   })
 }
 
-/** Map a non-2xx response to the web error taxonomy: 401/403 authentication, 429 rate limit, other provider error. */
-async function httpError(response: Response, signal?: AbortSignal): Promise<WebError> {
-  const status = response.status
-  let message = `xAI API error (HTTP ${String(status)})`
+/** Count Fetch-decoded bytes before decoding text; cleanup cannot delay the primary failure. */
+async function readBody(response: Response, limit: number, signal: AbortSignal): Promise<string> {
+  if (response.body === null) return ''
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  const parts: string[] = []
+  let size = 0
+  let completed = false
   try {
-    const parsed: unknown = await response.json()
-    if (isRecord(parsed)) {
-      const detail = typeof parsed.error === 'string' ? parsed.error
-        : isRecord(parsed.error) && typeof parsed.error.message === 'string' ? parsed.error.message
-          : typeof parsed.message === 'string' ? parsed.message : undefined
-      if (detail !== undefined && detail.length > 0) message += `: ${detail}`
+    while (true) {
+      const { done, value } = await abortable(reader.read(), signal)
+      if (done) {
+        completed = true
+        parts.push(decoder.decode())
+        return parts.join('')
+      }
+      size += value.byteLength
+      if (size > limit) {
+        throw new WebError(`xAI response exceeds the ${String(limit)} byte limit`, 'WEB_PROVIDER_ERROR')
+      }
+      parts.push(decoder.decode(value, { stream: true }))
     }
-  } catch (error: unknown) {
-    if (signal?.aborted === true || isNamed(error, 'AbortError')) throw error
-    // A non-JSON error body is normal for gateway 5xx/429s; the status above is already in the message.
+  } finally {
+    if (!completed) {
+      void reader.cancel().catch((_cleanupError: unknown) => { /* The read failure remains authoritative. */ })
+    }
+    reader.releaseLock()
   }
-  signal?.throwIfAborted()
+}
+
+/** Map bounded non-2xx text to authentication, rate-limit, or provider failure. */
+function httpError(status: number, text: string): WebError {
+  let message = `xAI API error (HTTP ${String(status)})`
+  let parsed: unknown
+  try { parsed = JSON.parse(text) }
+  catch (_nonJsonBody: unknown) { /* Gateway errors may have empty or non-JSON bodies. */ }
+  if (isRecord(parsed)) {
+    const detail = typeof parsed.error === 'string' ? parsed.error
+      : isRecord(parsed.error) && typeof parsed.error.message === 'string' ? parsed.error.message
+        : typeof parsed.message === 'string' ? parsed.message : undefined
+    if (detail !== undefined && detail.length > 0) message += `: ${detail}`
+  }
   if (status === 401 || status === 403) return new WebError(message, 'WEB_PROVIDER_AUTH_FAILED')
   if (status === 429) return new WebError(message, 'WEB_PROVIDER_RATE_LIMITED')
   return new WebError(message, 'WEB_PROVIDER_ERROR')
+}
+
+/** Local request and intake budgets must be positive safe integers. */
+function positiveSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0
 }
 
 /** Classify the operation's winning reason without reclassifying a caller-owned timeout. */

@@ -1499,6 +1499,16 @@ describe('headless recorded-session snapshots', () => {
               expect(JSON.stringify(results)).not.toContain('partial-answer-marker')
               expect(JSON.stringify(results)).not.toContain('https://partial.test/')
             }
+            if (scenario.name === 'xai-search-oversized') {
+              const results = records(actualLogs[0]!.content).filter(event => event.type === 'tool/result')
+              expect(results).toHaveLength(1)
+              expect(results[0]!.data).toMatchObject({
+                message: { isError: true, content: [{ type: 'text', text: 'Error: xAI response exceeds the 256 byte limit' }] },
+                error: { name: 'WebError', code: 'WEB_PROVIDER_ERROR' },
+              })
+              expect(JSON.stringify(results)).not.toContain('oversized-answer-marker')
+              expect(JSON.stringify(results)).not.toContain('https://partial.test/')
+            }
             if (scenario.name === 'empty-response-retry-current') {
               const events = parseSessionLog(actualLogs[0]!.content)
               expect(events.filter(event => event.type === 'assistant/attempt' || event.type === 'llm/retry'

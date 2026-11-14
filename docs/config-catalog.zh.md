@@ -4821,7 +4821,7 @@ export interface Config {
 
 - `inject`: `web`
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/experimental/web-search-xai/src/index.ts:43`](../packages/experimental/web-search-xai/src/index.ts)
+- `source`: [`packages/experimental/web-search-xai/src/index.ts:47`](../packages/experimental/web-search-xai/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config (all optional — defaults come from the schema). */
@@ -4838,6 +4838,10 @@ export interface Config {
   sources: Volatile<XaiSearchSource[]>
   /** Whole-search timeout including credentials and response reading, at most the Node timer limit. */
   timeoutMs: Volatile<number>
+  /** Maximum response bytes after Fetch decompression, before JSON decoding. */
+  maxResponseBytes: Volatile<number>
+  /** Visible output token budget; excludes reasoning and search tool charges. */
+  maxOutputTokens: Volatile<number>
 }
 
 /** A server-side search tool the provider can enable. */

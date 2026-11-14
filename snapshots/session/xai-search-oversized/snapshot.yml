@@ -1,0 +1,10 @@
+version: 1
+scenario: xai-search-oversized
+profile: headless
+composition: xai-search-oversized
+recording: authored
+header:
+  class: xai-search-oversized
+  pin: true
+  systemPromptSource: text-turn
+  toolSchemasSource: text-turn

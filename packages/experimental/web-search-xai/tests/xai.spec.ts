@@ -9,6 +9,8 @@ const OPTIONS: XaiSearchProviderOptions = {
   model: 'grok-test',
   sources: ['web'],
   timeoutMs: 5_000,
+  maxResponseBytes: 5_000_000,
+  maxOutputTokens: 128_000,
   resolveApiKey: () => Promise.resolve('xai-key'),
 }
 
@@ -148,7 +150,7 @@ describe('XaiSearchProvider', () => {
       const pending = (): Promise<never> => new Promise((_resolve, reject) => {
         signal.addEventListener('abort', () => { reject(new DOMException('aborted', 'AbortError')) }, { once: true })
       })
-      return phase === 'request' ? pending() : Promise.resolve(Object.assign(json({}, phase), { json: pending }))
+      return phase === 'request' ? pending() : Promise.resolve(new Response(new ReadableStream({ pull: pending }), { status: phase }))
     })
     const result = new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }).catch((error: unknown) => error)
     await vi.advanceTimersByTimeAsync(OPTIONS.timeoutMs)
@@ -164,7 +166,7 @@ describe('XaiSearchProvider', () => {
         caller.abort(reason)
         return Promise.reject(new DOMException('aborted', 'AbortError'))
       }
-      return phase === 'request' ? cancel() : Promise.resolve(Object.assign(json({}, phase), { json: cancel }))
+      return phase === 'request' ? cancel() : Promise.resolve(new Response(new ReadableStream({ pull: cancel }, { highWaterMark: 0 }), { status: phase }))
     })
     await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }, caller.signal)).rejects.toMatchObject({ code: 'WEB_ABORTED', cause: reason })
   })
@@ -256,18 +258,18 @@ describe('XaiSearchProvider', () => {
 
   it('maps an abort while reading an error body to WEB_ABORTED', async () => {
     const controller = new AbortController()
-    const failing = Object.assign(new Response('x', { status: 500 }), {
-      json: () => { controller.abort(new Error('stop')); return Promise.reject(new DOMException('a', 'AbortError')) },
-    })
+    const failing = new Response(new ReadableStream({
+      pull() { controller.abort(new Error('stop')); throw new DOMException('a', 'AbortError') },
+    }, { highWaterMark: 0 }), { status: 500 })
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(failing)
     await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }, controller.signal)).rejects.toMatchObject({ code: 'WEB_ABORTED' })
   })
 
   it('maps an abort while reading the success body to WEB_ABORTED', async () => {
     const controller = new AbortController()
-    const reading = Object.assign(new Response('x', { status: 200 }), {
-      json: () => { controller.abort(new Error('stop')); return Promise.reject(new DOMException('a', 'AbortError')) },
-    })
+    const reading = new Response(new ReadableStream({
+      pull() { controller.abort(new Error('stop')); throw new DOMException('a', 'AbortError') },
+    }, { highWaterMark: 0 }), { status: 200 })
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(reading)
     await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }, controller.signal)).rejects.toMatchObject({ code: 'WEB_ABORTED' })
   })

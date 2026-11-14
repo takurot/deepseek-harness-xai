@@ -7,6 +7,8 @@ const OPTIONS = {
   model: 'grok-test',
   sources: ['web'] as const,
   timeoutMs: 5_000,
+  maxResponseBytes: 5_000_000,
+  maxOutputTokens: 128_000,
   apiKey: 'xai-key',
 }
 

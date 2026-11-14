@@ -42,7 +42,11 @@ kind: "package-reference"
 | `baseURL` | `https://api.x.ai/v1` | Responses API 基址，会追加 `/responses`。无法解析的值会使该提供方不可用 |
 | `model` | `grok-4.7` | 执行搜索回合的 Grok 模型 |
 | `sources` | `[web]` | 启用的服务端工具：`web` 加入 `web_search`，`x` 加入 `x_search`。空列表会使该提供方不可用 |
+| `maxResponseBytes` | `5000000` | Fetch 解压后、JSON 解码前的最大响应字节数，适用于成功和错误响应体 |
+| `maxOutputTokens` | `128000` | 显式的 `max_output_tokens` 可见输出预算，不包含推理 token 和搜索工具费用 |
 | `timeoutMs` | `60000` | 整个搜索的超时，包括凭据、HTTP 请求及响应体读取，范围为 `1` 至 `2147483647` 毫秒；到期以 `WEB_TIMEOUT` 失败 |
+
+两个预算均接受正安全整数。这些是本地的接收和请求设置，不是 xAI 服务端限制。输出默认值采用 xAI 文档中的默认值。
 
 生成的[配置目录](../../../docs/config-catalog.zh.md)列出所有可接受的字段。
 
@@ -51,6 +55,8 @@ kind: "package-reference"
 `content` 是响应中各 `output_text` 的拼接。`sources[]` 为每个不同的 `url_citation` 注解保留一条仅含 URL 的条目；xAI 注解的 `title` 是可见的引用编号，因此不用作标题。服务负责执行 `maxResults`；`truncated` 表示来源数量受到限制。只有 `completed` 响应能够成功。`incomplete` 响应即使包含引用，也以 `WEB_PROVIDER_ERROR` 失败，并丢弃其部分回答。使用的字段缺失或无效、状态尚未终结或未知，以及没有 `url_citation` 的响应，也以 `WEB_PROVIDER_ERROR` 失败。未知的字符串类型和未使用的额外字段会被忽略。
 
 ### 失败与恢复
+
+成功或错误响应体超过预算时，以 `WEB_PROVIDER_ERROR` 失败，消息为 `xAI response exceeds the <n> byte limit`，不返回部分回答。提供方忽略 `Content-Length`，累计流式读取的字节数；恰好达到限制时仍读至 EOF。清理操作不会延迟已知的超限错误或搜索截止时间。
 
 HTTP 401 与 403 以 `WEB_PROVIDER_AUTH_FAILED` 失败，429 以 `WEB_PROVIDER_RATE_LIMITED` 失败，其他状态与传输失败以 `WEB_PROVIDER_ERROR` 失败，超时为 `WEB_TIMEOUT`，取消为 `WEB_ABORTED`。凭据解析之前开始计时，覆盖 HTTP 标头及成功和错误响应体。取消会结束凭据等待，但不会停止底层读取；迟到的结果不会发起 HTTP 请求。以最先发生的中断原因为准：调用方取消始终为 `WEB_ABORTED`，即使其原因是另一个超时。重定向视为错误。
 
@@ -91,7 +97,7 @@ HTTP 401 与 403 以 `WEB_PROVIDER_AUTH_FAILED` 失败，429 以 `WEB_PROVIDER_R
 
 #### 模型看到的内容
 
-通过 `dsh-tool-web`，对话模型看到回答文本与去重后的来源 URL。失败以上述消息呈现：`xAI API error (HTTP <status>)` 及 xAI 的详情、`xAI search timed out after <n> ms`、`xAI search aborted`、`xAI returned an incomplete search response`、`xAI returned an invalid response field: <path>`、`xAI returned no cited sources; ...`，以及指明凭据引用的缺少密钥消息。
+通过 `dsh-tool-web`，对话模型看到回答文本与去重后的来源 URL。失败以上述消息呈现：`xAI API error (HTTP <status>)` 及 xAI 的详情、`xAI search timed out after <n> ms`、`xAI search aborted`、`xAI returned an incomplete search response`、`xAI response exceeds the <n> byte limit`、`xAI returned an invalid response field: <path>`、`xAI returned no cited sources; ...`，以及指明凭据引用的缺少密钥消息。
 
 #### Token 影响
 
