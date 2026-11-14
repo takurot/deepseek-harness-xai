@@ -1,0 +1,41 @@
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+  disabled: true
+
+- id: plugin-package-inventory-deepseek
+  disabled: true
+
+- insert:
+    - id: llm-replay
+      name: '@deepseek-ai/dsh-llm-replay'
+      config:
+        providers:
+          - id: deepseek-official
+            name: DeepSeek
+            models:
+              - id: deepseek-v4-flash
+                contextWindow: 1000000
+                defaultMaxTokens: 256000
+                reasoningEfforts: ['off', 'low', 'high', 'max']
+                defaultReasoningEffort: max
+              - id: deepseek-v4-pro
+
+    - id: xai-credential-timeout-fixture
+      name: './xai-credential-timeout-fixture.mjs'
+
+- insert:
+    - id: web-search-xai
+      name: '@deepseek-ai/dsh-web-search-xai'
+      config:
+        apiKeyEnv: DSH_SNAPSHOT_HANG_KEY
+        baseURL: https://xai-credential-snapshot.invalid/v1
+        timeoutMs: 1000
+
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    searchProvider: xai
+    fetchProvider: http
+
+- id: credentials
+  disabled: true

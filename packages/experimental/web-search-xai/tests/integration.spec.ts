@@ -41,7 +41,7 @@ describe('web_search over the real xAI provider', () => {
   it('offers web_search and returns the answer with its cited sources', async () => {
     const ctx = await compose({ XAI_API_KEY: 'xai-key' })
     const fetchMock = vi.fn((_endpoint: string, _init: { headers: Record<string, string>; body: string }) => Promise.resolve(new Response(
-      JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'Grok is a model.', annotations: [{ type: 'url_citation', url: 'https://x.ai/grok', title: '1' }] }] }] }),
+      JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'Grok is a model.', annotations: [{ type: 'url_citation', url: 'https://x.ai/grok', title: '1' }] }] }] }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     )))
     vi.stubGlobal('fetch', fetchMock)
@@ -59,6 +59,37 @@ describe('web_search over the real xAI provider', () => {
     } finally {
       toolSet.dispose()
     }
+  })
+
+  it('returns a structured tool failure without an incomplete provider answer', async () => {
+    const ctx = await compose({ XAI_API_KEY: 'xai-key' })
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(Response.json({
+      status: 'incomplete',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'partial-answer-marker', annotations: [{ type: 'url_citation', url: 'https://a.test/' }] }] }],
+    }))))
+    const toolSet = await ctx.tools.resolve({ agent, modelSelection: { provider: 'test', model: 'test' }, signal })
+    try {
+      const out = await executeToolFixture(ctx, { agent, toolSet, signal, callId: ToolCallId('xai-incomplete'), name: 'web_search', arguments: { queries: ['q'] } })
+      expect(out.isError).toBe(true)
+      expect(out.error).toMatchObject({ info: { name: 'WebError', code: 'WEB_PROVIDER_ERROR' } })
+      expect(JSON.stringify(out)).not.toContain('partial-answer-marker')
+    } finally {
+      toolSet.dispose()
+    }
+  })
+
+  it('marks a completed answer as truncated only when the web service caps its source count', async () => {
+    const ctx = await compose({ XAI_API_KEY: 'xai-key' })
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(Response.json({
+      status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'Complete answer.', annotations: [
+        { type: 'url_citation', url: 'https://a.test/' },
+        { type: 'url_citation', url: 'https://b.test/' },
+      ] }] }],
+    }))))
+    await expect(ctx.web.search({ query: 'q', maxResults: 1 })).resolves.toMatchObject({
+      content: 'Complete answer.', sources: [{ url: 'https://a.test/' }], truncated: true,
+    })
   })
 
   it('withholds web_search from the model when no xAI key is configured', async () => {

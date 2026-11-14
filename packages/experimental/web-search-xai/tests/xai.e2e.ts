@@ -13,6 +13,8 @@ maybe('XaiSearchProvider real API', () => {
       model: process.env.XAI_SEARCH_MODEL ?? XAI_DEFAULT_MODEL,
       sources: ['web'],
       timeoutMs: XAI_DEFAULT_TIMEOUT_MS,
+      maxResponseBytes: 5_000_000,
+      maxOutputTokens: 128_000,
     }))
     const result = await provider.search({ query: 'What is xAI Grok?', maxResults: 5 })
     expect(result.content?.length).toBeGreaterThan(0)

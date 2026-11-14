@@ -1,0 +1,13 @@
+# Optional conversation route, independent of the xAI search provider.
+- id: llm-pi-ai
+  config:
+    providers:
+      xai:
+        apiKeyEnv: XAI_API_KEY
+        models:
+          - id: grok-4
+
+- id: agent-default-model
+  config:
+    provider: xai
+    model: grok-4

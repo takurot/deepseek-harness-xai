@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MAX_TIMER_DELAY_MS, TimeoutReason } from '@deepseek-ai/dsh-timeout'
 import { WebError } from '@deepseek-ai/dsh-web'
 import { XaiSearchProvider, mapXaiResponse } from '../src/provider.ts'
 import type { XaiResponse, XaiSearchProviderOptions } from '../src/provider.ts'
@@ -8,11 +9,14 @@ const OPTIONS: XaiSearchProviderOptions = {
   model: 'grok-test',
   sources: ['web'],
   timeoutMs: 5_000,
+  maxResponseBytes: 5_000_000,
+  maxOutputTokens: 128_000,
   resolveApiKey: () => Promise.resolve('xai-key'),
 }
 
-function answer(annotations: { type?: string; url?: string; start_index?: number; end_index?: number; title?: string }[], text = 'The answer.'): XaiResponse {
+function answer(annotations: { type: string; url?: string; start_index?: number; end_index?: number; title?: string }[], text = 'The answer.'): XaiResponse {
   return {
+    status: 'completed',
     output: [
       { type: 'web_search_call' },
       { type: 'message', content: [{ type: 'output_text', text, annotations }] },
@@ -32,7 +36,7 @@ function bodyOf(body: BodyInit | null | undefined): string {
   return typeof body === 'string' ? body : ''
 }
 
-afterEach(() => { vi.restoreAllMocks() })
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
 describe('mapXaiResponse', () => {
   it('maps the answer to content and url_citation annotations to deduped sources', () => {
@@ -48,6 +52,7 @@ describe('mapXaiResponse', () => {
 
   it('joins several output_text blocks and ignores non-message output items', () => {
     const result = mapXaiResponse({
+      status: 'completed',
       output: [
         { type: 'message', content: [{ type: 'output_text', text: 'one', annotations: [{ type: 'url_citation', url: 'https://a.test/' }] }] },
         { type: 'message', content: [{ type: 'output_text', text: 'two', annotations: [] }, { type: 'refusal' }] },
@@ -60,7 +65,7 @@ describe('mapXaiResponse', () => {
   it('fails with WEB_PROVIDER_ERROR when the response carries no structured citation', () => {
     expect(() => mapXaiResponse(answer([]))).toThrow(WebError)
     try { mapXaiResponse(answer([])) } catch (error) { expect((error as WebError).code).toBe('WEB_PROVIDER_ERROR') }
-    expect(() => mapXaiResponse({ output: [] })).toThrow(/no cited sources/u)
+    expect(() => mapXaiResponse({ status: 'completed', output: [] })).toThrow(/no cited sources/u)
   })
 
   it('does not scrape URLs out of the answer text', () => {
@@ -133,9 +138,75 @@ describe('XaiSearchProvider', () => {
     await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' })).rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR' })
   })
 
-  it('maps a fetch timeout to WEB_TIMEOUT', async () => {
+  it('does not infer an operation timeout from an unrelated exception name', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('t', 'TimeoutError'))
-    await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' })).rejects.toMatchObject({ code: 'WEB_TIMEOUT' })
+    await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' })).rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR' })
+  })
+
+  it.each(['request', 200, 401, 403, 429, 500] as const)('reports its deadline during %s as WEB_TIMEOUT', async (phase) => {
+    vi.useFakeTimers()
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+      const signal = init!.signal!
+      const pending = (): Promise<never> => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => { reject(new DOMException('aborted', 'AbortError')) }, { once: true })
+      })
+      return phase === 'request' ? pending() : Promise.resolve(new Response(new ReadableStream({ pull: pending }), { status: phase }))
+    })
+    const result = new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(OPTIONS.timeoutMs)
+    expect(await result).toMatchObject({ code: 'WEB_TIMEOUT', cause: { timeoutMs: OPTIONS.timeoutMs } })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['request', 200, 401, 403, 429, 500] as const)('reports caller cancellation during %s as WEB_ABORTED', async (phase) => {
+    const caller = new AbortController()
+    const reason = new Error('caller stopped')
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      const cancel = (): Promise<never> => {
+        caller.abort(reason)
+        return Promise.reject(new DOMException('aborted', 'AbortError'))
+      }
+      return phase === 'request' ? cancel() : Promise.resolve(new Response(new ReadableStream({ pull: cancel }, { highWaterMark: 0 }), { status: phase }))
+    })
+    await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }, caller.signal)).rejects.toMatchObject({ code: 'WEB_ABORTED', cause: reason })
+  })
+
+  it.each([true, false])('keeps the first cancellation reason when timeout wins: %s', async (timeoutFirst) => {
+    vi.useFakeTimers()
+    const caller = new AbortController()
+    const reason = new Error('caller stopped')
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => {
+        setTimeout(() => { reject(new DOMException('aborted', 'AbortError')) }, OPTIONS.timeoutMs)
+      }, { once: true })
+    }))
+    const result = new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }, caller.signal).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(timeoutFirst ? OPTIONS.timeoutMs : 0)
+    caller.abort(reason)
+    await vi.runAllTimersAsync()
+    expect(await result).toMatchObject(timeoutFirst ? { code: 'WEB_TIMEOUT' } : { code: 'WEB_ABORTED', cause: reason })
+  })
+
+  it.each(['OTHER_TIMEOUT', 'WEB_TIMEOUT', 'XAI_SEARCH_TIMEOUT'])('keeps caller TimeoutReason %s as WEB_ABORTED', async (code) => {
+    const caller = new AbortController()
+    const reason = new TimeoutReason(code, 1)
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      caller.abort(reason)
+      return Promise.reject(reason)
+    })
+    await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }, caller.signal)).rejects.toMatchObject({ code: 'WEB_ABORTED', cause: reason })
+  })
+
+  it.each([200, 401, 429, 500])('releases the deadline after HTTP %s completes', async (status) => {
+    vi.useFakeTimers()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json(answer([{ type: 'url_citation', url: 'https://a.test/' }]), status))
+    await new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }).catch(() => undefined)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('available() rejects delays that Node would clamp', () => {
+    expect(new XaiSearchProvider(() => ({ ...OPTIONS, timeoutMs: MAX_TIMER_DELAY_MS })).available()).toBe(true)
+    expect(new XaiSearchProvider(() => ({ ...OPTIONS, timeoutMs: MAX_TIMER_DELAY_MS + 1 })).available()).toBe(false)
   })
 
   it('passes a signal combining the caller and the timeout', async () => {
@@ -187,18 +258,18 @@ describe('XaiSearchProvider', () => {
 
   it('maps an abort while reading an error body to WEB_ABORTED', async () => {
     const controller = new AbortController()
-    const failing = Object.assign(new Response('x', { status: 500 }), {
-      json: () => { controller.abort(new Error('stop')); return Promise.reject(new DOMException('a', 'AbortError')) },
-    })
+    const failing = new Response(new ReadableStream({
+      pull() { controller.abort(new Error('stop')); throw new DOMException('a', 'AbortError') },
+    }, { highWaterMark: 0 }), { status: 500 })
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(failing)
     await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }, controller.signal)).rejects.toMatchObject({ code: 'WEB_ABORTED' })
   })
 
   it('maps an abort while reading the success body to WEB_ABORTED', async () => {
     const controller = new AbortController()
-    const reading = Object.assign(new Response('x', { status: 200 }), {
-      json: () => { controller.abort(new Error('stop')); return Promise.reject(new DOMException('a', 'AbortError')) },
-    })
+    const reading = new Response(new ReadableStream({
+      pull() { controller.abort(new Error('stop')); throw new DOMException('a', 'AbortError') },
+    }, { highWaterMark: 0 }), { status: 200 })
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(reading)
     await expect(new XaiSearchProvider(() => OPTIONS).search({ query: 'q' }, controller.signal)).rejects.toMatchObject({ code: 'WEB_ABORTED' })
   })
@@ -226,9 +297,10 @@ describe('XaiSearchProvider', () => {
   })
 })
 
-describe('mapXaiResponse malformed input', () => {
-  it('skips empty text, annotations without a usable url, and other annotation types', () => {
+describe('mapXaiResponse optional typed fields', () => {
+  it('skips empty text, absent optional fields, and other annotation types', () => {
     const result = mapXaiResponse({
+      status: 'completed',
       output: [
         { type: 'message' },
         { type: 'message', content: [
@@ -243,9 +315,5 @@ describe('mapXaiResponse malformed input', () => {
       ],
     })
     expect(result).toEqual({ content: '', sources: [{ url: 'https://ok.test/' }], truncated: false })
-  })
-
-  it('fails on a body without an output array', () => {
-    expect(() => mapXaiResponse({})).toThrow(/no cited sources/u)
   })
 })

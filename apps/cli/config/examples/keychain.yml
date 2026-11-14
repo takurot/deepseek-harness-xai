@@ -1,0 +1,9 @@
+# `name` is a patch guard, so disable the default before adding its replacement.
+- id: credentials
+  disabled: true
+
+- insert:
+    - id: credentials-keychain
+      name: '../../../../packages/experimental/credentials-keychain/src/index.ts'
+      config:
+        service: dsh

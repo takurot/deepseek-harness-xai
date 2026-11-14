@@ -7,6 +7,7 @@
  */
 import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
@@ -17,6 +18,8 @@ import {
   XAI_DEFAULT_BASE_URL,
   XAI_DEFAULT_MODEL,
   XAI_DEFAULT_TIMEOUT_MS,
+  XAI_DEFAULT_MAX_RESPONSE_BYTES,
+  XAI_DEFAULT_MAX_OUTPUT_TOKENS,
 } from './provider.ts'
 import type { XaiSearchProviderOptions, XaiSearchSource } from './provider.ts'
 
@@ -25,6 +28,8 @@ export {
   XAI_DEFAULT_BASE_URL,
   XAI_DEFAULT_MODEL,
   XAI_DEFAULT_TIMEOUT_MS,
+  XAI_DEFAULT_MAX_RESPONSE_BYTES,
+  XAI_DEFAULT_MAX_OUTPUT_TOKENS,
   XAI_PROVIDER_ID,
   mapXaiResponse,
 } from './provider.ts'
@@ -50,8 +55,12 @@ export interface Config {
   model: Volatile<string>
   /** Server-side search tools: `web`, `x` (X posts and profiles). */
   sources: Volatile<XaiSearchSource[]>
-  /** Whole-request timeout in milliseconds. */
+  /** Whole-search timeout including credentials and response reading, at most the Node timer limit. */
   timeoutMs: Volatile<number>
+  /** Maximum response bytes after Fetch decompression, before JSON decoding. */
+  maxResponseBytes: Volatile<number>
+  /** Visible output token budget; excludes reasoning and search tool charges. */
+  maxOutputTokens: Volatile<number>
 }
 
 /* jscpd:ignore-start -- Config fields parallel web-search-deepseek; each provider owns its defaults. */
@@ -61,7 +70,9 @@ export const Config = z.object({
   baseURL: z.string().default(XAI_DEFAULT_BASE_URL).volatile(),
   model: z.string().default(XAI_DEFAULT_MODEL).volatile(),
   sources: z.array(z.union([z.const('web'), z.const('x')])).default(['web']).volatile(),
-  timeoutMs: z.number().step(1).min(1).default(XAI_DEFAULT_TIMEOUT_MS).volatile(),
+  maxResponseBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(XAI_DEFAULT_MAX_RESPONSE_BYTES).volatile(),
+  maxOutputTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(XAI_DEFAULT_MAX_OUTPUT_TOKENS).volatile(),
+  timeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).default(XAI_DEFAULT_TIMEOUT_MS).volatile(),
 })
 /* jscpd:ignore-end */
 
@@ -105,6 +116,8 @@ export function apply(ctx: Context, config: Config): void {
       model: config.model.get(),
       sources: config.sources.get(),
       timeoutMs: config.timeoutMs.get(),
+      maxResponseBytes: config.maxResponseBytes.get(),
+      maxOutputTokens: config.maxOutputTokens.get(),
     }
   }
   const provider = new XaiSearchProvider(options)

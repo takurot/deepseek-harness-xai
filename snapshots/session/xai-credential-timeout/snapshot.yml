@@ -1,0 +1,10 @@
+version: 1
+scenario: xai-credential-timeout
+profile: headless
+composition: xai-credential-timeout
+recording: live
+header:
+  class: xai-credential-timeout
+  pin: true
+  systemPromptSource: text-turn
+  toolSchemasSource: text-turn

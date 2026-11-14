@@ -1,0 +1,12 @@
+version: 1
+scenario: fork-xai-search
+profile: headless
+composition: fork-xai-search
+recording: authored
+permission: workspace-write
+environment:
+  XAI_API_KEY: fixture-xai-key
+  DEEPSEEK_API_KEY: fixture-deepseek-key
+header:
+  class: fork-xai-search
+  pin: true

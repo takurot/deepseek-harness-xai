@@ -41,12 +41,17 @@ describe('web-search-xai plugin', () => {
   it('searches with the configured endpoint, model, and literal key', async () => {
     const ctx = await boot({ apiKey: 'k', baseURL: 'https://cfg.test/v1', model: 'grok-cfg' })
     const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      status: 'completed',
       output: [{ type: 'message', content: [{ type: 'output_text', text: 'a', annotations: [{ type: 'url_citation', url: 'https://a.test/' }] }] }],
     }), { status: 200 }))
     const result = await ctx.web.search({ query: 'q' })
     expect(result.sources).toEqual([{ url: 'https://a.test/' }])
     expect(urlOf(spy.mock.calls[0]![0])).toBe('https://cfg.test/v1/responses')
     expect(JSON.parse(bodyOf(spy.mock.calls[0]![1]?.body))).toMatchObject({ model: 'grok-cfg' })
+  })
+
+  it('rejects a timeout above the Node timer limit at load', async () => {
+    await expect(boot({ apiKey: 'k', timeoutMs: 2_147_483_648 })).rejects.toThrow()
   })
 
   it('rejects an invalid sources value at load', async () => {
@@ -69,6 +74,7 @@ describe('web-search-xai readiness', () => {
 })
 
 const CITED = JSON.stringify({
+  status: 'completed',
   output: [{ type: 'message', content: [{ type: 'output_text', text: 'a', annotations: [{ type: 'url_citation', url: 'https://a.test/' }] }] }],
 })
 

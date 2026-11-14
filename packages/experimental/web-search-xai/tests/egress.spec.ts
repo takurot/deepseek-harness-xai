@@ -34,7 +34,7 @@ async function observe(run: () => Promise<unknown>): Promise<string[]> {
 import { XaiSearchProvider } from '../src/provider.ts'
 describe('xai search egress', () => {
   it('goes through the proxy', async () => {
-    const p = new XaiSearchProvider(() => ({ apiKey: 'probe', baseURL: 'http://xai-probe.invalid', model: 'm', sources: ['web'], timeoutMs: 5_000 }))
+    const p = new XaiSearchProvider(() => ({ apiKey: 'probe', baseURL: 'http://xai-probe.invalid', model: 'm', sources: ['web'], timeoutMs: 5_000, maxResponseBytes: 5_000_000, maxOutputTokens: 128_000 }))
     expect(await observe(() => p.search({ query: 'probe' }))).toEqual(['REQ http://xai-probe.invalid/responses'])
   })
 })

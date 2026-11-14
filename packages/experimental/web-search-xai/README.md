@@ -42,17 +42,23 @@ Mount the provider in a composition that already loads the web service. It regis
 | `baseURL` | `https://api.x.ai/v1` | Responses API base; `/responses` is appended. An unparseable value makes the provider unavailable |
 | `model` | `grok-4.7` | Grok model that runs the search turn |
 | `sources` | `[web]` | Server-side tools to enable: `web` adds `web_search`, `x` adds `x_search`. An empty list makes the provider unavailable |
-| `timeoutMs` | `60000` | Whole-request timeout; expiry fails as `WEB_TIMEOUT` |
+| `maxResponseBytes` | `5000000` | Maximum response bytes after Fetch decompression, before JSON decoding; applies to success and error bodies |
+| `maxOutputTokens` | `128000` | Explicit `max_output_tokens` visible output budget; excludes reasoning tokens and search tool charges |
+| `timeoutMs` | `60000` | Whole-search timeout, including credentials, HTTP request, and body reads, from `1` to `2147483647` ms; expiry fails as `WEB_TIMEOUT` |
+
+Both budgets accept positive safe integers. These are local intake and request settings, not xAI server limits. The output default follows xAI's documented default.
 
 The generated [configuration catalog](../../../docs/config-catalog.md) lists every accepted field.
 
 ### What a search returns
 
-`content` is the joined `output_text` of the response. `sources[]` holds one URL-only entry per distinct `url_citation` annotation; xAI's annotation `title` is the visible citation number, so it is not used as a title. The service enforces `maxResults`. A response with no `url_citation` fails as `WEB_PROVIDER_ERROR`.
+`content` is the joined `output_text` of the response. `sources[]` holds one URL-only entry per distinct `url_citation` annotation; xAI's annotation `title` is the visible citation number, so it is not used as a title. The service enforces `maxResults`; `truncated` means it capped the source count. Only a `completed` response succeeds. An `incomplete` response fails as `WEB_PROVIDER_ERROR`, even when it contains citations, and its partial answer is discarded. Missing or invalid consumed fields, nonterminal or unknown statuses, and a response with no `url_citation` also fail as `WEB_PROVIDER_ERROR`. Unknown string item types and unused extra fields are ignored.
 
 ### Failures and recovery
 
-HTTP 401 and 403 fail as `WEB_PROVIDER_AUTH_FAILED`, 429 as `WEB_PROVIDER_RATE_LIMITED`, other statuses and transport failures as `WEB_PROVIDER_ERROR`, a timeout as `WEB_TIMEOUT`, and cancellation as `WEB_ABORTED`. Redirects are errors.
+An oversized success or error body fails as `WEB_PROVIDER_ERROR` with `xAI response exceeds the <n> byte limit`; no partial answer is returned. The provider counts streamed bytes regardless of `Content-Length` and reads through EOF at the exact limit. Cleanup cannot delay a known overflow or the search deadline.
+
+HTTP 401 and 403 fail as `WEB_PROVIDER_AUTH_FAILED`, 429 as `WEB_PROVIDER_RATE_LIMITED`, other statuses and transport failures as `WEB_PROVIDER_ERROR`, a timeout as `WEB_TIMEOUT`, and cancellation as `WEB_ABORTED`. The deadline starts before credential resolution and covers HTTP headers and both success and error bodies. Cancellation ends credential waiting without stopping the underlying read; a late result cannot start an HTTP request. The first cancellation cause wins: caller cancellation remains `WEB_ABORTED`, even when its reason is another timeout. Redirects are errors.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
@@ -91,7 +97,7 @@ Independent of the conversation request cache.
 
 #### What the model sees
 
-Through `dsh-tool-web`, the conversation model sees the answer text and deduplicated source URLs. Failures appear as the messages above: `xAI API error (HTTP <status>)` with xAI's detail, `xAI search timed out after <n> ms`, `xAI search aborted`, `xAI returned no cited sources; ...`, and the missing-key message naming the credential reference.
+Through `dsh-tool-web`, the conversation model sees the answer text and deduplicated source URLs. Failures appear as the messages above: `xAI API error (HTTP <status>)` with xAI's detail, `xAI search timed out after <n> ms`, `xAI search aborted`, `xAI returned an incomplete search response`, `xAI response exceeds the <n> byte limit`, `xAI returned an invalid response field: <path>`, `xAI returned no cited sources; ...`, and the missing-key message naming the credential reference.
 
 #### Token effect
 

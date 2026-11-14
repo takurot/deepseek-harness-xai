@@ -1,0 +1,12 @@
+# Checkout-only paths resolve relative to this file through the source CLI.
+- id: web
+  config:
+    searchProvider: xai
+    fetchProvider: http
+
+- insert:
+    - id: web-search-xai
+      name: '../../../../packages/experimental/web-search-xai/src/index.ts'
+      config:
+        apiKeyEnv: XAI_API_KEY
+        sources: [web]
