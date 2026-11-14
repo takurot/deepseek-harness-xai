@@ -25,7 +25,7 @@
 
 - insert:
     - id: web-search-xai
-      name: '../../../packages/experimental/web-search-xai/src/index.ts'
+      name: '@deepseek-ai/dsh-web-search-xai'
       config:
         apiKey: snapshot-key
         baseURL: http://127.0.0.1:43118/v1
