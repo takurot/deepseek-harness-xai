@@ -2648,7 +2648,7 @@ todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为
 
 ### `web_fetch`
 
-获取指定 HTTP(S) URL 的内容，并将其解码为文本后返回。
+获取指定 HTTP(S) URL 的内容，并将其解码为文本后返回。PDF 页面会被提取为文本；没有文本层的扫描版 PDF 不返回文本，需要 OCR。
 
 ```json
 {

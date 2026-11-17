@@ -1,0 +1,10 @@
+version: 1
+scenario: web-fetch-pdf
+profile: headless
+composition: web
+recording: authored
+permission: workspace-write
+header:
+  class: web
+replay:
+  override: true

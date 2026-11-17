@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { AddressInfo } from 'node:net'
+import { Worker } from 'node:worker_threads'
 import { Context } from '@deepseek-ai/cordis'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import { HttpFetchProvider, LOCAL_FETCH_PROVIDER_ID } from '@deepseek-ai/dsh-web-fetch-http'
@@ -15,12 +16,15 @@ import {
   validateFetchUrl,
   WEB_FETCH_MAX_URL_LENGTH,
 } from '../src/policy.ts'
+import { extractPdfInWorker } from '../src/pdf-thread.ts'
+import { corruptPdfBytes, pdfBytes } from './fixtures/pdf.ts'
 
 const limits: HttpFetchLimits = {
   maxResponseBytes: 5_000_000,
   maxBodyChars: 100_000,
   timeoutMs: 5_000,
   maxRedirects: 5,
+  maxPdfPages: 10,
   userAgent: 'test-agent/1.0',
 }
 
@@ -66,6 +70,8 @@ describe('policy helpers', () => {
     expect(classifyContentType('application/xhtml+xml')).toBe('html')
     expect(classifyContentType('text/plain')).toBe('text')
     expect(classifyContentType('application/json')).toBe('text')
+    expect(classifyContentType('application/pdf')).toBe('pdf')
+    expect(classifyContentType('Application/PDF; charset=binary')).toBe('pdf')
     expect(classifyContentType('image/png')).toBeUndefined()
     expect(classifyContentType(null)).toBeUndefined()
   })
@@ -133,6 +139,101 @@ describe('HttpFetchProvider success', () => {
     expect(result.statusCode).toBe(404)
     expect(result.body).toEqual({ kind: 'text', content: 'nope' })
   })
+})
+
+describe('HttpFetchProvider PDF bodies', () => {
+  const pdfHandler = (bytes: Uint8Array, headers: Record<string, string> = {}) => {
+    handler = (_req, res) => { res.writeHead(200, { 'content-type': 'application/pdf', ...headers }); res.end(Buffer.from(bytes)) }
+  }
+
+  it('extracts text pages, separating them with form feeds and reporting page counts', async () => {
+    pdfHandler(pdfBytes([{ text: 'Page one text' }, { text: 'Page two text' }]))
+    const result = await provider().fetch({ url: base })
+    expect(result.body).toEqual({
+      kind: 'pdf',
+      content: 'Page one text\u000CPage two text',
+      pageCount: 2,
+      pagesExtracted: 2,
+    })
+    expect(result.truncated).toBe(false)
+  }, 30_000)
+
+  it('keeps page line breaks in the extracted body', async () => {
+    pdfHandler(pdfBytes([{ lines: ['First line', 'Second line'] }]))
+    const result = await provider().fetch({ url: base })
+    expect(result.body).toMatchObject({ kind: 'pdf', content: 'First line\nSecond line' })
+  }, 30_000)
+
+  it('reports a scanned PDF as empty extracted pages rather than an error', async () => {
+    pdfHandler(pdfBytes([{}, {}]))
+    const result = await provider().fetch({ url: base })
+    expect(result.body).toEqual({ kind: 'pdf', content: '\u000C', pageCount: 2, pagesExtracted: 2 })
+    expect(result.truncated).toBe(false)
+  }, 30_000)
+
+  it('caps extracted pages at maxPdfPages and marks the result truncated', async () => {
+    pdfHandler(pdfBytes([{ text: 'One' }, { text: 'Two' }, { text: 'Three' }]))
+    const result = await provider({ maxPdfPages: 2 }).fetch({ url: base })
+    expect(result.body).toEqual({
+      kind: 'pdf',
+      content: 'One\u000CTwo',
+      pageCount: 3,
+      pagesExtracted: 2,
+    })
+    expect(result.truncated).toBe(true)
+  }, 30_000)
+
+  it('bounds extracted characters at maxBodyChars', async () => {
+    pdfHandler(pdfBytes([{ text: 'abcdef' }, { text: 'ghij' }]))
+    const result = await provider({ maxBodyChars: 3 }).fetch({ url: base })
+    expect(result.body).toEqual({ kind: 'pdf', content: 'abc', pageCount: 2, pagesExtracted: 1 })
+    expect(result.truncated).toBe(true)
+  }, 30_000)
+
+  it('rejects a corrupt PDF with WEB_PDF_UNREADABLE', async () => {
+    pdfHandler(corruptPdfBytes())
+    await expect(provider().fetch({ url: base }))
+      .rejects.toThrow(expect.objectContaining({ code: 'WEB_PDF_UNREADABLE' }))
+  }, 30_000)
+
+  it('rejects a PDF cut by the byte cap instead of extracting a partial document', async () => {
+    const bytes = pdfBytes([{ text: 'Page one text' }])
+    pdfHandler(bytes, { 'content-length': '999999' })
+    await expect(provider({ maxResponseBytes: 10 }).fetch({ url: base }))
+      .rejects.toThrow(expect.objectContaining({ code: 'WEB_FETCH_TOO_LARGE' }))
+    handler = (_req, res) => { res.writeHead(200, { 'content-type': 'application/pdf' }); res.end(Buffer.from(bytes)) }
+    await expect(provider({ maxResponseBytes: 10 }).fetch({ url: base }))
+      .rejects.toThrow(expect.objectContaining({ code: 'WEB_FETCH_TOO_LARGE' }))
+    // A document that exactly fills the byte cap is complete and still extracts.
+    handler = (_req, res) => { res.writeHead(200, { 'content-type': 'application/pdf' }); res.end(Buffer.from(bytes)) }
+    const exact = await provider({ maxResponseBytes: bytes.length }).fetch({ url: base })
+    expect(exact.body).toMatchObject({ kind: 'pdf', pageCount: 1, pagesExtracted: 1 })
+    expect(exact.truncated).toBe(false)
+  }, 30_000)
+
+  it('terminates the extraction worker after a successful extraction', async () => {
+    const terminate = vi.spyOn(Worker.prototype, 'terminate')
+    try {
+      pdfHandler(pdfBytes([{ text: 'ok' }]))
+      await provider().fetch({ url: base })
+      expect(terminate).toHaveBeenCalled()
+    } finally {
+      terminate.mockRestore()
+    }
+  }, 30_000)
+
+  it('terminates the extraction worker when aborted before a result', async () => {
+    const terminate = vi.spyOn(Worker.prototype, 'terminate')
+    const controller = new AbortController()
+    try {
+      const pending = extractPdfInWorker(pdfBytes([{ text: 'ok' }]), { maxPages: 5, maxChars: 1000 }, controller.signal)
+      controller.abort(new Error('stop extraction'))
+      await expect(pending).rejects.toBeDefined()
+      expect(terminate).toHaveBeenCalled()
+    } finally {
+      terminate.mockRestore()
+    }
+  }, 30_000)
 })
 
 describe('HttpFetchProvider caps', () => {
@@ -552,4 +653,26 @@ describe('web-fetch-http plugin registration', () => {
       .resolves.toMatchObject({ statusCode: 200 })
     await fiber.dispose()
   })
+  it('rejects a non-integer maxPdfPages at construction', async () => {
+    const ctx = new Context()
+    await ctx.plugin(WebRuntime, { fetchProvider: LOCAL_FETCH_PROVIDER_ID })
+    await expect(ctx.plugin(fetchPlugin, { maxPdfPages: 1.5 }))
+      .rejects.toThrow(/maxPdfPages must be a positive integer/)
+    await expect(ctx.plugin(fetchPlugin, { maxPdfPages: 0 }))
+      .rejects.toThrow(/maxPdfPages must be a positive integer/)
+  })
+
+  it('applies the configured maxPdfPages to extraction', async () => {
+    handler = (_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/pdf' })
+      res.end(Buffer.from(pdfBytes([{ text: 'One' }, { text: 'Two' }])))
+    }
+    const ctx = new Context()
+    await ctx.plugin(WebRuntime, { fetchProvider: LOCAL_FETCH_PROVIDER_ID })
+    const fiber = await ctx.plugin(fetchPlugin, { maxPdfPages: 1 })
+    const result = await ctx.web.fetch({ url: `${base}/` })
+    expect(result.body).toEqual({ kind: 'pdf', content: 'One', pageCount: 2, pagesExtracted: 1 })
+    expect(result.truncated).toBe(true)
+    await fiber.dispose()
+  }, 30_000)
 })

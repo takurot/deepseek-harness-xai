@@ -9956,7 +9956,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WebFetchBody',
-    declaration: 'export type WebFetchBody = {\n    readonly kind: \'html\';\n    readonly content: string;\n} | {\n    readonly kind: \'text\';\n    readonly content: string;\n};',
+    declaration: 'export type WebFetchBody = {\n    readonly kind: \'html\';\n    readonly content: string;\n} | {\n    readonly kind: \'text\';\n    readonly content: string;\n} | {\n    readonly kind: \'pdf\';\n    readonly content: string;\n    readonly pageCount: number;\n    readonly pagesExtracted: number;\n};',
   },
   {
     name: 'WebFetchProvider',
@@ -9972,7 +9972,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WebFetchResultView',
-    declaration: 'export interface WebFetchResultView {\n    card: \'web\';\n    kind: \'fetch\';\n    title?: string;\n    url: string;\n    statusCode: number;\n    truncated: boolean;\n}',
+    declaration: 'export interface WebFetchResultView {\n    card: \'web\';\n    kind: \'fetch\';\n    title?: string;\n    url: string;\n    statusCode: number;\n    truncated: boolean;\n    pdf?: {\n        pageCount: number;\n        pagesExtracted: number;\n    };\n}',
   },
   {
     name: 'WebhookDeliveryId',

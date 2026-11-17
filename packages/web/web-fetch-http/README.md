@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-With `dsh-web-fetch-http`, the harness can fetch HTTP(S) pages through the web service (`ctx.web`) and get their status code plus bounded, decoded content without sending credentials. Choose it when a composition needs retrieval with URL validation, same-origin redirects, byte and character caps, and an explicit product `User-Agent`. It returns non-2xx responses as results rather than errors, and rejects binary data and unsupported content types. It does not restrict destination addresses, so it reaches loopback and private-network hosts. The model-facing `web_fetch` tool lives in `dsh-tool-web`, which renders this provider's bodies.
+With `dsh-web-fetch-http`, the harness can fetch HTTP(S) pages through the web service (`ctx.web`) and get their status code plus bounded, decoded content without sending credentials. Choose it when a composition needs retrieval with URL validation, same-origin redirects, byte and character caps, and an explicit product `User-Agent`. It returns non-2xx responses as results rather than errors, extracts text from PDF responses in an isolated Worker Thread, and rejects other binary data and unsupported content types. It does not restrict destination addresses, so it reaches loopback and private-network hosts. The model-facing `web_fetch` tool lives in `dsh-tool-web`, which renders this provider's bodies.
 
 ## Table of Contents
 
@@ -46,22 +46,23 @@ Load the web service and the provider; configurable limits have safe defaults an
 | `maxBodyChars` | `100,000` | Maximum decoded body length in characters |
 | `timeoutMs` | `30,000` | Fetch timeout — a resource backstop, not the model-facing tool budget |
 | `maxRedirects` | `5` | Maximum same-origin redirect hops (`0` follows none) |
+| `maxPdfPages` | `50` | Maximum PDF pages whose text is extracted; later pages are not read |
 | `userAgent` | `deepseek-harness/…` | `User-Agent` header sent on every request |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-web-fetch-http) is the exhaustive source for every accepted field and its JSDoc.
 
 ### What a fetch returns
 
-A successful call yields a `WebFetchResult`: the final URL after allowed redirects, the HTTP status code, a decoded body classified as `html` or `text`, and a `truncated` flag. A non-2xx response is a result, not an error — the status code is part of the fetched resource state; `WebError` is reserved for failures to safely retrieve or represent the resource.
+A successful call yields a `WebFetchResult`: the final URL after allowed redirects, the HTTP status code, a decoded body classified as `html`, `text`, or `pdf`, and a `truncated` flag. A `pdf` body carries the extracted page text joined by U+000C, the document's `pageCount`, and the `pagesExtracted` count; a scanned document yields empty page spans and no text rather than an error. A non-2xx response is a result, not an error — the status code is part of the fetched resource state; `WebError` is reserved for failures to safely retrieve or represent the resource.
 
 ```text
 const page = await ctx.web.fetch({ url: 'https://example.com' })
-// page.body.kind === 'html' | 'text'; page.statusCode === 200 | 404 | ...
+// page.body.kind === 'html' | 'text' | 'pdf'; page.statusCode === 200 | 404 | ...
 ```
 
 ### Transport behavior
 
-The provider keeps requests anonymous and bounded: it accepts only `http:` and `https:` URLs without embedded credentials and rejects URLs over 2,048 characters. Requests go through the process-wide dispatcher, so the installed proxy policy applies and the system resolver chooses the address; any destination address is allowed. Same-origin redirects are followed; cross-origin redirects fail and require a fresh call. The provider also enforces byte, character, hop, and time caps, rejects unsupported content types, and sends an explicit product `User-Agent`.
+The provider keeps requests anonymous and bounded: it accepts only `http:` and `https:` URLs without embedded credentials and rejects URLs over 2,048 characters. Requests go through the process-wide dispatcher, so the installed proxy policy applies and the system resolver chooses the address; any destination address is allowed. Same-origin redirects are followed; cross-origin redirects fail and require a fresh call. The provider also enforces byte, character, page, hop, and time caps, rejects unsupported content types, and sends an explicit product `User-Agent`. PDF text extraction runs in a Worker Thread under the same fetch deadline, and every outcome terminates the Worker. A PDF that exceeds the byte cap is not partially decoded: it fails as `WEB_FETCH_TOO_LARGE`.
 
 When the header declares no charset and the response is HTML, the provider reads the page's own declaration: a byte order mark, else the first `<meta charset>` or `<meta http-equiv="content-type">` wholly within the first 1,024 bytes. The bounded prescan skips comments and other tags with their quoted values; unfinished tags or comments consume the remaining bytes. Attribute names use ASCII case-insensitive matching, the first duplicate wins, and `charset` takes precedence over `content` regardless of order; `content` requires an exact `http-equiv="content-type"` value. A header charset always wins. A `<meta>` label no decoder supports fails as `WEB_UNSUPPORTED_CONTENT_TYPE` rather than returning garbled text, and a `<meta>` UTF-16 label is read as UTF-8. Pages with no declaration stay UTF-8. Declarations are read, not guessed: there is no statistical detection.
 
@@ -69,7 +70,7 @@ A malformed comma- or whitespace-joined charset declaration containing a UTF-8 l
 
 ### Failures and recovery
 
-Failures throw `WebError` with a machine-routable code: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_REDIRECT_BLOCKED`, `WEB_UNSUPPORTED_CONTENT_TYPE`, `WEB_ABORTED`, or `WEB_PROVIDER_ERROR`. `WEB_UNSUPPORTED_CONTENT_TYPE` covers unsupported media types, unsupported charset declarations, and invalid UTF-8 during malformed-declaration recovery. A response with excessive content encodings and an incomplete body fails as `WEB_PROVIDER_ERROR` without terminating the host process. Direct callers can route on the code; the model-facing `web_fetch` tool surfaces the failure text to the model under its own error wrapper.
+Failures throw `WebError` with a machine-routable code: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_REDIRECT_BLOCKED`, `WEB_UNSUPPORTED_CONTENT_TYPE`, `WEB_PDF_UNREADABLE`, `WEB_ABORTED`, or `WEB_PROVIDER_ERROR`. `WEB_UNSUPPORTED_CONTENT_TYPE` covers unsupported media types, unsupported charset declarations, and invalid UTF-8 during malformed-declaration recovery. `WEB_PDF_UNREADABLE` covers a corrupt, encrypted, or unsupported PDF; a PDF extraction Worker failure is `WEB_PROVIDER_ERROR`. A response with excessive content encodings and an incomplete body fails as `WEB_PROVIDER_ERROR` without terminating the host process. Direct callers can route on the code; the model-facing `web_fetch` tool surfaces the failure text to the model under its own error wrapper.
 
 -----
 
@@ -93,12 +94,15 @@ The package is built on one separation and one layered timeout:
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: config schema, limit validation, provider registration |
-| [`src/provider.ts`](src/provider.ts) | The `HttpFetchProvider`: transport, redirect following, capped reads, charset decoding |
+| [`src/provider.ts`](src/provider.ts) | The `HttpFetchProvider`: transport, redirect following, capped reads, charset decoding, PDF extraction |
+| [`src/pdf-extract.ts`](src/pdf-extract.ts) | Bounded PDF.js page text extraction and its page/character accounting |
+| [`src/pdf-thread.ts`](src/pdf-thread.ts) | Worker Thread lifecycle for extraction, terminating on every outcome |
+| [`src/worker.ts`](src/worker.ts) | Worker entry: validates the request and reports text or a document failure |
 | [`src/policy.ts`](src/policy.ts) | URL validation, same-origin checks, content-type classification, charset parsing and HTML charset sniffing |
 
 ### Read path
 
-A fetch validates the URL and sends the request. It repeats URL validation for each same-origin redirect; a cross-origin redirect fails before response bytes are accepted. The final response is classified by `Content-Type`, read under the byte cap, and decoded from its header charset or, for HTML without one, its own declaration (malformed header declarations containing UTF-8 use strict UTF-8 recovery); the decoded text is then truncated to the character cap.
+A fetch validates the URL and sends the request. It repeats URL validation for each same-origin redirect; a cross-origin redirect fails before response bytes are accepted. The final response is classified by `Content-Type`, read under the byte cap, and decoded from its header charset or, for HTML without one, its own declaration (malformed header declarations containing UTF-8 use strict UTF-8 recovery); the decoded text is then truncated to the character cap. A `pdf` response is read under the byte cap and extracted page by page in a Worker Thread.
 
 </details>
 
@@ -135,7 +139,8 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 These limits define when the provider is unsafe or a poor fit. They are current package constraints.
 
 - **Private destinations are reachable** — loopback, private-network, and cloud metadata addresses are fetched like any other host. A deployment that must keep the model away from them needs a `tools/pre-execute` policy, network confinement, or no fetch tool.
-- **Only textual content decodes** — html/xhtml and `text/*` plus JSON/XML families; a missing `Content-Type` or any binary type throws `WEB_UNSUPPORTED_CONTENT_TYPE`, and text-extractable PDF decoding is named deferred work.
+- **Only textual content decodes** — html/xhtml, `text/*` plus JSON/XML families, and text-based PDFs; a missing `Content-Type` or any other binary type throws `WEB_UNSUPPORTED_CONTENT_TYPE`. A scanned PDF has no text layer, so extraction returns empty pages and OCR is out of scope.
+- **Large PDFs are still byte-capped** — a PDF larger than `maxResponseBytes` (5,000,000 bytes by default) fails as `WEB_FETCH_TOO_LARGE` rather than returning a partial document; raise the cap for a deployment that fetches large papers.
 - **Charset detection is declaration-only** — the header wins, then a byte order mark or `<meta>` in an HTML page's first 1,024 bytes; an undeclared legacy-encoded page still decodes as UTF-8 with replacement characters, and unsupported declarations without a UTF-8 label throw.
 - **UTF-8 recovery is a preference, not encoding detection** — bytes can be valid as both UTF-8 and another encoding, even in a long response. Recovery chooses UTF-8 in that case; malformed declarations without a UTF-8 label remain unsupported.
 

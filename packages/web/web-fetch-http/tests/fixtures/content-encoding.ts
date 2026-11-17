@@ -27,6 +27,7 @@ async function main(): Promise<void> {
       maxBodyChars: 1000,
       timeoutMs: 5000,
       maxRedirects: 0,
+      maxPdfPages: 10,
       userAgent: 'content-encoding-test',
     })
     try {

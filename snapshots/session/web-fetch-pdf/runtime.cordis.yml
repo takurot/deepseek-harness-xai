@@ -1,0 +1,6 @@
+# This scenario serves PDFs instead of the shared web-fetch HTML fixture.
+- id: web-fetch-fixture
+  disabled: true
+- insert:
+    - id: web-fetch-pdf-fixture
+      name: './web-fetch-pdf-fixture.mjs'

@@ -101,7 +101,10 @@ interface WebFetchResult {
   readonly statusCode: number
   /** Decoded body, classified by content kind. */
   readonly body: WebFetchBody
-  /** True when the provider capped the decoded body. */
+  /**
+   * True when the provider capped the decoded body. For a PDF body this covers
+   * the page cut and the extracted-character cut.
+   */
   readonly truncated: boolean
 }
 ```
@@ -119,7 +122,18 @@ interface WebFetchResult {
 type WebFetchBody =
   | { readonly kind: 'html'; readonly content: string }
   | { readonly kind: 'text'; readonly content: string }
+  | {
+    readonly kind: 'pdf'
+    /** Extracted page text joined by {@link WEB_FETCH_PDF_PAGE_SEPARATOR}; an empty page contributes an empty span. */
+    readonly content: string
+    /** Total pages in the document. */
+    readonly pageCount: number
+    /** Pages whose text is represented in `content`; a page or character cut can leave fewer than `pageCount`. */
+    readonly pagesExtracted: number
+  }
 ```
+
+A `pdf` body is text extracted from a PDF response, not rendered pages: `content` joins each page's extracted text with U+000C FORM FEED, and `pageCount`/`pagesExtracted` report the document's total and the pages represented in `content`. An empty page contributes an empty span, so a scanned document (no text layer) yields empty page spans rather than an error; OCR is out of scope. `truncated` is true when the page limit or the character limit cut the document. The `dsh-web-fetch-http` provider never returns a partially decoded PDF: a response over the byte cap fails as `WEB_FETCH_TOO_LARGE`, and a corrupt, encrypted, or unsupported document fails as `WEB_PDF_UNREADABLE`.
 
 ## Provider availability
 
@@ -137,7 +151,7 @@ The HTTP provider does not restrict destination addresses: `web_fetch` reaches l
 
 ## Errors
 
-`WebError extends HarnessError` ([core.md](core.md) error taxonomy) with a `code: string` (open, like every other seam's error — `LlmError`, `SubagentError`), not a closed union: a provider may raise its own codes without editing `dsh-web`, and consumers must tolerate an unknown code. The codes split by owner. Seam-neutral codes are raised by the shared `WebRuntime` contract: `WEB_PROVIDER_UNAVAILABLE`, `WEB_PROVIDER_CONFIGURED_MISSING`, `WEB_PROVIDER_CONFIGURED_UNAVAILABLE`, `WEB_PROVIDER_AMBIGUOUS`, `WEB_DUPLICATE_PROVIDER` (a registration-time programming error, the analogue of `LlmRuntime`'s `DUPLICATE_ADAPTER`), `WEB_ABORTED`, and `WEB_PROVIDER_ERROR` (the catch-all for a provider's own failure surfaced through the seam, including network/transport failure — DNS, connection refused, TLS). Fetch-transport codes are owned by the `dsh-web-fetch-http` implementation and a different fetch backend need not raise them: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_REDIRECT_BLOCKED`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_UNSUPPORTED_CONTENT_TYPE`.
+`WebError extends HarnessError` ([core.md](core.md) error taxonomy) with a `code: string` (open, like every other seam's error — `LlmError`, `SubagentError`), not a closed union: a provider may raise its own codes without editing `dsh-web`, and consumers must tolerate an unknown code. The codes split by owner. Seam-neutral codes are raised by the shared `WebRuntime` contract: `WEB_PROVIDER_UNAVAILABLE`, `WEB_PROVIDER_CONFIGURED_MISSING`, `WEB_PROVIDER_CONFIGURED_UNAVAILABLE`, `WEB_PROVIDER_AMBIGUOUS`, `WEB_DUPLICATE_PROVIDER` (a registration-time programming error, the analogue of `LlmRuntime`'s `DUPLICATE_ADAPTER`), `WEB_ABORTED`, and `WEB_PROVIDER_ERROR` (the catch-all for a provider's own failure surfaced through the seam, including network/transport failure — DNS, connection refused, TLS). Fetch-transport codes are owned by the `dsh-web-fetch-http` implementation and a different fetch backend need not raise them: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_REDIRECT_BLOCKED`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_UNSUPPORTED_CONTENT_TYPE`, `WEB_PDF_UNREADABLE`.
 
 ## The service
 

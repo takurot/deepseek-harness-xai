@@ -96,7 +96,10 @@ export interface WebFetchResult {
   readonly statusCode: number
   /** Decoded body, classified by content kind. */
   readonly body: WebFetchBody
-  /** True when the provider capped the decoded body. */
+  /**
+   * True when the provider capped the decoded body. For a PDF body this covers
+   * the page cut and the extracted-character cut.
+   */
   readonly truncated: boolean
 }
 
@@ -112,6 +115,15 @@ export interface WebFetchResult {
 export type WebFetchBody =
   | { readonly kind: 'html'; readonly content: string }
   | { readonly kind: 'text'; readonly content: string }
+  | {
+    readonly kind: 'pdf'
+    /** Extracted page text joined by {@link WEB_FETCH_PDF_PAGE_SEPARATOR}; an empty page contributes an empty span. */
+    readonly content: string
+    /** Total pages in the document. */
+    readonly pageCount: number
+    /** Pages whose text is represented in `content`; a page or character cut can leave fewer than `pageCount`. */
+    readonly pagesExtracted: number
+  }
 
 /**
  * A search-capable backend. Registered with `ctx.web.registerSearchProvider`.

@@ -10,6 +10,7 @@ import TurndownService from 'turndown'
 import { gfm } from '@joplin/turndown-plugin-gfm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, ToolResult, WebFetchResultView } from '@deepseek-ai/dsh-tools'
+import { WEB_FETCH_PDF_PAGE_SEPARATOR } from '@deepseek-ai/dsh-web'
 import type { WebFetchBody, WebFetchResult } from '@deepseek-ai/dsh-web'
 import { assertNever, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { EXTERNAL_WEB_CONTENT_NOTICE } from './trust.ts'
@@ -229,11 +230,39 @@ interface RenderedBody {
   sourceTruncated: boolean
 }
 
+/** Model-facing notice for a PDF whose pages carry no extractable text layer. */
+const PDF_NO_TEXT_NOTICE = '[No extractable text found in this PDF. It may be a scanned document; OCR is not supported.]'
+
+/**
+ * Render extracted PDF text with document page markers. Page numbers are the
+ * document's own, so a page without text leaves a gap rather than renumbering.
+ * A page or character cut is stated once at the top; a document with no text on
+ * any extracted page states that explicitly instead of rendering empty markers.
+ *
+ * @param content - page text joined by U+000C, possibly cut by the output cap.
+ * @param pageCount - total pages in the document.
+ * @param pagesExtracted - pages represented in `content`.
+ * @returns the bounded page blocks and any cap or no-text notice.
+ */
+function renderPdfText(content: string, pageCount: number, pagesExtracted: number): string {
+  const blocks: string[] = []
+  if (pagesExtracted < pageCount) blocks.push(`[PDF: first ${pagesExtracted} of ${pageCount} pages extracted.]`)
+  let textFound = false
+  for (const [index, page] of content.split(WEB_FETCH_PDF_PAGE_SEPARATOR).entries()) {
+    const text = page.trim()
+    if (text === '') continue
+    textFound = true
+    blocks.push(`[Page ${index + 1} of ${pageCount}]\n${text}`)
+  }
+  if (!textFound) blocks.push(PDF_NO_TEXT_NOTICE)
+  return blocks.join('\n\n')
+}
+
 /**
  * Render a fetched body to model-facing markdown text.
  *
  * @param body - the decoded body; `html` is converted via turndown, `text`
- *   passes through verbatim.
+ *   passes through verbatim, and `pdf` page text gains page markers.
  * @param maxInputChars - maximum source characters processed synchronously.
  * @returns the rendered prefix and whether the source was cut. HTML nested
  *   beyond {@link MAX_CONVERSION_DEPTH} or rejected by turndown is omitted so
@@ -255,6 +284,8 @@ function renderBody(body: WebFetchBody, maxInputChars: number): RenderedBody {
       }
     case 'text':
       return { text: content, sourceTruncated }
+    case 'pdf':
+      return { text: renderPdfText(content, body.pageCount, body.pagesExtracted), sourceTruncated }
     /* v8 ignore next 2 -- WebFetchBody is a closed union; this arm is unreachable and only makes adding a kind a compile error. */
     default:
       return assertNever(body, 'unhandled web fetch body kind')
@@ -375,6 +406,13 @@ export interface WebFetchMeta {
   statusCode: number
   /** True when the provider, a source cut, or the output cap trimmed the content. */
   truncated: boolean
+  /** PDF page accounting; absent for an HTML or text body. */
+  pdf?: {
+    /** Total pages in the document. */
+    readonly pageCount: number
+    /** Pages whose text the extraction represented. */
+    readonly pagesExtracted: number
+  }
 }
 
 /**
@@ -387,10 +425,17 @@ export interface WebFetchMeta {
  * @param value - the canonical `web_fetch` output value (the seam's result shape).
  * @param maxOutputChars - the deployment's output cap, the same one
  *   {@link formatFetchOutput} applies to the render text.
- * @returns the URL, status code, and effective truncation flag.
+ * @returns the URL, status code, effective truncation flag, and PDF page accounting when present.
  */
 export function fetchMetaFromValue(value: WebFetchResult, maxOutputChars: number): JsonValue {
-  return { url: value.url, statusCode: value.statusCode, truncated: renderFetchOutput(value, maxOutputChars).truncated }
+  return {
+    url: value.url,
+    statusCode: value.statusCode,
+    truncated: renderFetchOutput(value, maxOutputChars).truncated,
+    ...value.body.kind === 'pdf'
+      ? { pdf: { pageCount: value.body.pageCount, pagesExtracted: value.body.pagesExtracted } }
+      : {},
+  }
 }
 
 /**
@@ -403,9 +448,19 @@ export function fetchMetaFromValue(value: WebFetchResult, maxOutputChars: number
  */
 export function fetchMetaFromResult(meta: unknown): WebFetchMeta | undefined {
   if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return undefined
-  const { url, statusCode, truncated } = meta as Record<string, unknown>
+  const { url, statusCode, truncated, pdf: rawPdf } = meta as Record<string, unknown>
   if (typeof url !== 'string' || typeof statusCode !== 'number' || typeof truncated !== 'boolean') return undefined
-  return { url, statusCode, truncated }
+  let pdf: WebFetchMeta['pdf']
+  if (rawPdf !== undefined) {
+    if (typeof rawPdf !== 'object' || rawPdf === null || Array.isArray(rawPdf)) return undefined
+    const { pageCount, pagesExtracted } = rawPdf as Record<string, unknown>
+    if (!Number.isInteger(pageCount) || (pageCount as number) < 1) return undefined
+    if (!Number.isInteger(pagesExtracted) || (pagesExtracted as number) < 1 || (pagesExtracted as number) > (pageCount as number)) {
+      return undefined
+    }
+    pdf = { pageCount: pageCount as number, pagesExtracted: pagesExtracted as number }
+  }
+  return { url, statusCode, truncated, ...pdf === undefined ? {} : { pdf } }
 }
 
 /**
@@ -431,6 +486,7 @@ export function presentFetchResult(args: { url: string }, result: ToolResult): W
     url: meta.url,
     statusCode: meta.statusCode,
     truncated: meta.truncated,
+    ...meta.pdf === undefined ? {} : { pdf: meta.pdf },
   }
 }
 
@@ -457,7 +513,7 @@ export function applyWebFetchTool(ctx: Context, timeoutMs: number, maxOutputChar
 
   ctx.tools.register(defineTool({
     name: 'web_fetch',
-    description: 'Fetch the content of a specific HTTP(S) URL and return it decoded to text.',
+    description: 'Fetch the content of a specific HTTP(S) URL and return it decoded to text. PDF pages are extracted as text; a scanned PDF without a text layer returns no text and needs OCR.',
     parameters: {
       url: { type: 'string', required: true, description: 'The HTTP(S) URL to fetch.' },
     },
@@ -487,6 +543,16 @@ export function applyWebFetchTool(ctx: Context, timeoutMs: number, maxOutputChar
                   content: { type: 'string', required: true },
                 },
               },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: { type: 'string', required: true, const: 'pdf' },
+                  content: { type: 'string', required: true },
+                  pageCount: { type: 'integer', required: true },
+                  pagesExtracted: { type: 'integer', required: true },
+                },
+              },
             ],
           },
           truncated: { type: 'boolean', required: true },
@@ -507,7 +573,14 @@ export function applyWebFetchTool(ctx: Context, timeoutMs: number, maxOutputChar
       return {
         url: result.url,
         statusCode: result.statusCode,
-        body: { kind: result.body.kind, content: result.body.content },
+        body: result.body.kind === 'pdf'
+          ? {
+            kind: result.body.kind,
+            content: result.body.content,
+            pageCount: result.body.pageCount,
+            pagesExtracted: result.body.pagesExtracted,
+          }
+          : { kind: result.body.kind, content: result.body.content },
         truncated: result.truncated,
       }
     },

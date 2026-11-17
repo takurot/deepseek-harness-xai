@@ -102,6 +102,7 @@ const limits: HttpFetchLimits = {
   maxBodyChars: 100_000,
   timeoutMs: 5_000,
   maxRedirects: 5,
+  maxPdfPages: 10,
   userAgent: 'test-agent/1.0',
 }
 

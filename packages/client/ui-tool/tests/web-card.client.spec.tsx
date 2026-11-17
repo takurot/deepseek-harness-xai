@@ -33,6 +33,7 @@ interface FetchMeta {
   url: string
   statusCode: number
   truncated: boolean
+  pdf?: { pageCount: number; pagesExtracted: number }
 }
 
 /** Persisted web_search result metadata. */
@@ -107,6 +108,17 @@ describe('webCardModel', () => {
     })
     expect(webCardModel(settledFetch({ meta: fetchMeta({ statusCode: 404, truncated: true }) })))
       .toEqual({ kind: 'fetch', url: 'https://example.com/page', statusCode: 404, truncated: true })
+  })
+
+  it('derives a PDF fetch card from persisted page accounting and rejects malformed accounting', () => {
+    expect(webCardModel(settledFetch({ meta: fetchMeta({ pdf: { pageCount: 3, pagesExtracted: 2 } }) })))
+      .toEqual({
+        kind: 'fetch', url: 'https://example.com/page', statusCode: 200, truncated: false,
+        pdf: { pageCount: 3, pagesExtracted: 2 },
+      })
+    expect(webCardModel(settledFetch({ meta: fetchMeta({ pdf: { pageCount: 3, pagesExtracted: 4 } }) }))).toBeNull()
+    expect(webCardModel(settledFetch({ meta: fetchMeta({ pdf: { pageCount: 0, pagesExtracted: 0 } }) }))).toBeNull()
+    expect(webCardModel(settledFetch({ meta: fetchMeta({ pdf: { pageCount: 2.5, pagesExtracted: 1 } }) }))).toBeNull()
   })
 
   it('returns null for a running call, since the web card is result-only', () => {

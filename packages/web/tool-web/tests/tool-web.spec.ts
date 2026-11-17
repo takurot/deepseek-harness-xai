@@ -335,6 +335,52 @@ describe('fetch formatting', () => {
     expect(out).toContain('Content truncated')
   })
 
+  it('renders PDF pages with the document page number, preserving gaps for pages without text', () => {
+    const out = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: false,
+      body: { kind: 'pdf', content: 'One\u000C\u000CThree', pageCount: 3, pagesExtracted: 3 },
+    }, NO_CAP)
+    expect(out).toContain('[Page 1 of 3]\nOne')
+    expect(out).not.toContain('[Page 2')
+    expect(out).toContain('[Page 3 of 3]\nThree')
+    expect(out).not.toContain('PDF: first')
+  })
+
+  it('states the page cut before the PDF pages', () => {
+    const out = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: true,
+      body: { kind: 'pdf', content: 'One\u000CTwo', pageCount: 3, pagesExtracted: 2 },
+    }, NO_CAP)
+    expect(out.indexOf('[PDF: first 2 of 3 pages extracted.]')).toBeLessThan(out.indexOf('[Page 1 of 3]'))
+    expect(out).toContain('Content truncated')
+  })
+
+  it('states explicitly when a PDF has no extractable text, as for a scanned document', () => {
+    const out = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: false,
+      body: { kind: 'pdf', content: '\u000C', pageCount: 2, pagesExtracted: 2 },
+    }, NO_CAP)
+    expect(out).toContain('[No extractable text found in this PDF. It may be a scanned document; OCR is not supported.]')
+    expect(out).not.toContain('[Page')
+  })
+
+  it('bounds a PDF result at exact and tiny output caps, page markers included', () => {
+    const body = { kind: 'pdf' as const, content: 'abcdef', pageCount: 1, pagesExtracted: 1 }
+    const exactText = `${HEADER}[Page 1 of 1]\nabcdef`
+    expect(formatFetchOutput({ url: 'https://a.test', statusCode: 200, truncated: false, body }, exactText.length)).toBe(exactText)
+    const tiny = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: true,
+      body: { kind: 'pdf', content: 'abcdef', pageCount: 1, pagesExtracted: 1 },
+    }, 10)
+    expect(tiny.length).toBeLessThanOrEqual(10)
+    const cut = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: false,
+      body: { kind: 'pdf', content: `${'x'.repeat(10_000)}\u000Cy`, pageCount: 2, pagesExtracted: 2 },
+    }, 500)
+    expect(cut.length).toBeLessThanOrEqual(500)
+    expect(cut).toContain('Content truncated')
+  })
+
   it('caps the complete output and notes truncation, even when markdown escaping expands the body', () => {
     // 1,000 underscores render as 2,000 escaped characters — conversion can
     // outgrow a provider-side body cap, so the bound applies to the output.
@@ -484,6 +530,37 @@ describe('web_fetch presentation meta and result view', () => {
       .toEqual({ url: 'https://a.test', statusCode: 404, truncated: true })
   })
 
+  it('projects PDF page accounting into meta and omits it for a text body', () => {
+    const pdfMeta = fetchMetaFromValue({
+      url: 'https://a.test', statusCode: 200, truncated: true,
+      body: { kind: 'pdf', content: 'x', pageCount: 4, pagesExtracted: 2 },
+    }, NO_CAP) as { pdf?: { pageCount: number; pagesExtracted: number } }
+    expect(pdfMeta.pdf).toEqual({ pageCount: 4, pagesExtracted: 2 })
+    const textMeta = fetchMetaFromValue({
+      url: 'https://a.test', statusCode: 200, truncated: false,
+      body: { kind: 'text', content: 'x' },
+    }, NO_CAP) as { pdf?: unknown }
+    expect(textMeta.pdf).toBeUndefined()
+  })
+
+  it('accepts old meta without PDF fields and rejects malformed PDF fields', () => {
+    expect(fetchMetaFromResult({ url: 'u', statusCode: 200, truncated: false }))
+      .toEqual({ url: 'u', statusCode: 200, truncated: false })
+    expect(fetchMetaFromResult({ url: 'u', statusCode: 200, truncated: false, pdf: { pageCount: 3, pagesExtracted: 1 } }))
+      .toEqual({ url: 'u', statusCode: 200, truncated: false, pdf: { pageCount: 3, pagesExtracted: 1 } })
+    for (const pdf of [
+      { pageCount: 0, pagesExtracted: 0 },
+      { pageCount: 3, pagesExtracted: 4 },
+      { pageCount: 3.5, pagesExtracted: 1 },
+      { pageCount: 3, pagesExtracted: 1.5 },
+      { pageCount: '3', pagesExtracted: 1 },
+      [],
+      null,
+    ]) {
+      expect(fetchMetaFromResult({ url: 'u', statusCode: 200, truncated: false, pdf })).toBeUndefined()
+    }
+  })
+
   it('projects truncated: true when the output cap cut a body the provider did not, matching the render footer', () => {
     // The provider reports truncated: false, but conversion outgrows the cap, so
     // the render text carries the truncation footer. The meta must agree.
@@ -525,6 +602,23 @@ describe('web_fetch presentation meta and result view', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('presents a PDF fetch with its page accounting', () => {
+    const value = {
+      url: 'https://a.test', statusCode: 200, truncated: true,
+      body: { kind: 'pdf' as const, content: 'x', pageCount: 3, pagesExtracted: 2 },
+    }
+    const meta = fetchMetaFromValue(value, NO_CAP)
+    expect(presentFetchResult({ url: 'https://a.test' }, toolResult(meta, 'body'))).toEqual({
+      card: 'web',
+      kind: 'fetch',
+      title: 'https://a.test',
+      url: 'https://a.test',
+      statusCode: 200,
+      truncated: true,
+      pdf: { pageCount: 3, pagesExtracted: 2 },
+    })
   })
 
   it('presents a completed fetch as a web/fetch card carrying the summary, titled by the url, without content', () => {
@@ -939,6 +1033,34 @@ describe('tool-web execution through the real registry', () => {
     expect(out.meta).toEqual({ url: 'https://a.test', statusCode: 200, truncated: true })
     const view = ctx.tools.get('web_fetch')?.presentResult?.({ url: 'https://a.test' }, { content: out.content, isError: out.isError, ...out.meta !== undefined ? { meta: out.meta } : {} })
     expect(view).toMatchObject({ card: 'web', kind: 'fetch', url: 'https://a.test', statusCode: 200, truncated: true })
+    await fiber.dispose()
+  })
+
+  it('executes a PDF fetch and projects its page fields into the output value, meta, and card', async () => {
+    const fetchProvider = {
+      id: 'stub-fetch',
+      available: () => available,
+      fetch: (request: { url: string }) => Promise.resolve({
+        url: request.url, statusCode: 200, truncated: true,
+        body: { kind: 'pdf' as const, content: 'One\u000CTwo', pageCount: 3, pagesExtracted: 2 },
+      }),
+    }
+    const { ctx, fiber, call } = await mountTools({ webConfig: { fetchProvider: 'stub-fetch' }, fetchProvider })
+    const out = await call('web_fetch', { url: 'https://a.test' })
+    expect(out.isError).toBe(false)
+    expect(out.value).toEqual({
+      url: 'https://a.test',
+      statusCode: 200,
+      body: { kind: 'pdf', content: 'One\u000CTwo', pageCount: 3, pagesExtracted: 2 },
+      truncated: true,
+    })
+    expect(out.content.map(block => block.type === 'text' ? block.text : '').join(''))
+      .toContain('[PDF: first 2 of 3 pages extracted.]')
+    expect(out.meta).toEqual({
+      url: 'https://a.test', statusCode: 200, truncated: true, pdf: { pageCount: 3, pagesExtracted: 2 },
+    })
+    const view = ctx.tools.get('web_fetch')?.presentResult?.({ url: 'https://a.test' }, { content: out.content, isError: out.isError, ...out.meta !== undefined ? { meta: out.meta } : {} })
+    expect(view).toMatchObject({ card: 'web', kind: 'fetch', pdf: { pageCount: 3, pagesExtracted: 2 } })
     await fiber.dispose()
   })
 

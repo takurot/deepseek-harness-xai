@@ -64,4 +64,7 @@ export const jsonTreeLabels: JsonTreeLabels = {
 export const webBlockLabels: WebBlockLabels = {
   noResults: '未找到结果', sourcesTruncated: '来源列表已截断', failedQueries: '失败的查询',
   http: 'HTTP', contentTruncated: '内容已截断', markdown: markdownLabels,
+  noResults: '未找到结果', sourcesTruncated: '来源列表已截断',
+  http: 'HTTP', contentTruncated: '内容已截断',
+  pdfPages: (extracted, total) => `PDF · ${extracted}/${total} 页`, markdown: markdownLabels,
 }

@@ -238,6 +238,9 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // The plugin market parses fetched indexes in a private Worker resolved
   // relative to import.meta.url; it is shipped without a public package subpath.
   '@deepseek-ai/dsh-plugin-market': ['lib/worker.cjs'],
+  // The HTTP fetch provider extracts PDF text in a private Worker resolved
+  // relative to import.meta.url; it is shipped without a public package subpath.
+  '@deepseek-ai/dsh-web-fetch-http': ['lib/pdf-worker.js'],
   // The argv-prefix runner entry ships beside the lib as its own bundle;
   // sandbox-local resolves it through the package's ./runner export. tsdown
   // also shares its generated FFI code through a hashed runtime chunk.

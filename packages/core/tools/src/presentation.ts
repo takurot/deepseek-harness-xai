@@ -406,4 +406,11 @@ export interface WebFetchResultView {
    * truncation the model-facing text also reflects).
    */
   truncated: boolean
+  /** PDF page accounting; absent for an HTML or text body. */
+  pdf?: {
+    /** Total pages in the document. */
+    pageCount: number
+    /** Pages whose text the extraction represented. */
+    pagesExtracted: number
+  }
 }
