@@ -6,13 +6,18 @@ import { HttpFetchProvider } from '@deepseek-ai/dsh-web-fetch-http'
 import type { HttpFetchLimits } from '@deepseek-ai/dsh-web-fetch-http'
 import { corruptPdfBytes } from './fixtures/pdf.ts'
 
-type Mode = 'abort' | 'timeout' | 'worker-failure'
+type Mode = 'abort' | 'timeout' | 'worker-failure' | 'unavailable'
 
 const state = vi.hoisted(() => ({ mode: 'worker-failure' as Mode, controller: undefined as AbortController | undefined }))
 
 vi.mock('../src/pdf-thread.ts', () => ({
   PdfDocumentError: class PdfDocumentError extends Error {},
+  PdfExtractionUnavailableError: class PdfExtractionUnavailableError extends Error {},
   extractPdfInWorker: async () => {
+    if (state.mode === 'unavailable') {
+      const { PdfExtractionUnavailableError } = await import('../src/pdf-thread.ts')
+      throw new PdfExtractionUnavailableError('PDF extraction is not included in this packaged runtime')
+    }
     if (state.mode === 'abort') {
       state.controller?.abort(new Error('aborted by test'))
       throw new Error('aborted by test')
@@ -54,6 +59,15 @@ afterEach(async () => {
 })
 
 describe('PDF extraction bridge failures', () => {
+  it('maps a packaged runtime without PDF extraction to WEB_PDF_UNAVAILABLE with an actionable message', async () => {
+    state.mode = 'unavailable'
+    await expect(new HttpFetchProvider(limits).fetch({ url: base }))
+      .rejects.toThrow(expect.objectContaining({
+        code: 'WEB_PDF_UNAVAILABLE',
+        message: 'this packaged runtime does not include PDF extraction; use the Node or desktop distribution',
+      }))
+  })
+
   it('maps a bridge failure to WEB_PROVIDER_ERROR', async () => {
     state.mode = 'worker-failure'
     await expect(new HttpFetchProvider(limits).fetch({ url: base }))

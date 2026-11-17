@@ -497,10 +497,16 @@ class WebFetchOutputBody2(TypedDict):
     kind: Literal["text"]
     content: str
 
+class WebFetchOutputBody3(TypedDict):
+    kind: Literal["pdf"]
+    content: str
+    pageCount: int
+    pagesExtracted: int
+
 class WebFetchOutput(TypedDict):
     url: str
     statusCode: int
-    body: WebFetchOutputBody1 | WebFetchOutputBody2
+    body: WebFetchOutputBody1 | WebFetchOutputBody2 | WebFetchOutputBody3
     truncated: bool
 
 class WebSearchArgs(TypedDict):
@@ -596,7 +602,7 @@ class Tools(Protocol):
     async def wait_agent(self, args: WaitAgentArgs) -> WaitAgentOutput:
         """Wait for input at your next step, including agent messages, completion notifications, and user steering. Returns immediately when that input is already pending."""
     async def web_fetch(self, args: WebFetchArgs) -> WebFetchOutput:
-        """Fetch the content of a specific HTTP(S) URL and return it decoded to text."""
+        """Fetch the content of a specific HTTP(S) URL and return it decoded to text. PDF pages are extracted as text; a scanned PDF without a text layer returns no text and needs OCR."""
     async def web_search(self, args: WebSearchArgs) -> WebSearchOutput:
         """Search the web for current information. Returns an optional summary answer and a list of source URLs."""
     async def working_directory(self, args: WorkingDirectoryArgs) -> WorkingDirectoryOutput:

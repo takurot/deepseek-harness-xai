@@ -12,7 +12,7 @@ import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { Response } from 'undici'
 import { classifyContentType, decoderForCharset, decoderForHtml, isSameOrigin, parseCharset, validateFetchUrl } from './policy.ts'
 import type { PdfExtraction } from './pdf-extract.ts'
-import { extractPdfInWorker, PdfDocumentError } from './pdf-thread.ts'
+import { extractPdfInWorker, PdfDocumentError, PdfExtractionUnavailableError } from './pdf-thread.ts'
 
 /** Resolved provider limits (the plugin's schemastery Config supplies defaults). */
 export interface HttpFetchLimits {
@@ -195,6 +195,13 @@ export class HttpFetchProvider implements WebFetchProvider {
       )
     } catch (error: unknown) {
       if (signal.aborted) throw translateAbortOrNetwork(error, signal)
+      if (error instanceof PdfExtractionUnavailableError) {
+        throw new WebError(
+          'this packaged runtime does not include PDF extraction; use the Node or desktop distribution',
+          'WEB_PDF_UNAVAILABLE',
+          { cause: error },
+        )
+      }
       if (error instanceof PdfDocumentError) {
         throw new WebError(
           'PDF content could not be read; it may be corrupt, encrypted, or unsupported',

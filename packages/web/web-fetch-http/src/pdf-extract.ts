@@ -9,7 +9,6 @@
 
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import { WEB_FETCH_PDF_PAGE_SEPARATOR } from '@deepseek-ai/dsh-web'
 
@@ -19,6 +18,22 @@ export interface PdfExtractionLimits {
   readonly maxPages: number
   /** Maximum characters in the returned content, page separators included. */
   readonly maxChars: number
+}
+
+/** Raised when this build does not ship the PDF extraction engine. */
+export class PdfExtractionUnavailableError extends Error {}
+
+/** The extraction engine, loaded on first use so a packaged build without it can report a typed failure. */
+let engine: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | undefined
+
+/** Load PDF.js once; a build that omits the dependency fails with {@link PdfExtractionUnavailableError}. */
+function loadEngine(): Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> {
+  engine ??= import('pdfjs-dist/legacy/build/pdf.mjs').catch((_error: unknown) => {
+    // This packaged-runtime build does not include PDF.js; the provider turns
+    // the class into a typed, actionable WebError.
+    throw new PdfExtractionUnavailableError('PDF extraction is not included in this packaged runtime')
+  })
+  return engine
 }
 
 /** Extracted PDF text with the page accounting the seam exposes. */
@@ -84,6 +99,7 @@ async function pageText(page: PDFPageProxy): Promise<string> {
  * @returns the extracted page text and its page accounting.
  */
 export async function extractPdfText(data: Uint8Array, limits: PdfExtractionLimits): Promise<PdfExtraction> {
+  const { getDocument } = await loadEngine()
   const loadingTask = getDocument({
     data,
     useWorkerFetch: false,

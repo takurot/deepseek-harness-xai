@@ -10,6 +10,9 @@ interface PdfWorkerRequest extends PdfExtractionLimits {
 /** A Worker-reported PDF.js rejection: the document itself could not be extracted. */
 export class PdfDocumentError extends Error {}
 
+/** This build does not include the PDF extraction engine. */
+export class PdfExtractionUnavailableError extends Error {}
+
 /**
  * The Worker entry and its loader arguments: the bundled sibling in a built
  * package, or a data: URL that registers the TypeScript loader before importing
@@ -39,8 +42,8 @@ function isExtraction(value: unknown): value is PdfExtraction {
     && typeof result.truncated === 'boolean'
 }
 
-/** Whether a Worker message reports a PDF.js rejection. */
-function isDocumentFailure(value: unknown): value is { readonly ok: false; readonly message: string } {
+/** Whether a Worker message reports a PDF.js rejection or a missing engine. */
+function isDocumentFailure(value: unknown): value is { readonly ok: false; readonly message: string; readonly code?: string } {
   return typeof value === 'object' && value !== null
     && 'ok' in value && value.ok === false
     && 'message' in value && typeof value.message === 'string'
@@ -50,7 +53,9 @@ function isDocumentFailure(value: unknown): value is { readonly ok: false; reado
 function workerOutcome(worker: Worker): Promise<PdfExtraction> {
   return new Promise((resolve, reject) => {
     worker.once('message', (value: unknown) => {
-      if (isDocumentFailure(value)) reject(new PdfDocumentError(value.message))
+      if (isDocumentFailure(value)) {
+        reject(value.code === 'unavailable' ? new PdfExtractionUnavailableError(value.message) : new PdfDocumentError(value.message))
+      }
       else if (isExtraction(value)) resolve(value)
       else reject(new Error('PDF extractor reported an unexpected value'))
     })

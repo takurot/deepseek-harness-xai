@@ -221,7 +221,7 @@ interface ToolArgsMap {
   } & Record<string, JsonValue>;
   /** Wait while the test driver changes the Session file policy. */
   wait_for_mode_change: Record<string, JsonValue>;
-  /** Fetch the content of a specific HTTP(S) URL and return it decoded to text. */
+  /** Fetch the content of a specific HTTP(S) URL and return it decoded to text. PDF pages are extracted as text; a scanned PDF without a text layer returns no text and needs OCR. */
   web_fetch: {
     /** The HTTP(S) URL to fetch. */
     url: string;
@@ -534,6 +534,11 @@ interface ToolOutputMap {
     } | {
       kind: "text";
       content: string;
+    } | {
+      kind: "pdf";
+      content: string;
+      pageCount: number;
+      pagesExtracted: number;
     };
     truncated: boolean;
   };

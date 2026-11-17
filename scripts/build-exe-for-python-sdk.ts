@@ -316,6 +316,11 @@ class SingleExeBuild {
       this.staging,
     ])
     await this.materializeStagedLinks()
+    // PDF extraction would add a 13.7 MB engine and push the runtime wheel past
+    // PyPI's per-file limit; the packaged runtime reports WEB_PDF_UNAVAILABLE.
+    // Node and desktop distributions keep the dependency.
+    if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] rm -rf ${join(this.staging, 'node_modules', 'pdfjs-dist')}`)
+    else await rm(join(this.staging, 'node_modules', 'pdfjs-dist'), { recursive: true, force: true })
     if (this.cli.dryRun) {
       for (const name of DEPLOY_ONLY_DOCS) console.log(`build-exe-for-python-sdk: [dry-run] rm -f ${join(this.staging, name)}`)
     } else {
@@ -486,7 +491,14 @@ class SingleExeBuild {
     if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] keep only node-pty prebuilds ${selected}`)
     else {
       const source = join(packageDirectory, 'prebuilds', selected)
-      if (existsSync(source)) await cp(source, join(prebuilds, selected), { recursive: true })
+      const destination = join(prebuilds, selected)
+      // A hoisted local deploy can resolve both paths to one directory.
+      if (existsSync(source)) {
+        // A hoisted deploy can hardlink these files; replacing the directory
+        // first keeps `cp` from treating src and dest as the same file.
+        await rm(destination, { recursive: true, force: true })
+        await cp(source, destination, { recursive: true })
+      }
       for (const entry of await readdir(prebuilds, { withFileTypes: true })) {
         if (entry.isDirectory() && entry.name !== selected) await rm(join(prebuilds, entry.name), { recursive: true, force: true })
       }

@@ -70,7 +70,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 ### 失败与恢复
 
-失败会抛出 `WebError`，其中包含可供程序路由的错误码：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_REDIRECT_BLOCKED`、`WEB_UNSUPPORTED_CONTENT_TYPE`、`WEB_PDF_UNREADABLE`、`WEB_ABORTED` 或 `WEB_PROVIDER_ERROR`。`WEB_UNSUPPORTED_CONTENT_TYPE` 涵盖不支持的媒体类型、不支持的 charset 声明，以及畸形声明恢复过程中遇到的非法 UTF-8。`WEB_PDF_UNREADABLE` 涵盖损坏、加密或不支持的 PDF；PDF 提取 Worker 的故障是 `WEB_PROVIDER_ERROR`。内容编码层数过多且正文不完整的响应会以 `WEB_PROVIDER_ERROR` 失败，不会终止宿主进程。直接调用方可以按错误码路由；面向模型的 `web_fetch` 工具会在自己的错误包装层内把失败文本呈现给模型。
+失败会抛出 `WebError`，其中包含可供程序路由的错误码：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_REDIRECT_BLOCKED`、`WEB_UNSUPPORTED_CONTENT_TYPE`、`WEB_PDF_UNREADABLE`、`WEB_PDF_UNAVAILABLE`、`WEB_ABORTED` 或 `WEB_PROVIDER_ERROR`。`WEB_UNSUPPORTED_CONTENT_TYPE` 涵盖不支持的媒体类型、不支持的 charset 声明，以及畸形声明恢复过程中遇到的非法 UTF-8。`WEB_PDF_UNREADABLE` 涵盖损坏、加密或不支持的 PDF；PDF 提取 Worker 的故障是 `WEB_PROVIDER_ERROR`。`WEB_PDF_UNAVAILABLE` 表示该构建不含提取引擎：打包的 Python runtime wheel 就是如此，其错误信息会指出应改用 Node 或桌面发行版。内容编码层数过多且正文不完整的响应会以 `WEB_PROVIDER_ERROR` 失败，不会终止宿主进程。直接调用方可以按错误码路由；面向模型的 `web_fetch` 工具会在自己的错误包装层内把失败文本呈现给模型。
 
 -----
 
@@ -140,6 +140,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 - **可以访问私有目标**——loopback、内网与云元数据地址与其他主机一样会被抓取。需要阻止模型访问这些地址的部署必须添加 `tools/pre-execute` 策略、网络隔离，或不挂载抓取工具。
 - **只解码文本内容**——包括 html/xhtml、`text/*` 加 JSON/XML 家族，以及可提取文本的 PDF；缺少 `Content-Type` 或任何其他二进制类型都会抛出 `WEB_UNSUPPORTED_CONTENT_TYPE`。扫描版 PDF 没有文本层，提取会返回空页，OCR 不在范围内。
+- **打包的 Python runtime 不含 PDF 引擎**——为满足 PyPI 单文件大小上限，runtime wheel 省略了 `pdfjs-dist`，因此其中的 PDF 抓取会以 `WEB_PDF_UNAVAILABLE` 失败；非 PDF 抓取不受影响。Node 与桌面发行版包含该引擎。
 - **PDF.js 解析是严格的**——`stopAtErrors` 会让结构损坏的文档以 `WEB_PDF_UNREADABLE` 失败，而不是恢复出部分页面，运维可以据此把它与被截断的响应区分开。
 - **响应 MIME 类型决定 PDF 处理**——只有 `application/pdf` 会选择文本提取；以其他类型（例如 `application/octet-stream`）提供的 PDF 仍会以 `WEB_UNSUPPORTED_CONTENT_TYPE` 失败。
 - **大 PDF 仍受字节上限约束**——超过 `maxResponseBytes`（默认 5,000,000 字节）的 PDF 会以 `WEB_FETCH_TOO_LARGE` 失败，而不是返回部分文档；需要抓取大型论文的部署应提高该上限。

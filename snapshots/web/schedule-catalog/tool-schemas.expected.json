@@ -826,7 +826,7 @@
     },
     {
       "name": "web_fetch",
-      "description": "Fetch the content of a specific HTTP(S) URL and return it decoded to text.",
+      "description": "Fetch the content of a specific HTTP(S) URL and return it decoded to text. PDF pages are extracted as text; a scanned PDF without a text layer returns no text and needs OCR.",
       "parameters": {
         "type": "object",
         "properties": {

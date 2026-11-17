@@ -14,7 +14,7 @@ class FakeWorker extends EventEmitter {
 
 vi.mock('node:worker_threads', () => ({ Worker: FakeWorker }))
 
-const { extractPdfInWorker, PdfDocumentError } = await import('../src/pdf-thread.ts')
+const { extractPdfInWorker, PdfDocumentError, PdfExtractionUnavailableError } = await import('../src/pdf-thread.ts')
 
 afterEach(() => { workers.length = 0 })
 
@@ -66,6 +66,13 @@ it('reports a password-protected document as a document error naming the passwor
   worker.emit('message', { ok: false, message: 'No password given' })
   await expect(result).rejects.toBeInstanceOf(PdfDocumentError)
   await expect(result).rejects.toThrow('No password given')
+})
+
+it('reports a Worker without the extraction engine as unavailable, not as a document failure', async () => {
+  const { result, worker } = start()
+  worker.emit('message', { ok: false, code: 'unavailable', message: 'PDF extraction is not included in this packaged runtime' })
+  await expect(result).rejects.toBeInstanceOf(PdfExtractionUnavailableError)
+  await expect(result).rejects.toThrow('not included in this packaged runtime')
 })
 
 it.each([

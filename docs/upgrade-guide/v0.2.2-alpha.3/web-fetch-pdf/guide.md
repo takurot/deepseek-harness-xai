@@ -10,7 +10,7 @@ English | [中文](guide.zh.md)
 
 `@deepseek-ai/dsh-web-fetch-http` used to reject an `application/pdf` response with `WEB_UNSUPPORTED_CONTENT_TYPE`. It now extracts the page text in a Worker Thread and returns a `WebFetchResult` whose `body` is the new `pdf` arm: `{ kind: 'pdf', content, pageCount, pagesExtracted }`. `content` joins page text with U+000C FORM FEED. `maxPdfPages` (default `50`) bounds extracted pages, `maxBodyChars` also bounds the extracted text, and `truncated` reports either cut. A scanned PDF returns empty page spans, and OCR remains out of scope.
 
-A response over `maxResponseBytes` fails as `WEB_FETCH_TOO_LARGE` instead of returning a partial document, and a corrupt, encrypted, or unsupported PDF fails as `WEB_PDF_UNREADABLE`. A failure inside the extraction Worker is `WEB_PROVIDER_ERROR`.
+A response over `maxResponseBytes` fails as `WEB_FETCH_TOO_LARGE` instead of returning a partial document, and a corrupt, encrypted, or unsupported PDF fails as `WEB_PDF_UNREADABLE`. A failure inside the extraction Worker is `WEB_PROVIDER_ERROR`, and a build without the engine reports `WEB_PDF_UNAVAILABLE`: the packaged Python runtime wheel omits it to stay under PyPI's per-file size limit, so PDFs there need the Node or desktop distribution.
 
 Code affected by the change: external TypeScript consumers of the published `WebFetchBody` type whose exhaustive `switch` ends in `assertNever` must handle the `pdf` arm, and callers that pass `HttpFetchLimits` must supply `maxPdfPages`. Model-facing tool users need no change.
 

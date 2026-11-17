@@ -1,6 +1,6 @@
 /** Worker Thread entry that extracts one PDF document's text and posts the result to its parent. */
 import { parentPort, workerData } from 'node:worker_threads'
-import { extractPdfText, type PdfExtractionLimits } from './pdf-extract.ts'
+import { extractPdfText, PdfExtractionUnavailableError, type PdfExtractionLimits } from './pdf-extract.ts'
 
 interface PdfWorkerRequest extends PdfExtractionLimits {
   readonly data: Uint8Array
@@ -24,7 +24,11 @@ async function extractAndReport(value: PdfWorkerRequest): Promise<void> {
       ...await extractPdfText(value.data, { maxPages: value.maxPages, maxChars: value.maxChars }),
     })
   } catch (error) {
-    parentPort?.postMessage({ ok: false, message: error instanceof Error ? error.message : String(error) })
+    parentPort?.postMessage({
+      ok: false,
+      code: error instanceof PdfExtractionUnavailableError ? 'unavailable' : 'document',
+      message: error instanceof Error ? error.message : String(error),
+    })
   }
 }
 
