@@ -66,7 +66,7 @@ A query's failure costs only its own result: the call returns the successful que
 
 ### Using web_fetch
 
-Call `web_fetch` with one `url`. HTML bodies are filtered and rendered to markdown (GFM tables and strikethrough included); text bodies pass through under an untrusted-content notice. A non-2xx status is reported in the result, not thrown as an error. Truncated content appends `(Content truncated. Fetch a more specific URL or section for the full text.)`.
+Call `web_fetch` with one `url`. HTML bodies are filtered and rendered to markdown (GFM tables and strikethrough included); text bodies pass through under an untrusted-content notice. PDF bodies render as `[Page N of <total>]` blocks using the document's own page numbers; a page-limit notice leads when the provider extracted fewer pages, a fixed no-text notice replaces the body when no page carries text, and a cap too small for one page block returns only the header and truncation footer. A non-2xx status is reported in the result, not thrown as an error. Truncated content appends `(Content truncated. Fetch a more specific URL or section for the full text.)`.
 
 ```text
 web_fetch({ url: 'https://example.com' })

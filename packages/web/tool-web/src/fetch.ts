@@ -320,8 +320,9 @@ interface RenderedFetch {
    * True when the provider capped the body, a pre-conversion source cut applied,
    * or the complete output exceeded `maxOutputChars`. This is the effective
    * truncation, wider than the provider-only `WebFetchResult.truncated`. A
-   * text-free PDF can report true without the footer because no retrieval can
-   * recover its text.
+   * text-free PDF, or a provider that reports fewer extracted pages without its
+   * truncation flag, can report true without the footer because the text itself
+   * states the omission.
    */
   truncated: boolean
 }
