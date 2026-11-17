@@ -240,11 +240,16 @@ function pdfPageCutNotice(shown: number, pageCount: number): string {
   return `[PDF: first ${shown} of ${pageCount} pages extracted.]`
 }
 
+/** Split seam PDF content into trimmed page spans. */
+function pdfPageTexts(content: string): string[] {
+  return content.split(WEB_FETCH_PDF_PAGE_SEPARATOR).map(text => text.trim())
+}
+
 /**
  * Render page blocks that fit a character budget. Every page span counts as
  * consumed, including a text-free one, so a trailing blank page never looks
  * like a cut. A block that cannot fit is included only when the budget holds
- * its complete marker plus at least one text character.
+ * its complete marker, its newline, and at least one text character.
  */
 function renderPdfBlocks(
   pageTexts: readonly string[],
@@ -264,7 +269,7 @@ function renderPdfBlocks(
     const marker = `[Page ${index + 1} of ${pageCount}]`
     if (length + separator + block.length > budget) {
       const remaining = budget - length - separator
-      if (remaining >= marker.length + 1) {
+      if (remaining >= marker.length + 2) {
         blocks.push(block.slice(0, remaining))
         consumed = index + 1
       }
@@ -278,29 +283,6 @@ function renderPdfBlocks(
 }
 
 /**
- * Render extracted PDF text with document page markers. Page numbers are the
- * document's own, so a page without text leaves a gap rather than renumbering.
- * The leading notice reports the page spans present after any output-cap cut,
- * and a document with no text on any page states that explicitly instead of
- * rendering empty markers.
- *
- * @param body - the seam's `pdf` body.
- * @returns the complete rendered text and whether it carries no text.
- */
-function renderPdfText(body: Extract<WebFetchBody, { kind: 'pdf' }>): Pick<RenderedBody, 'text' | 'noText'> {
-  const pageTexts = body.content.split(WEB_FETCH_PDF_PAGE_SEPARATOR).map(text => text.trim())
-  if (!pageTexts.some(text => text !== '')) {
-    const shown = Math.min(body.pagesExtracted, pageTexts.length)
-    const scope = shown < body.pageCount ? `in the first ${shown} of ${body.pageCount} pages` : 'in this PDF'
-    return { text: `[PDF: no extractable text found ${scope}. It may be a scanned document; OCR is not supported.]`, noText: true }
-  }
-  const pageLimit = Math.min(body.pagesExtracted, pageTexts.length)
-  const blocks = renderPdfBlocks(pageTexts.slice(0, pageLimit), body.pageCount, Number.MAX_SAFE_INTEGER)
-  const notice = blocks.consumed < body.pageCount ? pdfPageCutNotice(blocks.consumed, body.pageCount) : ''
-  return { text: `${notice === '' ? '' : `${notice}\n\n`}${blocks.text}` }
-}
-
-/**
  * Render a fetched body to model-facing markdown text.
  *
  * @param body - the decoded body; `html` is converted via turndown, `text`
@@ -310,7 +292,7 @@ function renderPdfText(body: Extract<WebFetchBody, { kind: 'pdf' }>): Pick<Rende
  *   beyond {@link MAX_CONVERSION_DEPTH} or rejected by turndown is omitted so
  *   raw active markup never reaches the model-facing result.
  */
-function renderBody(body: WebFetchBody, maxInputChars: number): RenderedBody {
+function renderBody(body: Exclude<WebFetchBody, { kind: 'pdf' }>, maxInputChars: number): RenderedBody {
   const content = body.content.slice(0, maxInputChars)
   const sourceTruncated = content.length !== body.content.length
   switch (body.kind) {
@@ -326,9 +308,7 @@ function renderBody(body: WebFetchBody, maxInputChars: number): RenderedBody {
       }
     case 'text':
       return { text: content, sourceTruncated }
-    case 'pdf':
-      return { ...renderPdfText({ ...body, content }), sourceTruncated }
-    /* v8 ignore next 2 -- WebFetchBody is a closed union; this arm is unreachable and only makes adding a kind a compile error. */
+    /* v8 ignore next 2 -- the renderable union is closed; this arm only makes adding a kind a compile error. */
     default:
       return assertNever(body, 'unhandled web fetch body kind')
   }
@@ -344,8 +324,9 @@ interface RenderedFetch {
   /**
    * True when the provider capped the body, a pre-conversion source cut applied,
    * or the complete output exceeded `maxOutputChars`. This is the effective
-   * truncation the returned text reflects (its footer), wider than the
-   * provider-only `WebFetchResult.truncated`.
+   * truncation, wider than the provider-only `WebFetchResult.truncated`. A
+   * text-free PDF can report true without the footer because no retrieval can
+   * recover its text.
    */
   truncated: boolean
 }
@@ -400,8 +381,7 @@ const renderCache = new WeakMap<WebFetchResult, Map<number, RenderedFetch>>()
  */
 function computeFetchOutput(result: WebFetchResult, maxOutputChars: number): RenderedFetch {
   const header = `Fetched ${result.url} (HTTP ${result.statusCode})\n\n${EXTERNAL_WEB_CONTENT_NOTICE}\n\n`
-  const pdf = computePdfFetchOutput(result, header, maxOutputChars)
-  if (pdf !== undefined) return pdf
+  if (result.body.kind === 'pdf') return computePdfFetchOutput(result.body, result.truncated, header, maxOutputChars)
   const rendered = renderBody(result.body, maxOutputChars)
   const prefix = `${header}${rendered.text}`
   const truncated = result.truncated || rendered.sourceTruncated || prefix.length > maxOutputChars
@@ -424,22 +404,26 @@ function computeFetchOutput(result: WebFetchResult, maxOutputChars: number): Ren
  * @param maxOutputChars - cap on the complete returned string.
  * @returns the bounded text and effective truncation, or undefined for a tiny cap.
  */
-function computePdfFetchOutput(result: WebFetchResult, header: string, maxOutputChars: number): RenderedFetch | undefined {
-  if (result.body.kind !== 'pdf') return undefined
-  const body = result.body
-  const pageTexts = body.content.split(WEB_FETCH_PDF_PAGE_SEPARATOR).map(text => text.trim())
+function computePdfFetchOutput(body: Extract<WebFetchBody, { kind: 'pdf' }>, providerTruncated: boolean, header: string, maxOutputChars: number): RenderedFetch {
+  const pageTexts = pdfPageTexts(body.content)
+  /** Header plus footer only, for a cap that cannot fit one page block. */
+  const minimal = (): RenderedFetch => {
+    const base = `${header}${TRUNCATION_FOOTER}`
+    return { text: base.length <= maxOutputChars ? base : base.slice(0, maxOutputChars), truncated: true }
+  }
   if (!pageTexts.some(text => text !== '')) {
-    const rendered = renderPdfText(body)
-    const text = `${header}${rendered.text}`
+    const shown = Math.min(body.pagesExtracted, pageTexts.length)
+    const scope = shown < body.pageCount ? `in the first ${shown} of ${body.pageCount} pages` : 'in this PDF'
+    const text = `${header}[PDF: no extractable text found ${scope}. It may be a scanned document; OCR is not supported.]`
     return {
       text: text.length <= maxOutputChars ? text : text.slice(0, maxOutputChars),
-      truncated: result.truncated || text.length > maxOutputChars,
+      truncated: providerTruncated || text.length > maxOutputChars,
     }
   }
   const available = Math.min(body.pagesExtracted, pageTexts.length)
   // Phase one: a provider that did not cut may still fit entirely, so render
   // without reserving the footer and keep the exact text when every page fits.
-  if (!result.truncated) {
+  if (!providerTruncated) {
     const plain = renderPdfBlocks(pageTexts.slice(0, available), body.pageCount, maxOutputChars - header.length)
     if (!plain.cut) {
       const notice = plain.consumed < body.pageCount ? pdfPageCutNotice(plain.consumed, body.pageCount) : ''
@@ -453,12 +437,14 @@ function computePdfFetchOutput(result: WebFetchResult, header: string, maxOutput
   for (;;) {
     const notice = limit < body.pageCount ? pdfPageCutNotice(limit, body.pageCount) : ''
     const budget = maxOutputChars - header.length - (notice === '' ? 0 : notice.length + 2) - TRUNCATION_FOOTER.length
-    if (budget <= 0) return undefined
+    if (budget <= 0) return minimal()
     const blocks = renderPdfBlocks(pageTexts.slice(0, limit), body.pageCount, budget)
-    if (blocks.consumed === 0) return undefined
+    // Only leading text-free spans fit; a notice without a block would claim
+    // pages the body does not show.
+    if (blocks.text === '') return minimal()
     const text = `${header}${notice === '' ? '' : `${notice}\n\n`}${blocks.text}${TRUNCATION_FOOTER}`
     if (blocks.consumed === limit && text.length <= maxOutputChars) {
-      return { text, truncated: result.truncated || blocks.cut || blocks.consumed < pageTexts.length }
+      return { text, truncated: providerTruncated || blocks.cut || blocks.consumed < pageTexts.length }
     }
     limit = blocks.consumed
   }
