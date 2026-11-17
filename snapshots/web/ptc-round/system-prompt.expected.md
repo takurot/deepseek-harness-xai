@@ -1514,6 +1514,11 @@ interface ToolOutputMap {
     } | {
       kind: "text";
       content: string;
+    } | {
+      kind: "pdf";
+      content: string;
+      pageCount: number;
+      pagesExtracted: number;
     };
     truncated: boolean;
   };
