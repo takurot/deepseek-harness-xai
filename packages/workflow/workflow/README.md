@@ -29,7 +29,7 @@ Run a workflow when a task decomposes into many independent pieces that one scri
 
 ### The model-facing path
 
-The model reaches the capability through the `workflow` tool from `dsh-tool-workflow`, which owns the call schema and result envelope; the engine supplies the execution underneath. A tool call submits `meta`, `script`, and optional `args` and returns `{ runId, agentsStarted, result }` when the run completes. The tool blocks the parent turn until the whole workflow settles, so the model sees one final outcome, never intermediate child messages.
+The model reaches the capability through the `workflow` tool from `dsh-tool-workflow`, which owns the call schema and result envelope; the engine supplies the execution underneath. A tool call submits `meta`, `script`, optional `args`, and `run_in_background`. A foreground call returns `{ kind: 'foreground', runId, agentsStarted, result }` when the run completes and blocks the parent turn until the whole workflow settles, so the model sees one final outcome, never intermediate child messages. A background call returns `{ kind: 'background', jobId, runId }` immediately, and that job's settlement owns its result.
 
 ### Running a workflow script
 
@@ -123,7 +123,7 @@ No direct invalidation; the named consumer and engine own any request-prefix cha
 
 These limits define what the capability does not yet support. They are current constraints, not a task backlog.
 
-- **Foreground collection only** — the caller owns one live run and awaits it; background start/poll, spill handles, and detached collection are deferred.
+- **No background start/poll API on the seam** — `ctx.workflowEngine.start()` returns one holder-owned run; background execution is a behavior of the model-facing consumer, not a seam operation.
 - **No journaling or resume** — scripts, child progress, and intermediate values are not checkpointed, so a process restart cannot continue a run.
 - **No saved or nested workflows** — the capability starts caller-supplied scripts only, and a workflow script receives no `workflow()` hook for recursive orchestration.
 - **No token-budget vocabulary** — engines cap concurrency, items, and children, but neither the request nor the result accounts for model tokens across children.
@@ -137,6 +137,6 @@ These limits define what the capability does not yet support. They are current c
 
 This Dev Note is working context for maintainers: open directions that are not decided. It is explicitly non-authoritative — shipped behavior, limits, and accepted rationale live in the sections above, the package code, and the linked Agent Notes.
 
-Deferred directions: a background start/poll API with spill handles and detached collection; saved and nested workflows; and a token-budget vocabulary across children.
+Deferred directions: spill handles and detached collection; saved and nested workflows; and a token-budget vocabulary across children.
 
 </details>
