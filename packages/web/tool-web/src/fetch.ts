@@ -228,11 +228,6 @@ interface RenderedBody {
   text: string
   /** Whether the source was cut before conversion to bound synchronous work. */
   sourceTruncated: boolean
-  /**
-   * The body carries no usable text at all, so a generic "fetch a narrower
-   * section" truncation footer would advise a remedy the document cannot offer.
-   */
-  noText?: boolean
 }
 
 /** The page-cut notice for a rendered prefix ending at page `shown`. */
@@ -385,8 +380,7 @@ function computeFetchOutput(result: WebFetchResult, maxOutputChars: number): Ren
   const rendered = renderBody(result.body, maxOutputChars)
   const prefix = `${header}${rendered.text}`
   const truncated = result.truncated || rendered.sourceTruncated || prefix.length > maxOutputChars
-  // A text-free PDF cannot honor the footer's "fetch a narrower section" advice.
-  const footer = truncated && rendered.noText !== true ? TRUNCATION_FOOTER : ''
+  const footer = truncated ? TRUNCATION_FOOTER : ''
   const full = `${prefix}${footer}`
   if (full.length <= maxOutputChars) return { text: full, truncated }
   if (maxOutputChars < footer.length) return { text: full.slice(0, maxOutputChars), truncated }
@@ -395,14 +389,14 @@ function computeFetchOutput(result: WebFetchResult, maxOutputChars: number): Ren
 
 /**
  * Render a PDF body whose page-cut notice reflects the pages the final text
- * actually shows, including a cut made by the complete-output cap. Returns
- * `undefined` for a budget too small to hold the header and one block, so the
- * shared capped-render path can slice the text instead.
+ * actually shows, including a cut made by the complete-output cap. A cap that
+ * cannot hold one page block degrades to the header and truncation footer.
  *
- * @param result - the seam's fetch outcome.
+ * @param body - the seam's `pdf` body.
+ * @param providerTruncated - the provider's own truncation flag.
  * @param header - the fixed `Fetched …` plus untrusted-content header.
  * @param maxOutputChars - cap on the complete returned string.
- * @returns the bounded text and effective truncation, or undefined for a tiny cap.
+ * @returns the bounded text and effective truncation.
  */
 function computePdfFetchOutput(body: Extract<WebFetchBody, { kind: 'pdf' }>, providerTruncated: boolean, header: string, maxOutputChars: number): RenderedFetch {
   const pageTexts = pdfPageTexts(body.content)
@@ -428,7 +422,7 @@ function computePdfFetchOutput(body: Extract<WebFetchBody, { kind: 'pdf' }>, pro
     if (!plain.cut) {
       const notice = plain.consumed < body.pageCount ? pdfPageCutNotice(plain.consumed, body.pageCount) : ''
       const text = `${header}${notice === '' ? '' : `${notice}\n\n`}${plain.text}`
-      if (text.length <= maxOutputChars) return { text, truncated: false }
+      if (text.length <= maxOutputChars) return { text, truncated: plain.consumed < body.pageCount }
     }
   }
   // Phase two: reserve the footer and shrink the page budget until the notice

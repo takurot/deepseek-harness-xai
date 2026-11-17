@@ -436,6 +436,7 @@ describe('fetch formatting', () => {
       body: { kind: 'pdf' as const, content: 'One', pageCount: 2, pagesExtracted: 1 },
     }
     expect(formatFetchOutput(value, NO_CAP)).toContain('[PDF: first 1 of 2 pages extracted.]')
+    expect((fetchMetaFromValue(value, NO_CAP) as { truncated: boolean }).truncated).toBe(true)
     const tight = formatFetchOutput(value, HEADER.length + '[Page 1 of 2]\nOne'.length)
     expect(tight.length).toBeLessThanOrEqual(HEADER.length + '[Page 1 of 2]\nOne'.length)
   })

@@ -66,7 +66,7 @@ web_search({ queries: ['deepseek harness documentation'] })
 
 ### 使用 web_fetch
 
-用一个 `url` 调用 `web_fetch`。HTML 主体经过过滤后渲染为 markdown（含 GFM 表格与删除线）；文本主体在不可信内容提示下原样通过。非 2xx 状态会在结果中报告，而不是作为错误抛出。PDF 正文按文档自身的页码格式化为 `[Page N of <total>]` 区块；提供方提取的页数较少时先给出页数上限提示，任何页面都没有文本时给出固定的无文本提示。截断内容会追加 `(Content truncated. Fetch a more specific URL or section for the full text.)`。
+用一个 `url` 调用 `web_fetch`。HTML 主体经过过滤后渲染为 markdown（含 GFM 表格与删除线）；文本主体在不可信内容提示下原样通过。非 2xx 状态会在结果中报告，而不是作为错误抛出。PDF 正文按文档自身的页码格式化为 `[Page N of <total>]` 区块；提供方提取的页数较少时先给出页数上限提示，任何页面都没有文本时给出固定的无文本提示。上限小到放不下一个页面区块时，只返回抓取标头与截断页脚。截断内容会追加 `(Content truncated. Fetch a more specific URL or section for the full text.)`。
 
 ```text
 web_fetch({ url: 'https://example.com' })
