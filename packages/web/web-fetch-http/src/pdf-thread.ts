@@ -1,17 +1,14 @@
 /** Runs PDF.js text extraction in a fresh Worker Thread, so a hostile document cannot block the Host event loop. */
 import { Worker } from 'node:worker_threads'
 import type { PdfExtraction, PdfExtractionLimits } from './pdf-extract.ts'
+import { PdfDocumentError, PdfEngineLoadError, PdfExtractionUnavailableError } from './pdf-errors.ts'
 
 /** What the Worker receives: the complete document and its bounds. */
 interface PdfWorkerRequest extends PdfExtractionLimits {
   readonly data: Uint8Array
 }
 
-/** A Worker-reported PDF.js rejection: the document itself could not be extracted. */
-export class PdfDocumentError extends Error {}
-
-/** This build does not include the PDF extraction engine. */
-export class PdfExtractionUnavailableError extends Error {}
+export { PdfDocumentError, PdfEngineLoadError, PdfExtractionUnavailableError } from './pdf-errors.ts'
 
 /**
  * The Worker entry and its loader arguments: the bundled sibling in a built
@@ -54,7 +51,9 @@ function workerOutcome(worker: Worker): Promise<PdfExtraction> {
   return new Promise((resolve, reject) => {
     worker.once('message', (value: unknown) => {
       if (isDocumentFailure(value)) {
-        reject(value.code === 'unavailable' ? new PdfExtractionUnavailableError(value.message) : new PdfDocumentError(value.message))
+        if (value.code === 'unavailable') reject(new PdfExtractionUnavailableError(value.message))
+        else if (value.code === 'engine') reject(new PdfEngineLoadError(value.message))
+        else reject(new PdfDocumentError(value.message))
       }
       else if (isExtraction(value)) resolve(value)
       else reject(new Error('PDF extractor reported an unexpected value'))

@@ -300,8 +300,11 @@ class SingleExeBuild {
     if (this.staging === root || root.startsWith(this.staging + sep)) {
       throw new Error(`build-exe-for-python-sdk: refusing to clear staging dir ${this.staging}: it contains the repo root.`)
     }
-    if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] rm -rf ${this.staging}`)
-    else await rm(this.staging, { recursive: true, force: true })
+    // Clear the whole generated runtime tree: it lives inside the deployed
+    // Python package, so leaving an earlier build there would copy it into the
+    // staging closure and inflate the executable.
+    if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] rm -rf ${resolve(root, PYTHON_RUNTIME_DIR)}`)
+    else await rm(resolve(root, PYTHON_RUNTIME_DIR), { recursive: true, force: true })
     await this.runPnpm('deploy', [
       '--filter',
       DEPLOY_ROOT_PACKAGE,
@@ -319,8 +322,25 @@ class SingleExeBuild {
     // PDF extraction would add a 13.7 MB engine and push the runtime wheel past
     // PyPI's per-file limit; the packaged runtime reports WEB_PDF_UNAVAILABLE.
     // Node and desktop distributions keep the dependency.
-    if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] rm -rf ${join(this.staging, 'node_modules', 'pdfjs-dist')}`)
-    else await rm(join(this.staging, 'node_modules', 'pdfjs-dist'), { recursive: true, force: true })
+    const prunedRuntimePatterns = [
+      // The engine itself, including the virtual-store copy.
+      'node_modules/**/pdfjs-dist',
+      // PDF.js's optional native canvas is installed because the dependency is
+      // production-scoped; text extraction never renders a page.
+      'node_modules/@napi-rs/canvas*',
+    ]
+    if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] rm -rf ${prunedRuntimePatterns.join(', ')}`)
+    else {
+      for (const pattern of prunedRuntimePatterns) {
+        for await (const path of glob(pattern, { cwd: this.staging })) {
+          await rm(join(this.staging, path), { recursive: true, force: true })
+        }
+        const remaining = await Array.fromAsync(glob(pattern, { cwd: this.staging }))
+        if (remaining.length > 0) {
+          throw new Error(`build-exe-for-python-sdk: ${pattern} remains in the staged runtime: ${remaining.join(', ')}`)
+        }
+      }
+    }
     if (this.cli.dryRun) {
       for (const name of DEPLOY_ONLY_DOCS) console.log(`build-exe-for-python-sdk: [dry-run] rm -f ${join(this.staging, name)}`)
     } else {

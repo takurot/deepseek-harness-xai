@@ -6,29 +6,32 @@ import { HttpFetchProvider } from '@deepseek-ai/dsh-web-fetch-http'
 import type { HttpFetchLimits } from '@deepseek-ai/dsh-web-fetch-http'
 import { corruptPdfBytes } from './fixtures/pdf.ts'
 
-type Mode = 'abort' | 'timeout' | 'worker-failure' | 'unavailable'
+type Mode = 'abort' | 'timeout' | 'worker-failure' | 'unavailable' | 'engine-failure'
 
 const state = vi.hoisted(() => ({ mode: 'worker-failure' as Mode, controller: undefined as AbortController | undefined }))
 
-vi.mock('../src/pdf-thread.ts', () => ({
-  PdfDocumentError: class PdfDocumentError extends Error {},
-  PdfExtractionUnavailableError: class PdfExtractionUnavailableError extends Error {},
-  extractPdfInWorker: async () => {
-    if (state.mode === 'unavailable') {
-      const { PdfExtractionUnavailableError } = await import('../src/pdf-thread.ts')
-      throw new PdfExtractionUnavailableError('PDF extraction is not included in this packaged runtime')
-    }
-    if (state.mode === 'abort') {
-      state.controller?.abort(new Error('aborted by test'))
-      throw new Error('aborted by test')
-    }
-    if (state.mode === 'timeout') {
-      await new Promise(resolve => setTimeout(resolve, 200))
-      throw new Error('late extraction failure')
-    }
-    throw new Error('worker crashed')
-  },
-}))
+vi.mock('../src/pdf-thread.ts', async () => {
+  const { PdfEngineLoadError, PdfExtractionUnavailableError } = await import('../src/pdf-errors.ts')
+  return {
+    extractPdfInWorker: async () => {
+      if (state.mode === 'engine-failure') {
+        throw new PdfEngineLoadError('PDF extraction engine failed to load: bad module')
+      }
+      if (state.mode === 'unavailable') {
+        throw new PdfExtractionUnavailableError('PDF extraction is not included in this packaged runtime')
+      }
+      if (state.mode === 'abort') {
+        state.controller?.abort(new Error('aborted by test'))
+        throw new Error('aborted by test')
+      }
+      if (state.mode === 'timeout') {
+        await new Promise(resolve => setTimeout(resolve, 200))
+        throw new Error('late extraction failure')
+      }
+      throw new Error('worker crashed')
+    },
+  }
+})
 
 const { WebError } = await import('@deepseek-ai/dsh-web')
 
@@ -65,6 +68,15 @@ describe('PDF extraction bridge failures', () => {
       .rejects.toThrow(expect.objectContaining({
         code: 'WEB_PDF_UNAVAILABLE',
         message: 'this packaged runtime does not include PDF extraction; use the Node or desktop distribution',
+      }))
+  })
+
+  it('maps an engine load failure to WEB_PROVIDER_ERROR with the engine message', async () => {
+    state.mode = 'engine-failure'
+    await expect(new HttpFetchProvider(limits).fetch({ url: base }))
+      .rejects.toThrow(expect.objectContaining({
+        code: 'WEB_PROVIDER_ERROR',
+        message: 'PDF extraction engine failed to load: bad module',
       }))
   })
 

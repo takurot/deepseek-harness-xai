@@ -12,7 +12,8 @@ import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { Response } from 'undici'
 import { classifyContentType, decoderForCharset, decoderForHtml, isSameOrigin, parseCharset, validateFetchUrl } from './policy.ts'
 import type { PdfExtraction } from './pdf-extract.ts'
-import { extractPdfInWorker, PdfDocumentError, PdfExtractionUnavailableError } from './pdf-thread.ts'
+import { PdfDocumentError, PdfEngineLoadError, PdfExtractionUnavailableError } from './pdf-errors.ts'
+import { extractPdfInWorker } from './pdf-thread.ts'
 
 /** Resolved provider limits (the plugin's schemastery Config supplies defaults). */
 export interface HttpFetchLimits {
@@ -201,6 +202,9 @@ export class HttpFetchProvider implements WebFetchProvider {
           'WEB_PDF_UNAVAILABLE',
           { cause: error },
         )
+      }
+      if (error instanceof PdfEngineLoadError) {
+        throw new WebError(error.message, 'WEB_PROVIDER_ERROR', { cause: error })
       }
       if (error instanceof PdfDocumentError) {
         throw new WebError(

@@ -11,6 +11,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import { WEB_FETCH_PDF_PAGE_SEPARATOR } from '@deepseek-ai/dsh-web'
+import { PdfEngineLoadError, PdfExtractionUnavailableError } from './pdf-errors.ts'
 
 /** One extraction's bounds, applied to the joined page text. */
 export interface PdfExtractionLimits {
@@ -20,20 +21,47 @@ export interface PdfExtractionLimits {
   readonly maxChars: number
 }
 
-/** Raised when this build does not ship the PDF extraction engine. */
-export class PdfExtractionUnavailableError extends Error {}
-
 /** The extraction engine, loaded on first use so a packaged build without it can report a typed failure. */
 let engine: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | undefined
 
 /** Load PDF.js once; a build that omits the dependency fails with {@link PdfExtractionUnavailableError}. */
 function loadEngine(): Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> {
-  engine ??= import('pdfjs-dist/legacy/build/pdf.mjs').catch((_error: unknown) => {
-    // This packaged-runtime build does not include PDF.js; the provider turns
-    // the class into a typed, actionable WebError.
-    throw new PdfExtractionUnavailableError('PDF extraction is not included in this packaged runtime')
-  })
+  engine ??= initializeEngine()
   return engine
+}
+
+/** Resolve the installed package, then load it; absence and breakage are distinct failures. */
+async function initializeEngine(): Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> {
+  try {
+    createRequire(import.meta.url).resolve('pdfjs-dist/package.json')
+  } catch (error: unknown) {
+    // A build that omits the dependency is the expected packaged-runtime case;
+    // any other resolution failure is a broken install, not an absent feature.
+    if (isResolutionFailure(error)) {
+      throw new PdfExtractionUnavailableError('PDF extraction is not included in this packaged runtime', { cause: error })
+    }
+    throw engineLoadFailure(error)
+  }
+  try {
+    return await import('pdfjs-dist/legacy/build/pdf.mjs')
+  } catch (error: unknown) {
+    /* v8 ignore next -- an installed engine whose import itself rejects needs a corrupt package. */
+    throw engineLoadFailure(error)
+  }
+}
+
+/** Whether resolving the package failed because it is not installed. */
+function isResolutionFailure(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error
+    && (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'MODULE_NOT_FOUND')
+}
+
+/** Wrap an installed-but-broken engine failure with the original cause. */
+function engineLoadFailure(error: unknown): PdfEngineLoadError {
+  return new PdfEngineLoadError(
+    `PDF extraction engine failed to load: ${error instanceof Error ? error.message : String(error)}`,
+    { cause: error },
+  )
 }
 
 /** Extracted PDF text with the page accounting the seam exposes. */
