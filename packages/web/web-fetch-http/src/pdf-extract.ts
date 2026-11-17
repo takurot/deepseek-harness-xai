@@ -35,12 +35,8 @@ async function initializeEngine(): Promise<typeof import('pdfjs-dist/legacy/buil
   try {
     createRequire(import.meta.url).resolve('pdfjs-dist/package.json')
   } catch (error: unknown) {
-    // A build that omits the dependency is the expected packaged-runtime case;
-    // any other resolution failure is a broken install, not an absent feature.
-    if (isResolutionFailure(error)) {
-      throw new PdfExtractionUnavailableError('PDF extraction is not included in this packaged runtime', { cause: error })
-    }
-    throw engineLoadFailure(error)
+    /* v8 ignore next -- the packaged runtime omits the package; its classification is unit-tested below. */
+    throw engineLoadError(error)
   }
   try {
     return await import('pdfjs-dist/legacy/build/pdf.mjs')
@@ -48,6 +44,20 @@ async function initializeEngine(): Promise<typeof import('pdfjs-dist/legacy/buil
     /* v8 ignore next -- an installed engine whose import itself rejects needs a corrupt package. */
     throw engineLoadFailure(error)
   }
+}
+
+/**
+ * Classify a failed engine resolution: an absent package is the packaged build
+ * without the feature, while any other failure is a broken installed engine.
+ *
+ * @param error - the rejection from resolving or importing PDF.js.
+ * @returns the typed missing-engine or broken-engine error, preserving the cause.
+ */
+export function engineLoadError(error: unknown): PdfExtractionUnavailableError | PdfEngineLoadError {
+  if (isResolutionFailure(error)) {
+    return new PdfExtractionUnavailableError('PDF extraction is not included in this packaged runtime', { cause: error })
+  }
+  return engineLoadFailure(error)
 }
 
 /** Whether resolving the package failed because it is not installed. */

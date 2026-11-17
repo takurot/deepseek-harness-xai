@@ -335,7 +335,8 @@ class SingleExeBuild {
         for await (const path of glob(pattern, { cwd: this.staging })) {
           await rm(join(this.staging, path), { recursive: true, force: true })
         }
-        const remaining = await Array.fromAsync(glob(pattern, { cwd: this.staging }))
+        const remaining: string[] = []
+        for await (const path of glob(pattern, { cwd: this.staging })) remaining.push(path)
         if (remaining.length > 0) {
           throw new Error(`build-exe-for-python-sdk: ${pattern} remains in the staged runtime: ${remaining.join(', ')}`)
         }

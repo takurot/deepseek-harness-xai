@@ -33,6 +33,7 @@ interface WebSource {
 interface WebSearchQueryFailure {
   query: string
   code: string
+}
 
 /** Validate the persisted PDF page accounting; `undefined` means the body was not a PDF. */
 function webPdf(value: unknown): { pageCount: number; pagesExtracted: number } | undefined | null {
