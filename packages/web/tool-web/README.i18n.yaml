@@ -24,8 +24,8 @@
   en: 64f406c13623a5e4
   zh: 79df236295b8c577
 /deepseek-ai-dsh-tool-web/use-this-package/using-web-search:
-  en: 6bc6e7c3bdb13862
-  zh: e4fc9b4921467368
+  en: b5b1ae2b21fa9b69
+  zh: cd5d40e24d32302a
 /deepseek-ai-dsh-tool-web/use-this-package/using-web-fetch:
   en: 402540da7e990147
   zh: 1adbbcc261777b30
@@ -48,8 +48,8 @@
   en: 72bef08cbfa2f3a7
   zh: 0d504871abaf3cb2
 /deepseek-ai-dsh-tool-web/understand-the-implementation/search-flow:
-  en: 80b7de753fe6b0de
-  zh: 09727a7727248888
+  en: 1a2905da55bf2269
+  zh: f1945034241dae38
 /deepseek-ai-dsh-tool-web/understand-the-implementation/readiness-flow:
   en: f5e46c1f6f713e72
   zh: 3c9a8b165c46d2b1
@@ -57,7 +57,7 @@
   en: bcb3270167081dbf
   zh: 82036ab27ae6fd96
 /deepseek-ai-dsh-tool-web/understand-the-implementation/presentation:
-  en: 3ecc07b408e6045e
+  en: 13df653821bf0ef0
   zh: 19eed773277be7be
 /deepseek-ai-dsh-tool-web/further-exploration:
   en: a541bfa8dfb411e4
@@ -114,8 +114,8 @@
   en: 359575da2aa5601e
   zh: ca79357c6191e253
 /deepseek-ai-dsh-tool-web/model-experience/search-result/what-the-model-sees:
-  en: 67fd4c31e45ab5e4
-  zh: 7760f82a35f64354
+  en: 2774101ea5426842
+  zh: 03232558ff939ce3
 /deepseek-ai-dsh-tool-web/model-experience/search-result/token-effect:
   en: 0f7aeec4e16fb9a5
   zh: 7c56a8fa3f574ad0
@@ -126,11 +126,11 @@
   en: f48f5b863cd62217
   zh: e17659aeffcb9919
 /deepseek-ai-dsh-tool-web/model-experience/search-failure/what-the-model-sees:
-  en: 840ff1bde3856cb5
-  zh: e5f5807681efa62c
+  en: 5f675ca7e810e332
+  zh: 5d76885cd9200627
 /deepseek-ai-dsh-tool-web/model-experience/search-failure/token-effect:
-  en: 801116478749b452
-  zh: 646645de480ee586
+  en: affbdb7efdf095db
+  zh: 785a7645ef8ced33
 /deepseek-ai-dsh-tool-web/model-experience/search-failure/kv-cache-effect:
   en: 4c29fa07e83d79f5
   zh: 537e382d22728304
@@ -159,8 +159,8 @@
   en: f5d5f97a153f7c70
   zh: f681f89596f500f5
 /deepseek-ai-dsh-tool-web/known-limitations-and-deferred-work:
-  en: e0ec246e789e949b
-  zh: 390441fc09d1370b
+  en: a699bc0d6d93d168
+  zh: 22dc95ea7f491037
 /deepseek-ai-dsh-tool-web/known-limitations-and-deferred-work/dev-note:
   en: 7f775cc79dbce94b
   zh: 12b8f68f9e7c48ca

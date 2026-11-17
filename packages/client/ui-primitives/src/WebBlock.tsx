@@ -19,6 +19,17 @@ export interface WebSourceView {
   publishedAt?: string | undefined
 }
 
+/**
+ * One query that failed inside an otherwise completed multi-query search, the
+ * projection of the contract's recorded failure entry.
+ */
+export interface WebSearchQueryFailureView {
+  /** The exact query string whose search failed. */
+  query: string
+  /** The failure's typed code, shown verbatim as the retrieval status it is. */
+  code: string
+}
+
 /** A `web_search` card: an optional answer over a capped citation list. */
 export interface WebSearchBlockProps {
   kind: 'search'
@@ -30,6 +41,8 @@ export interface WebSearchBlockProps {
   sources: WebSourceView[]
   /** True when the tool cut the source list to its result cap. */
   truncated: boolean
+  /** Queries that failed while the call succeeded through its siblings, in query order. */
+  failedQueries?: WebSearchQueryFailureView[] | undefined
   /** Extra class merged onto the wrapper (callers position; this component draws). */
   className?: string | undefined
 }
@@ -56,6 +69,7 @@ export type WebBlockProps = WebSearchBlockProps | WebFetchBlockProps
 export interface WebBlockLabels {
   noResults: string
   sourcesTruncated: string
+  failedQueries: string
   http: string
   contentTruncated: string
   markdown: MarkdownLabels
@@ -142,12 +156,29 @@ function SourceItem({ source, ordinal }: { source: WebSourceView; ordinal: numbe
 }
 
 /**
+ * One failed query in a search card: the query text and its failure code, which
+ * is shown verbatim because it is the retrieval status the tool recorded, not
+ * product copy.
+ * @param props.failure - the failed query to render.
+ * @returns the failure list item.
+ */
+function FailedQueryItem({ failure }: { failure: WebSearchQueryFailureView }) {
+  return (
+    <li className={css.failedQuery}>
+      <span className={css.failedQueryText}>{failure.query}</span>
+      <code className={css.failedQueryCode}>{failure.code}</code>
+    </li>
+  )
+}
+
+/**
  * The search card body: the answer over the full source list, which scrolls in
- * place once it exceeds the `.sources` container height.
+ * place once it exceeds the `.sources` container height, plus the queries that
+ * failed without failing the call.
  * @param props - see {@link WebSearchBlockProps}.
  * @returns the search card element.
  */
-function WebSearchBlock({ answer, sources, truncated, labels, className }: WebSearchBlockProps) {
+function WebSearchBlock({ answer, sources, truncated, failedQueries, labels, className }: WebSearchBlockProps) {
   // A provider may legitimately return no answer and no sources; the chat WebRow
   // does not show the raw result content, so without this the user would see an
   // empty card. Mirror the backend's `No results found.` render text.
@@ -165,6 +196,14 @@ function WebSearchBlock({ answer, sources, truncated, labels, className }: WebSe
         </ol>
       )}
       {truncated && <div className={css.truncated}>{labels.sourcesTruncated}</div>}
+      {failedQueries !== undefined && failedQueries.length > 0 && (
+        <div className={css.failedQueries}>
+          <div className={css.failedQueriesHeading}>{labels.failedQueries}</div>
+          <ul className={css.failedQueryList}>
+            {failedQueries.map((failure, index) => <FailedQueryItem key={index} failure={failure} />)}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

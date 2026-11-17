@@ -89,7 +89,7 @@ describe('DeepSeek web account authentication', () => {
       resolveAccountToken: async () => 'account-token',
     }).search({ query: 'q' }))
     expect(error).toMatchObject({
-      code: 'WEB_PROVIDER_ERROR',
+      code: 'WEB_PROVIDER_AUTH_FAILED',
       message: 'DeepSeek API error (HTTP 401): invalid token\n\n'
         + 'DeepSeek rejected the account sign-in used for this web request. '
         + 'Guide the user to sign in to DeepSeek again; the endpoint does not need changing.',
@@ -102,7 +102,7 @@ describe('DeepSeek web account authentication', () => {
     const error = await rejectedWebError(searchProvider({
       ...options, resolveAccountToken: async () => 'sent-token', rejectAccountToken,
     }).search({ query: 'q' }))
-    expect(error.code).toBe('WEB_PROVIDER_ERROR')
+    expect(error.code).toBe('WEB_PROVIDER_AUTH_FAILED')
     expect(error.message).toContain('HTTP 401')
     expect(rejectAccountToken).toHaveBeenCalledExactlyOnceWith('sent-token')
   })
@@ -130,7 +130,7 @@ describe('DeepSeek web account authentication', () => {
       ...options, resolveAccountToken: async () => 'sent-token',
       rejectAccountToken: async () => { controller.abort(new Error('signed out')) },
     }).search({ query: 'q' }, controller.signal))
-    expect(error.code).toBe('WEB_PROVIDER_ERROR')
+    expect(error.code).toBe('WEB_PROVIDER_AUTH_FAILED')
     expect(error.message).toContain('HTTP 401')
     expect(controller.signal.aborted).toBe(true)
   })

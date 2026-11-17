@@ -203,3 +203,39 @@ describe('tool-call timeout returns TOOL_TIMEOUT (deadline wins over a slow fetc
     expect(err?.code).toBe('WEB_FETCH_TIMEOUT')
   })
 })
+
+describe('tool-call timeout policy over a multi-query search', () => {
+  it('reports TOOL_TIMEOUT, not a partial success, when the budget expires mid-call', async () => {
+    const tctx = new Context()
+    await tctx.plugin(SystemPrompt)
+    await tctx.plugin(ToolRuntime)
+    await tctx.plugin(NativeToolExecutor)
+    await tctx.plugin(WebRuntime, { searchProvider: 'stall-search' })
+    // Every search stalls until its signal aborts, so the tool-call budget is
+    // the only thing that can settle the call.
+    tctx.web.registerSearchProvider({
+      id: 'stall-search',
+      available: () => true,
+      search: (request, signal) => {
+        // The first query answers before the budget expires; only the timeout
+        // policy's replacement keeps the call from settling as a partial success.
+        if (request.query === 'fast') return Promise.resolve({ sources: [{ url: 'https://fast.test' }], truncated: false })
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => { reject(new Error('search aborted')) }, { once: true })
+        })
+      },
+    })
+    await tctx.plugin(TimeoutPolicy)
+    const tfiber = await tctx.plugin(ToolWeb, { searchTimeoutMs: 50 })
+    try {
+      const out = await call('web_search', { queries: ['fast', 'slow'] }, tctx)
+      expect(out.isError).toBe(true)
+      expect(out.error?.info?.code).toBe('TOOL_TIMEOUT')
+      const text = out.content.map(block => (block.type === 'text' ? block.text : '')).join('')
+      expect(text).toContain('timed out after 50ms')
+      expect(text).not.toContain('Failed queries:')
+    } finally {
+      await tfiber.dispose()
+    }
+  })
+})

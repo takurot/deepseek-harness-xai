@@ -1598,6 +1598,10 @@ interface ToolOutputMap {
       publishedAt?: string;
     }[];
     truncated: boolean;
+    failedQueries?: {
+      query: string;
+      code: string;
+    }[];
   };
   workflow: {
     kind: "background";

@@ -177,6 +177,33 @@ describe('WebBlock search card', () => {
     const items = [...view.container.querySelectorAll('li[class^="_source_"]')]
     expect(items.map(li => li.getAttribute('value'))).toEqual(['1', '2', '3', '4'])
   })
+
+  it('lists each failed query with its recorded code under a localized heading', () => {
+    const view = render(<WebBlock kind="search" sources={sources(1)} truncated={false} failedQueries={[
+      { query: 'rate limited query', code: 'WEB_PROVIDER_RATE_LIMITED' },
+      { query: 'slow query', code: 'WEB_TIMEOUT' },
+    ]} />)
+    expect(view.getByText('失败的查询')).toBeTruthy()
+    expect(view.getByText('rate limited query')).toBeTruthy()
+    expect(view.getByText('WEB_PROVIDER_RATE_LIMITED')).toBeTruthy()
+    expect(view.getByText('WEB_TIMEOUT')).toBeTruthy()
+  })
+
+  it('omits the failed-query section when no query failed or the list is empty', () => {
+    const none = render(<WebBlock kind="search" sources={sources(1)} truncated={false} />)
+    expect(none.queryByText('失败的查询')).toBeNull()
+    cleanup()
+    const empty = render(<WebBlock kind="search" sources={sources(1)} truncated={false} failedQueries={[]} />)
+    expect(empty.queryByText('失败的查询')).toBeNull()
+  })
+
+  it('shows failed queries beside the empty-state note when no source survived', () => {
+    const view = render(<WebBlock kind="search" sources={[]} truncated={false} failedQueries={[
+      { query: 'q2', code: 'WEB_PROVIDER_RATE_LIMITED' },
+    ]} />)
+    expect(view.getByText('未找到结果')).toBeTruthy()
+    expect(view.getByText('q2')).toBeTruthy()
+  })
 })
 
 describe('WebBlock fetch card', () => {

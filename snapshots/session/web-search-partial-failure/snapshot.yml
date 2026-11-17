@@ -1,0 +1,8 @@
+version: 1
+scenario: web-search-partial-failure
+profile: headless
+composition: web-search-partial-failure
+recording: authored
+header:
+  class: web-search-partial-failure
+  pin: true

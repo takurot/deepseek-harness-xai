@@ -347,6 +347,20 @@ export interface WebSource {
 export type WebResultView = WebSearchResultView | WebFetchResultView
 
 /**
+ * One query that failed inside an otherwise completed multi-query `web_search`
+ * call, the faithful projection of one recorded failure entry. A UI shows it
+ * beside the sources so a partial result never reads as complete. This
+ * declaration is the single owner: `dsh-tool-web` builds the list and re-exports
+ * this type, so adding a field here reaches both the tool result and the card.
+ */
+export interface WebSearchQueryFailure {
+  /** The exact query string whose search failed. */
+  query: string
+  /** The failure's typed code, or the provider code when it carried none. */
+  code: string
+}
+
+/**
  * The completed state of a `web_search` call: the structured sources the model
  * cited, an optional provider answer, and whether the source list was cut to the
  * result cap. A capable UI renders the sources as a citation list; a UI without
@@ -363,6 +377,12 @@ export interface WebSearchResultView {
   answer?: string
   /** True when the web service cut the source list to honor the result cap. */
   truncated: boolean
+  /**
+   * Queries that failed while the call succeeded through its siblings, in query
+   * order. Absent when every query succeeded or the single query failed (a
+   * failed call carries no view at all).
+   */
+  failedQueries?: WebSearchQueryFailure[]
 }
 
 /**

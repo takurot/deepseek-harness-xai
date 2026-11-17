@@ -11,6 +11,7 @@ import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ResolvedToolSet, type ToolExecutionInput, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import WebRuntime from '@deepseek-ai/dsh-web'
+import { WebError } from '@deepseek-ai/dsh-web'
 import type { WebFetchProvider, WebSearchProvider, WebSearchResult } from '@deepseek-ai/dsh-web'
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import {
@@ -141,6 +142,31 @@ describe('search formatting', () => {
     expect(out).toContain('[not a url](not a url)')
   })
 
+  it('lists each failed query with its failure code before the citation reminder', () => {
+    const out = formatSearchOutput({
+      truncated: false,
+      sources: [{ url: 'https://a.test/x', title: 'A' }],
+      failedQueries: [
+        { query: 'rate limited', code: 'WEB_PROVIDER_RATE_LIMITED' },
+        { query: 'timed out', code: 'WEB_TIMEOUT' },
+      ],
+    })
+    expect(out).toContain('Failed queries:\n- rate limited: failed (WEB_PROVIDER_RATE_LIMITED)\n- timed out: failed (WEB_TIMEOUT)')
+    expect(out).toContain('[A](https://a.test/x)')
+    expect(out.indexOf('Failed queries:')).toBeLessThan(out.indexOf('Cite the relevant URLs'))
+  })
+
+  it('keeps the no-results notice when every surviving query returned nothing', () => {
+    const out = formatSearchOutput({ truncated: false, sources: [], failedQueries: [{ query: 'q2', code: 'WEB_PROVIDER_RATE_LIMITED' }] })
+    expect(out).toContain('No results found.')
+    expect(out).toContain('- q2: failed (WEB_PROVIDER_RATE_LIMITED)')
+  })
+
+  it('omits the failed-query block when every query succeeded', () => {
+    expect(formatSearchOutput({ truncated: false, sources: [{ url: 'https://a.test' }] }))
+      .not.toContain('Failed queries:')
+  })
+
   it('presents a search call with a joined query title', () => {
     expect(presentSearchCall({ queries: ['one', 'two'] })).toEqual({ card: 'generic', title: 'one, two', kind: 'search', rawInput: 'one, two' })
   })
@@ -234,6 +260,51 @@ describe('web_search presentation meta and result view', () => {
 
   it('accepts an empty source list as valid meta', () => {
     expect(searchMetaFromResult({ sources: [], truncated: false })).toEqual({ sources: [], truncated: false })
+  })
+
+  it('projects and validates the failed queries of a partially successful multi-query call', () => {
+    const value = {
+      truncated: false,
+      sources: [{ url: 'https://a.test' }],
+      failedQueries: [{ query: 'q2', code: 'WEB_PROVIDER_RATE_LIMITED' }],
+    }
+    expect(searchMetaFromValue(value)).toEqual({
+      truncated: false,
+      sources: [{ url: 'https://a.test' }],
+      failedQueries: [{ query: 'q2', code: 'WEB_PROVIDER_RATE_LIMITED' }],
+    })
+    expect(searchMetaFromResult(searchMetaFromValue(value))).toEqual({
+      truncated: false,
+      sources: [{ url: 'https://a.test' }],
+      failedQueries: [{ query: 'q2', code: 'WEB_PROVIDER_RATE_LIMITED' }],
+    })
+    expect(searchMetaFromResult({ sources: [], truncated: false, failedQueries: [] })).toEqual({
+      sources: [], truncated: false, failedQueries: [],
+    })
+  })
+
+  it('rejects malformed failed-query meta', () => {
+    expect(searchMetaFromResult({ sources: [], truncated: false, failedQueries: 'x' })).toBeUndefined()
+    expect(searchMetaFromResult({ sources: [], truncated: false, failedQueries: [null] })).toBeUndefined()
+    expect(searchMetaFromResult({ sources: [], truncated: false, failedQueries: [{ query: 1, code: 'C' }] })).toBeUndefined()
+    expect(searchMetaFromResult({ sources: [], truncated: false, failedQueries: [{ query: 'q' }] })).toBeUndefined()
+    expect(searchMetaFromResult({ sources: [], truncated: false, failedQueries: [{ query: 'q', code: 2 }] })).toBeUndefined()
+  })
+
+  it('presents failed queries on the web/search card', () => {
+    const meta = searchMetaFromValue({
+      truncated: false,
+      sources: [{ url: 'https://a.test', title: 'A' }],
+      failedQueries: [{ query: 'q2', code: 'WEB_PROVIDER_RATE_LIMITED' }],
+    })
+    expect(presentSearchResult({ queries: ['q1', 'q2'] }, toolResult(meta))).toEqual({
+      card: 'web',
+      kind: 'search',
+      title: 'q1, q2',
+      sources: [{ url: 'https://a.test', title: 'A' }],
+      failedQueries: [{ query: 'q2', code: 'WEB_PROVIDER_RATE_LIMITED' }],
+      truncated: false,
+    })
   })
 })
 
@@ -635,19 +706,98 @@ describe('tool-web execution through the real registry', () => {
     await fiber.dispose()
   })
 
-  it('aborts sibling searches and waits for them to settle before reporting a batch failure', async () => {
+  it('keeps every successful query and reports only the failed one', async () => {
+    const signalsByQuery = new Map<string, AbortSignal | undefined>()
+    const provider: WebSearchProvider = {
+      id: 'stub-search',
+      available: () => available,
+      search: (request, signal) => {
+        signalsByQuery.set(request.query, signal)
+        if (request.query === 'two') return Promise.reject(new WebError('rate limited', 'WEB_PROVIDER_RATE_LIMITED'))
+        return Promise.resolve({
+          content: `answer ${request.query}`,
+          truncated: false,
+          sources: [{ url: `https://${request.query}.test` }],
+        })
+      },
+    }
+    const { fiber, call } = await mountTools({ webConfig: { searchProvider: 'stub-search' }, search: provider })
+    const out = await call('web_search', { queries: ['one', 'two', 'three'] })
+    expect(out.isError).toBe(false)
+    expect(out.value).toEqual({
+      content: '### one\n\nanswer one\n\n### three\n\nanswer three',
+      sources: [{ url: 'https://one.test' }, { url: 'https://three.test' }],
+      failedQueries: [{ query: 'two', code: 'WEB_PROVIDER_RATE_LIMITED' }],
+      truncated: false,
+    })
+    const body = out.content.map(b => b.type === 'text' ? b.text : '').join('')
+    expect(body).toContain('- two: failed (WEB_PROVIDER_RATE_LIMITED)')
+    expect(signalsByQuery.get('one')?.aborted).toBe(false)
+    expect(signalsByQuery.get('three')?.aborted).toBe(false)
+    await fiber.dispose()
+  })
+
+  it('treats an untyped provider failure as a partial failure that keeps its siblings running', async () => {
+    let siblingAborted = false
+    const provider: WebSearchProvider = {
+      id: 'stub-search',
+      available: () => available,
+      search: (request, signal) => {
+        if (request.query === 'one') return Promise.reject(new Error('provider exploded'))
+        signal?.addEventListener('abort', () => { siblingAborted = true }, { once: true })
+        return Promise.resolve({ sources: [{ url: 'https://b.test' }], truncated: false })
+      },
+    }
+    const { fiber, call } = await mountTools({ webConfig: { searchProvider: 'stub-search' }, search: provider })
+    const out = await call('web_search', { queries: ['one', 'two'] })
+    expect(out.isError).toBe(false)
+    expect(out.value).toEqual({
+      sources: [{ url: 'https://b.test' }],
+      failedQueries: [{ query: 'one', code: 'WEB_PROVIDER_ERROR' }],
+      truncated: false,
+    })
+    expect(siblingAborted).toBe(false)
+    await fiber.dispose()
+  })
+
+  it('fails the whole call on the earliest query failure when every query fails', async () => {
+    const provider: WebSearchProvider = {
+      id: 'stub-search',
+      available: () => available,
+      search: (request) => {
+        const failure = new WebError(`${request.query} failed`, 'WEB_PROVIDER_RATE_LIMITED')
+        // The first query settles last, so the reported failure must come from query order, not settle order.
+        if (request.query === 'one') return new Promise((_resolve, reject) => { setTimeout(() => { reject(failure) }, 5) })
+        return Promise.reject(failure)
+      },
+    }
+    const { fiber, call } = await mountTools({ webConfig: { searchProvider: 'stub-search' }, search: provider })
+    const out = await call('web_search', { queries: ['one', 'two'] })
+    expect(out.isError).toBe(true)
+    expect(out.content).toEqual([{ type: 'text', text: 'Error: one failed' }])
+    await fiber.dispose()
+  })
+
+  it.each([
+    'WEB_PROVIDER_AUTH_FAILED',
+    'WEB_PROVIDER_CREDENTIAL_MISSING',
+    'WEB_PROVIDER_MISCONFIGURED',
+    'WEB_PROVIDER_CONFIGURED_MISSING',
+    'WEB_PROVIDER_CONFIGURED_UNAVAILABLE',
+    'WEB_PROVIDER_UNAVAILABLE',
+    'WEB_PROVIDER_AMBIGUOUS',
+  ])('aborts sibling searches on the call-wide failure %s and waits for them to settle', async (code) => {
+    const callWideError = new WebError('search cannot run for this call', code)
     let siblingAborted = false
     let releaseSibling: (() => void) | undefined
     const provider: WebSearchProvider = {
       id: 'stub-search',
       available: () => available,
       search: (request, signal) => {
-        if (request.query === 'one') return Promise.reject(new Error('first search failed'))
+        if (request.query === 'one') return Promise.reject(callWideError)
         return new Promise((_resolve, reject) => {
           releaseSibling = () => { reject(new Error('sibling search stopped')) }
-          signal?.addEventListener('abort', () => {
-            siblingAborted = true
-          }, { once: true })
+          signal?.addEventListener('abort', () => { siblingAborted = true }, { once: true })
         })
       },
     }
@@ -664,7 +814,49 @@ describe('tool-web execution through the real registry', () => {
     }
     const out = await pending
     expect(out.isError).toBe(true)
-    expect(out.content).toEqual([{ type: 'text', text: 'Error: first search failed' }])
+    expect(out.content).toEqual([{ type: 'text', text: 'Error: search cannot run for this call' }])
+    await fiber.dispose()
+  })
+
+  it('reports a timed-out query as its own partial failure', async () => {
+    const provider: WebSearchProvider = {
+      id: 'stub-search',
+      available: () => available,
+      search: request => request.query === 'slow'
+        ? Promise.reject(new WebError('search timed out', 'WEB_TIMEOUT'))
+        : Promise.resolve({ sources: [{ url: 'https://fast.test' }], truncated: false }),
+    }
+    const { fiber, call } = await mountTools({ webConfig: { searchProvider: 'stub-search' }, search: provider })
+    const out = await call('web_search', { queries: ['slow', 'fast'] })
+    expect(out.isError).toBe(false)
+    expect(out.value).toEqual({
+      sources: [{ url: 'https://fast.test' }],
+      failedQueries: [{ query: 'slow', code: 'WEB_TIMEOUT' }],
+      truncated: false,
+    })
+    await fiber.dispose()
+  })
+
+  it('lists a duplicated failing query once, because duplicates run once', async () => {
+    const seen: string[] = []
+    const provider: WebSearchProvider = {
+      id: 'stub-search',
+      available: () => available,
+      search: (request) => {
+        seen.push(request.query)
+        if (request.query === 'dup') return Promise.reject(new WebError('rate limited', 'WEB_PROVIDER_RATE_LIMITED'))
+        return Promise.resolve({ sources: [{ url: 'https://alpha.test' }], truncated: false })
+      },
+    }
+    const { fiber, call } = await mountTools({ webConfig: { searchProvider: 'stub-search' }, search: provider })
+    const out = await call('web_search', { queries: ['alpha', 'dup', 'dup'] })
+    expect(seen).toEqual(['alpha', 'dup'])
+    expect(out.isError).toBe(false)
+    expect(out.value).toEqual({
+      sources: [{ url: 'https://alpha.test' }],
+      failedQueries: [{ query: 'dup', code: 'WEB_PROVIDER_RATE_LIMITED' }],
+      truncated: false,
+    })
     await fiber.dispose()
   })
 
@@ -846,27 +1038,33 @@ describe('tool-web execution through the real registry', () => {
     await fiber.dispose()
   })
 
-  it('cascades caller cancellation to every multi-query search', async () => {
+  it('cancels a call whose sibling already succeeded instead of returning a partial success', async () => {
     const signals: (AbortSignal | undefined)[] = []
     const provider: WebSearchProvider = {
       id: 'stub-search',
       available: () => available,
-      search: (_request, signal) => {
+      search: (request, signal) => {
         signals.push(signal)
+        // `fast` succeeds before the caller cancels, so only cancellation can
+        // turn the call into an error.
+        if (request.query === 'fast') return Promise.resolve({ sources: [{ url: 'https://fast.test' }], truncated: false })
         return new Promise((_resolve, reject) => {
-          signal?.addEventListener('abort', () => { reject(new Error('search aborted')) }, { once: true })
+          signal?.addEventListener('abort', () => { reject(new WebError('search aborted', 'WEB_ABORTED')) }, { once: true })
         })
       },
     }
     const { ctx, agent, fiber } = await mountTools({ webConfig: { searchProvider: 'stub-search' }, search: provider })
     const controller = new AbortController()
-    const pending = executeInStep(ctx, agent, { callId: ToolCallId('search-multi-1'), name: 'web_search', arguments: { queries: ['one', 'two'] }, signal: controller.signal })
+    const pending = executeInStep(ctx, agent, { callId: ToolCallId('search-multi-1'), name: 'web_search', arguments: { queries: ['fast', 'slow'] }, signal: controller.signal })
     await vi.waitFor(() => { expect(signals).toHaveLength(2) })
     expect(signals[0]).toBe(signals[1])
     expect(signals[0]).not.toBe(controller.signal)
     controller.abort(new Error('caller cancelled'))
-    await pending
+    const out = await pending
     expect(signals.every(signal => signal?.aborted === true)).toBe(true)
+    expect(out.isError).toBe(true)
+    expect(out.error?.info?.code).toBe('WEB_ABORTED')
+    expect(out.value).toBeUndefined()
     await fiber.dispose()
   })
 })
