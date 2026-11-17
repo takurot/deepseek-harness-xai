@@ -398,7 +398,7 @@ function accountRejectedError(message: string): WebError {
   return new WebError(
     `${message}\n\nDeepSeek rejected the account sign-in used for this web search. `
     + 'Guide the user to sign in to DeepSeek again; the search endpoint does not need changing.',
-    'WEB_PROVIDER_ERROR',
+    'WEB_PROVIDER_AUTH_FAILED',
   )
 }
 

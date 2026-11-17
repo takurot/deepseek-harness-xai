@@ -10039,6 +10039,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface WebSearchProvider {\n    readonly id: string;\n    readonly title?: string;\n    readonly description?: LocalizedText;\n    available(): boolean;\n    ready?(llmProvider: string | undefined): Promise<boolean>;\n    search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult>;\n}',
   },
   {
+    name: 'WebSearchQueryFailure',
+    declaration: 'export interface WebSearchQueryFailure {\n    query: string;\n    code: string;\n}',
+  },
+  {
     name: 'WebSearchRequest',
     declaration: 'export interface WebSearchRequest {\n    readonly query: string;\n    readonly maxResults?: number;\n}',
   },
@@ -10048,7 +10052,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WebSearchResultView',
-    declaration: 'export interface WebSearchResultView {\n    card: \'web\';\n    kind: \'search\';\n    title?: string;\n    sources: WebSource[];\n    answer?: string;\n    truncated: boolean;\n}',
+    declaration: 'export interface WebSearchResultView {\n    card: \'web\';\n    kind: \'search\';\n    title?: string;\n    sources: WebSource[];\n    answer?: string;\n    truncated: boolean;\n    failedQueries?: WebSearchQueryFailure[];\n}',
   },
   {
     name: 'WebSearchSource',

@@ -7,11 +7,16 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { GenericCallView, ToolResult, WebSearchResultView, WebSource } from '@deepseek-ai/dsh-tools'
+import type { GenericCallView, ToolResult, WebSearchQueryFailure, WebSearchResultView, WebSource } from '@deepseek-ai/dsh-tools'
+import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { truncateWithoutSplittingSurrogatePair } from '@deepseek-ai/dsh-output-retention'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { WebError } from '@deepseek-ai/dsh-web'
 import type { WebSearchResult, WebSearchSource } from '@deepseek-ai/dsh-web'
 import { EXTERNAL_WEB_CONTENT_NOTICE } from './trust.ts'
+
+/** The recorded failure of one query in a multi-query call; owned by the presentation contract. */
+export type { WebSearchQueryFailure }
 
 /**
  * Default upper bound on returned sources (the `searchMaxResults` config).
@@ -75,14 +80,25 @@ function sourceLabel(url: string, title: string | undefined): string {
 }
 
 /**
+ * The `web_search` output value: the seam's aggregated result plus the queries
+ * that failed when the call still returned at least one success. A single-query
+ * call has no partial result, so it carries no `failedQueries`.
+ */
+export type WebSearchOutput = WebSearchResult & {
+  /** Queries that failed while the call succeeded through its siblings, in query order. */
+  failedQueries?: readonly WebSearchQueryFailure[]
+}
+
+/**
  * Format a search result as one model-facing text block.
  *
- * @param result - the seam's search outcome.
+ * @param result - the tool's aggregated outcome.
  * @returns the provider answer (when any), a markdown source list with each
  *   source's summary, else its snippet, and date metadata (or `No results found.`),
- *   a refine-the-query note when truncated, and a standing cite-your-sources instruction.
+ *   a refine-the-query note when truncated, each failed query with its failure
+ *   code, and a standing cite-your-sources instruction.
  */
-export function formatSearchOutput(result: WebSearchResult): string {
+export function formatSearchOutput(result: WebSearchOutput): string {
   const parts: string[] = [EXTERNAL_WEB_CONTENT_NOTICE]
   if (result.content !== undefined && result.content.length > 0) parts.push(result.content)
 
@@ -102,6 +118,10 @@ export function formatSearchOutput(result: WebSearchResult): string {
   }
 
   if (result.truncated) parts.push(`(Showing the first ${result.sources.length} sources. Refine the query for more.)`)
+  if (result.failedQueries !== undefined && result.failedQueries.length > 0) {
+    const failures = result.failedQueries.map(failure => `- ${failure.query}: failed (${failure.code})`)
+    parts.push(`Failed queries:\n${failures.join('\n')}`)
+  }
   parts.push('Cite the relevant URLs above as markdown links in your answer.')
   return parts.join('\n\n')
 }
@@ -132,6 +152,8 @@ export interface WebSearchMeta {
   truncated: boolean
   /** The provider-generated answer text, when any. */
   answer?: string
+  /** Queries that failed while the call succeeded through its siblings, in query order. */
+  failedQueries?: WebSearchQueryFailure[]
 }
 
 /**
@@ -180,14 +202,18 @@ function modelSource(source: WebSearchSource, summaryMaxChars: number): ReturnTy
  * Project a validated `web_search` output value into its replayable
  * presentation meta ({@link WebSearchMeta} as opaque JSON).
  *
- * @param value - the canonical `web_search` output value (the seam's result shape).
- * @returns the structured sources, the truncation flag, and the answer when present.
+ * @param value - the canonical `web_search` output value.
+ * @returns the structured sources, the truncation flag, the answer when present,
+ *   and the queries that failed without failing the call.
  */
-export function searchMetaFromValue(value: WebSearchResult): JsonValue {
+export function searchMetaFromValue(value: WebSearchOutput): JsonValue {
   return {
     sources: value.sources.map(projectSource),
     truncated: value.truncated,
     ...value.content !== undefined ? { answer: value.content } : {},
+    ...value.failedQueries !== undefined && value.failedQueries.length > 0
+      ? { failedQueries: value.failedQueries.map(failure => ({ query: failure.query, code: failure.code })) }
+      : {},
   }
 }
 
@@ -201,6 +227,13 @@ function isWebSource(value: unknown): value is WebSource {
     && (publishedAt === undefined || typeof publishedAt === 'string')
 }
 
+/** Whether `value` is a valid {@link WebSearchQueryFailure} (defensive narrowing from opaque `meta`). */
+function isSearchQueryFailure(value: unknown): value is WebSearchQueryFailure {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const { query, code } = value as Record<string, unknown>
+  return typeof query === 'string' && typeof code === 'string'
+}
+
 /**
  * Narrow opaque live or replayed result metadata to a {@link WebSearchMeta}.
  * Malformed metadata returns `undefined` so presentation can fall back to the
@@ -211,14 +244,18 @@ function isWebSource(value: unknown): value is WebSource {
  */
 export function searchMetaFromResult(meta: unknown): WebSearchMeta | undefined {
   if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return undefined
-  const { sources, truncated, answer } = meta as Record<string, unknown>
+  const { sources, truncated, answer, failedQueries } = meta as Record<string, unknown>
   if (!Array.isArray(sources) || !sources.every(isWebSource)) return undefined
   if (typeof truncated !== 'boolean') return undefined
   if (answer !== undefined && typeof answer !== 'string') return undefined
+  if (failedQueries !== undefined) {
+    if (!Array.isArray(failedQueries) || !failedQueries.every(isSearchQueryFailure)) return undefined
+  }
   return {
     sources,
     truncated,
     ...answer !== undefined ? { answer } : {},
+    ...failedQueries !== undefined ? { failedQueries } : {},
   }
 }
 
@@ -245,64 +282,151 @@ export function presentSearchResult(args: WebSearchArgs, result: ToolResult): We
     sources: meta.sources,
     truncated: meta.truncated,
     ...meta.answer !== undefined ? { answer: meta.answer } : {},
+    ...meta.failedQueries !== undefined && meta.failedQueries.length > 0 ? { failedQueries: meta.failedQueries } : {},
   }
 }
 
 /**
+ * Failure codes that make every query of one call fail the same way, so a
+ * multi-query call stops its siblings instead of recording partial failures.
+ * Credential and authorization failures repeat for every query, and provider
+ * selection resolves once per call; the shipped search providers report a
+ * rejected account sign-in as `WEB_PROVIDER_AUTH_FAILED`, while a rejected API
+ * key on the endpoint-guidance path still reports the generic provider error
+ * and is therefore a per-query failure. The code vocabulary is open
+ * (a provider's {@link HarnessError} code is an open string), so the classifier
+ * allow-lists these and treats every other provider failure as partial, which
+ * never discards results that already succeeded.
+ */
+const WHOLE_CALL_FAILURE_CODES = new Set<string>([
+  'WEB_PROVIDER_AUTH_FAILED',
+  'WEB_PROVIDER_CREDENTIAL_MISSING',
+  'WEB_PROVIDER_MISCONFIGURED',
+  'WEB_PROVIDER_CONFIGURED_MISSING',
+  'WEB_PROVIDER_CONFIGURED_UNAVAILABLE',
+  'WEB_PROVIDER_UNAVAILABLE',
+  'WEB_PROVIDER_AMBIGUOUS',
+])
+
+/** The code recorded for a provider failure that carried no typed code. */
+const UNTYPED_FAILURE_CODE = 'WEB_PROVIDER_ERROR'
+
+/** The typed code a thrown error carries, else the unclassified provider code. */
+function failureCode(error: unknown): string {
+  return error instanceof HarnessError ? error.code : UNTYPED_FAILURE_CODE
+}
+
+/**
+ * Whether one query's failure means every query of the call fails too: a
+ * call-wide authentication, configuration, or provider-selection failure.
+ * Cancellation is not classified here; the aggregate reports it from the
+ * caller's signal after every search settles, so a late unrelated failure
+ * cannot mask it.
+ *
+ * @param error - the thrown search failure.
+ * @returns true when siblings should stop instead of recording a partial failure.
+ */
+function isWholeCallFailure(error: unknown): boolean {
+  return error instanceof HarnessError && WHOLE_CALL_FAILURE_CODES.has(error.code)
+}
+
+/** One query's contribution to a multi-query aggregate, in query order. */
+interface QuerySearchOutcome {
+  /** The exact query string. */
+  query: string
+  /** The query's result, present when its search succeeded. */
+  result?: WebSearchResult
+  /** The query's failure, present when its search failed. */
+  failure?: WebSearchQueryFailure
+  /** The thrown error behind {@link failure}. */
+  error?: unknown
+}
+
+/** A multi-query aggregate: the merged result and the queries that failed. */
+interface SearchAggregate {
+  /** The merged result of every query that succeeded. */
+  result: WebSearchResult
+  /** The failed queries, in query order. */
+  failedQueries: WebSearchQueryFailure[]
+}
+
+/**
  * Run one or more searches through the web seam. A single query keeps the
- * provider's exact result; multiple queries run concurrently and are merged
- * into one normalized result capped at `maxResults`. A failed search aborts
- * its siblings, and this function waits for every search to settle before
- * rethrowing the first failure.
+ * provider's exact result. Multiple queries run concurrently: a call-wide
+ * authentication, configuration, or provider-selection failure stops the
+ * siblings and rethrows that failure, while any other failure is recorded per
+ * query so the call still returns through its successful siblings. A caller
+ * cancellation is reported once every search settles. When every query fails,
+ * the earliest query's failure is thrown.
  *
  * @param ctx - context whose `web` service performs the searches.
  * @param queries - validated non-empty queries.
  * @param maxResults - the deployment's source cap for the combined result.
  * @param signal - cancellation signal forwarded to every search.
- * @returns the combined search result.
+ * @returns the combined result and the failed queries, in query order.
  */
 async function runSearchQueries(
   ctx: Context,
   queries: string[],
   maxResults: number,
   signal: AbortSignal,
-): Promise<WebSearchResult> {
+): Promise<SearchAggregate> {
   if (queries.length === 1) {
-    return ctx.web.search({ query: queries[0] as string, maxResults }, signal)
+    return {
+      result: await ctx.web.search({ query: queries[0] as string, maxResults }, signal),
+      failedQueries: [],
+    }
   }
   const controller = new AbortController()
   const batchSignal = AbortSignal.any([signal, controller.signal])
-  let firstFailure: { error: unknown } | undefined
-  const results: WebSearchResult[] = []
+  const outcomes: QuerySearchOutcome[] = queries.map(query => ({ query }))
+  let wholeCallFailure: { error: unknown } | undefined
   const searches = queries.map(async (query, index) => {
     try {
-      results[index] = await ctx.web.search({ query, maxResults }, batchSignal)
+      (outcomes[index] as QuerySearchOutcome).result = await ctx.web.search({ query, maxResults }, batchSignal)
     } catch (error) {
-      if (firstFailure === undefined) firstFailure = { error }
-      controller.abort(error)
-      throw error
+      const outcome = outcomes[index] as QuerySearchOutcome
+      outcome.error = error
+      outcome.failure = { query, code: failureCode(error) }
+      if (wholeCallFailure === undefined && isWholeCallFailure(error)) {
+        wholeCallFailure = { error }
+        controller.abort(error)
+      }
     }
   })
   await Promise.allSettled(searches)
-  if (firstFailure !== undefined) throw firstFailure.error
-  return mergeSearchResults(queries, results, maxResults)
+  // Cancellation is the whole call's outcome, whoever settled with what.
+  if (signal.aborted) throw new WebError('web search aborted', 'WEB_ABORTED', { cause: signal.reason })
+  if (wholeCallFailure !== undefined) throw wholeCallFailure.error
+  const succeeded = outcomes.flatMap((outcome) => {
+    const { result } = outcome
+    return result === undefined ? [] : [{ query: outcome.query, result }]
+  })
+  if (succeeded.length === 0) {
+    // Every query failed, so the first query's recorded error is the earliest
+    // failure in query order, independent of which search settled first.
+    throw (outcomes[0] as QuerySearchOutcome).error
+  }
+  return {
+    result: mergeSearchResults(succeeded, maxResults),
+    failedQueries: outcomes.flatMap(outcome => outcome.failure === undefined ? [] : [outcome.failure]),
+  }
 }
 
 /** Merge per-query results into one deduplicated, round-robin, capped result. */
 function mergeSearchResults(
-  queries: string[],
-  results: WebSearchResult[],
+  succeeded: readonly { query: string; result: WebSearchResult }[],
   maxResults: number,
 ): WebSearchResult {
   const seen = new Set<string>()
   const sources: WebSearchSource[] = []
   let sourceRanks = 0
-  for (const result of results) {
+  for (const { result } of succeeded) {
     sourceRanks = Math.max(sourceRanks, result.sources.length)
   }
   let droppedSource = false
   merge: for (let rank = 0; rank < sourceRanks; rank++) {
-    for (const result of results) {
+    for (const { result } of succeeded) {
       const source = result.sources[rank]
       if (source !== undefined && !seen.has(source.url)) {
         seen.add(source.url)
@@ -314,14 +438,14 @@ function mergeSearchResults(
       }
     }
   }
-  const contents = results.flatMap((result, index) => {
+  const contents = succeeded.flatMap(({ query, result }) => {
     if (result.content === undefined || result.content.length === 0) return []
-    return [`### ${queries[index]}\n\n${result.content}`]
+    return [`### ${query}\n\n${result.content}`]
   })
   return {
     ...contents.length > 0 ? { content: contents.join('\n\n') } : {},
     sources,
-    truncated: results.some(result => result.truncated) || droppedSource,
+    truncated: succeeded.some(({ result }) => result.truncated) || droppedSource,
   }
 }
 
@@ -392,6 +516,17 @@ export function applyWebSearchTool(
             },
           },
           truncated: { type: 'boolean', required: true },
+          failedQueries: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                query: { type: 'string', required: true },
+                code: { type: 'string', required: true },
+              },
+            },
+          },
         },
       },
       render: (_args, value) => [{ type: 'text', text: formatSearchOutput(value) }],
@@ -402,11 +537,12 @@ export function applyWebSearchTool(
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       const queries = parseSearchArgs(args, maxQueries)
-      const result = await runSearchQueries(ctx, queries, maxResults, exec.signal)
+      const { result, failedQueries } = await runSearchQueries(ctx, queries, maxResults, exec.signal)
       return {
         ...result.content !== undefined ? { content: result.content } : {},
         sources: result.sources.map(source => modelSource(source, summaryMaxChars)),
         truncated: result.truncated,
+        ...failedQueries.length > 0 ? { failedQueries } : {},
       }
     },
     presentCall: presentSearchCall,

@@ -296,7 +296,7 @@ describe('DeepSeekSearchProvider account authentication', () => {
       resolveAccountToken: async () => 'account-token',
     }).search({ query: 'q' }))
     expect(error).toMatchObject({
-      code: 'WEB_PROVIDER_ERROR',
+      code: 'WEB_PROVIDER_AUTH_FAILED',
       message: 'DeepSeek API error (HTTP 401): invalid token\n\n'
         + 'DeepSeek rejected the account sign-in used for this web search. '
         + 'Guide the user to sign in to DeepSeek again; the search endpoint does not need changing.',
@@ -309,7 +309,7 @@ describe('DeepSeekSearchProvider account authentication', () => {
     const error = await rejectedWebError(searchProvider({
       ...options, resolveAccountToken: async () => 'sent-token', rejectAccountToken,
     }).search({ query: 'q' }))
-    expect(error.code).toBe('WEB_PROVIDER_ERROR')
+    expect(error.code).toBe('WEB_PROVIDER_AUTH_FAILED')
     expect(error.message).toBe('DeepSeek API error (HTTP 401): invalid token\n\n'
       + 'DeepSeek rejected the account sign-in used for this web search. '
       + 'Guide the user to sign in to DeepSeek again; the search endpoint does not need changing.')

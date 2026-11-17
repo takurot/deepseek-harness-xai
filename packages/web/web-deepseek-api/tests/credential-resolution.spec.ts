@@ -153,7 +153,7 @@ describe.each(OPERATIONS)('%s in a conversation on the DeepSeek account route', 
     const rejectToken = vi.fn(async () => {})
     const { ctx } = await mount({ routes: bothRoutes, account: { ...signedIn(), rejectToken }, status: 401 })
     const failure = operate(ctx, operation, 'deepseek-account')
-    await expect(failure).rejects.toMatchObject({ code: 'WEB_PROVIDER_ERROR' })
+    await expect(failure).rejects.toMatchObject({ code: 'WEB_PROVIDER_AUTH_FAILED' })
     await expect(failure).rejects.toThrow('HTTP 401')
     expect(rejectToken).toHaveBeenCalledExactlyOnceWith('account-token')
   })

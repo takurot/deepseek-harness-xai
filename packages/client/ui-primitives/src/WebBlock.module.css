@@ -106,6 +106,49 @@
   font: var(--dsw-font-xs-13);
 }
 
+/* Queries that failed while the call still returned sources: a caption over the
+   failed query/code pairs, set apart from the citation list so a partial result
+   never reads as a complete one. */
+.failedQueries {
+  margin-top: 8px;
+}
+
+.failedQueriesHeading {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  font-weight: 500;
+}
+
+.failedQueryList {
+  margin: 2px 0 0;
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.failedQuery {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font: var(--dsw-font-xs-13);
+}
+
+.failedQueryText {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-word;
+}
+
+.failedQueryCode {
+  flex: none;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+}
+
 /* The fetch card is a compact summary: the URL over a status/truncation row. */
 .fetch {
   display: flex;

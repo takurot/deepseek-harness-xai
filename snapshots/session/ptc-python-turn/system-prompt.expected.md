@@ -515,10 +515,15 @@ class WebSearchOutputSources(TypedDict):
     summary: NotRequired[str]
     publishedAt: NotRequired[str]
 
+class WebSearchOutputFailedQueries(TypedDict):
+    query: str
+    code: str
+
 class WebSearchOutput(TypedDict):
     content: NotRequired[str]
     sources: list[WebSearchOutputSources]
     truncated: bool
+    failedQueries: NotRequired[list[WebSearchOutputFailedQueries]]
 
 class WorkingDirectoryArgs(TypedDict):
     # Existing directory to enter. Omit to read the current directory.

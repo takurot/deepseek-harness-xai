@@ -26,6 +26,7 @@ interface SearchMeta {
   sources: { url: string; title?: string; snippet?: string; publishedAt?: string }[]
   truncated: boolean
   answer?: string
+  failedQueries?: { query: string; code: string }[]
 }
 
 interface FetchMeta {
@@ -132,6 +133,27 @@ describe('webCardModel', () => {
     expect(webCardModel(settledFetch({
       call: { name: 'web_fetch', argsRaw: '{"url":" "}' },
     }))).toBeNull()
+  })
+
+  it('carries the failed queries of a partially successful search', () => {
+    expect(webCardModel(settledSearch({
+      meta: searchMeta({ failedQueries: [{ query: 'q2', code: 'WEB_PROVIDER_RATE_LIMITED' }] }),
+    }))).toEqual({
+      kind: 'search',
+      answer: 'A short answer.',
+      truncated: false,
+      sources: [
+        { url: 'https://example.com/a', title: 'Titled', snippet: 'excerpt', publishedAt: '2026-07-01' },
+        { url: 'https://plain.example.org/b' },
+      ],
+      failedQueries: [{ query: 'q2', code: 'WEB_PROVIDER_RATE_LIMITED' }],
+    })
+  })
+
+  it('falls back to the generic card on malformed failed-query metadata', () => {
+    expect(webCardModel(settledSearch({ meta: searchMeta({ failedQueries: 'x' as never }) }))).toBeNull()
+    expect(webCardModel(settledSearch({ meta: searchMeta({ failedQueries: [{ query: 1 } as never] }) }))).toBeNull()
+    expect(webCardModel(settledSearch({ meta: searchMeta({ failedQueries: [{ query: 'q' } as never] }) }))).toBeNull()
   })
 })
 

@@ -30,6 +30,11 @@ interface WebSource {
   publishedAt?: string
 }
 
+interface WebSearchQueryFailure {
+  query: string
+  code: string
+}
+
 function webSources(value: unknown): WebSource[] | null {
   if (!Array.isArray(value)) return null
   const sources: WebSource[] = []
@@ -50,6 +55,18 @@ function webSources(value: unknown): WebSource[] | null {
   return sources
 }
 
+function webFailures(value: unknown): WebSearchQueryFailure[] | null {
+  if (!Array.isArray(value)) return null
+  const failures: WebSearchQueryFailure[] = []
+  for (const failure of value) {
+    if (typeof failure !== 'object' || failure === null || Array.isArray(failure)) return null
+    const { query, code } = failure as Record<string, unknown>
+    if (typeof query !== 'string' || typeof code !== 'string') return null
+    failures.push({ query, code })
+  }
+  return failures
+}
+
 /**
  * Derive a settled root web-search or web-fetch card from persisted metadata.
  * @param block - running or settled Tool block.
@@ -64,11 +81,14 @@ export function webCardModel(block: ToolCallBlock): WebCardModelProps | null {
   if (tool === 'web_search') {
     const sources = webSources(meta.sources)
     if (sources === null || (meta.answer !== undefined && typeof meta.answer !== 'string')) return null
+    const failedQueries = meta.failedQueries === undefined ? [] : webFailures(meta.failedQueries)
+    if (failedQueries === null) return null
     return {
       kind: 'search',
       answer: meta.answer,
       sources,
       truncated: meta.truncated,
+      ...failedQueries.length > 0 ? { failedQueries } : {},
     }
   }
   if (typeof meta.url !== 'string') return null

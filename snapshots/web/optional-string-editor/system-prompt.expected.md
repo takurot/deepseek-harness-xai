@@ -1545,6 +1545,10 @@ interface ToolOutputMap {
       publishedAt?: string;
     }[];
     truncated: boolean;
+    failedQueries?: {
+      query: string;
+      code: string;
+    }[];
   };
   working_directory: {
     /** Current absolute working directory. */

@@ -1,0 +1,19 @@
+# Composition for the partial-failure search snapshot: a deterministic search
+# provider answers two queries and reports a provider rate limit for the third.
+# The tool exposes search only, so the recorded header pins the search surface.
+- insert:
+    - id: web-search-partial-fixture
+      name: './web-search-partial-fixture.mjs'
+
+- id: web
+  name: '@deepseek-ai/dsh-web'
+  config:
+    searchProvider: partial-fixture
+
+- id: web-fetch-http
+  disabled: true
+
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: false
