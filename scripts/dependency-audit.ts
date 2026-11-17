@@ -15,7 +15,10 @@ const severityCounts = z.object({ info: count, low: count, moderate: count, high
 const auditSchema = z.object({
   advisories: z.record(z.string(), z.object({
     id: count, github_advisory_id: text, module_name: text, title: text, severity,
-    vulnerable_versions: text, patched_versions: text,
+    // An advisory can be published before its fix: pnpm reports null here and
+    // flags `patched_versions_unpublished`, or omits the key entirely when it
+    // cannot infer a fixed range. Either way no fixable version exists yet.
+    vulnerable_versions: text, patched_versions: text.nullable().optional(),
     findings: z.array(z.object({
       version: text, paths: z.array(text).min(1), dev: z.boolean(), optional: z.boolean(), bundled: z.boolean(),
     })).min(1),
@@ -28,7 +31,8 @@ const identitySchema = z.object({ name: text, version: text, locator: text }).st
 const exceptionSchema = z.object({
   formatVersion: z.literal(1),
   exceptions: z.array(z.object({
-    advisory: text, package: text, version: text, importer: text, chain: z.array(identitySchema).min(2),
+    // A direct dependency's chain holds only the vulnerable package itself.
+    advisory: text, package: text, version: text, importer: text, chain: z.array(identitySchema).min(1),
     expires: z.iso.date(),
     trackingIssue: z.url().regex(/^https:\/\/github\.com\/takurot\/deepseek-harness-xai\/issues\/[1-9]\d*$/), reason: text,
   }).strict()),
@@ -89,7 +93,8 @@ interface ClassifiedFinding {
   severity: z.infer<typeof severity>
   title: string
   affectedRange: string
-  fixedRange: string
+  /** First version that fixes the advisory, or null when no fixed version is published yet. */
+  fixedRange: string | null
   chains: AuditChain[]
 }
 
@@ -216,10 +221,12 @@ export function classifyDependencyAudit(input: DependencyAuditInput): Dependency
     report.failures.push('invalid or incomplete pnpm audit response')
     return report
   }
+  // `metadata.vulnerabilities` counts advisories, not affected versions: one
+  // advisory can list several findings, so the two agree only per advisory.
   const counts = { info: 0, low: 0, moderate: 0, high: 0, critical: 0 }
-  for (const advisory of Object.values(audit.data.advisories)) counts[advisory.severity] += advisory.findings.length
+  for (const advisory of Object.values(audit.data.advisories)) counts[advisory.severity] += 1
   if (Object.entries(counts).some(([level, value]) => value !== audit.data.metadata.vulnerabilities[level as keyof typeof counts])) {
-    report.failures.push('audit severity counts contradict advisory/version findings')
+    report.failures.push('audit severity counts contradict advisory findings')
     return report
   }
   const metadata = audit.data.metadata
@@ -247,7 +254,7 @@ export function classifyDependencyAudit(input: DependencyAuditInput): Dependency
         finding = {
           advisory: advisory.github_advisory_id, package: advisory.module_name, version: item.version,
           severity: advisory.severity, title: advisory.title,
-          affectedRange: advisory.vulnerable_versions, fixedRange: advisory.patched_versions, chains: [],
+          affectedRange: advisory.vulnerable_versions, fixedRange: advisory.patched_versions ?? null, chains: [],
         }
         findings.set(key, finding)
       }
