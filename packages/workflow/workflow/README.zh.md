@@ -29,7 +29,7 @@ kind: "package-reference"
 
 ### 模型侧路径
 
-模型通过 `dsh-tool-workflow` 的 `workflow` 工具触达该能力；该工具拥有调用 schema 与结果包络，引擎提供其下的执行。一次工具调用提交 `meta`、`script` 与可选 `args`，运行完成时返回 `{ runId, agentsStarted, result }`。工具会阻塞父级轮次直到整个工作流结算，因此模型只看到最终结果，永远不会看到中间子 agent 消息。
+模型通过 `dsh-tool-workflow` 的 `workflow` 工具触达该能力；该工具拥有调用 schema 与结果包络，引擎提供其下的执行。一次工具调用提交 `meta`、`script`、可选 `args` 与 `run_in_background`。前台调用在运行完成时返回 `{ kind: 'foreground', runId, agentsStarted, result }`，并阻塞父级轮次直到整个工作流结算，因此模型只看到最终结果，永远不会看到中间子 agent 消息。后台调用立即返回 `{ kind: 'background', jobId, runId }`，由该任务的结算负责其结果。
 
 ### 运行工作流脚本
 
@@ -123,7 +123,7 @@ return { reviewed: reviews.length }
 
 这些限制说明该能力尚未支持什么。它们是当前约束，不是任务积压。
 
-- **仅支持前台收集**——调用方拥有一个活动运行并等待它；后台启动／轮询、spill 句柄与分离收集均暂缓。
+- **seam 侧没有后台启动／轮询 API**——`ctx.workflowEngine.start()` 返回一个由持有方负责的运行；后台执行是面向模型的消费方的行为，不是 seam 操作。
 - **没有日志化或恢复**——脚本、子 agent 进度与中间值均不设检查点，因此进程重启后无法继续运行。
 - **没有已保存或嵌套工作流**——该能力只启动调用方提供的脚本，工作流脚本不会收到用于递归编排的 `workflow()` 钩子。
 - **没有 token 预算词汇**——引擎限制并发、条目与子 agent，但请求与结果都不会统计跨子 agent 的模型 token。
@@ -137,6 +137,6 @@ return { reviewed: reviews.length }
 
 本开发备注是维护者的工作上下文：尚未决定的开放方向。它明确不具权威性——已交付的行为、限制与既定理由以上文、包代码与相关 Agent Note 为准。
 
-暂缓的方向：带 spill 句柄与分离收集的后台启动／轮询 API；已保存与嵌套工作流；以及跨子 agent 的 token 预算词汇。
+暂缓的方向：spill 句柄与分离收集；已保存与嵌套工作流；以及跨子 agent 的 token 预算词汇。
 
 </details>
