@@ -25,6 +25,7 @@
   "files": [
     "locale/*.json",
     "lib/index.js",
+    "lib/pdf-worker.js",
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
@@ -35,7 +36,8 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "workspace:~",
-    "undici": "8.12.4"
+    "undici": "8.12.4",
+    "pdfjs-dist": "6.3.289"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:~",

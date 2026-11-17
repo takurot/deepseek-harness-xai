@@ -194,6 +194,7 @@ describe('tool-call timeout returns TOOL_TIMEOUT (deadline wins over a slow fetc
       maxBodyChars: 100_000,
       timeoutMs: 50,
       maxRedirects: 5,
+      maxPdfPages: 10,
       userAgent: 'integration-test',
     })
     const err = await direct.fetch({ url: slowBase }).then(

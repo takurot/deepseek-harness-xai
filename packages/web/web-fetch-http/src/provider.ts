@@ -1,8 +1,8 @@
 /**
  * Bounded HTTP(S) retrieval for `ctx.web`: validates URLs, follows only same-origin redirects,
- * enforces time and size limits, classifies and decodes text, and leaves presentation to
- * `@deepseek-ai/dsh-tool-web`. Requests carry no browser cookies
- * or ambient credentials.
+ * enforces time and size limits, classifies and decodes text, extracts PDF page text in a
+ * Worker Thread, and leaves presentation to `@deepseek-ai/dsh-tool-web`. Requests carry no
+ * browser cookies or ambient credentials.
  * @module @deepseek-ai/dsh-web-fetch-http/provider
  */
 
@@ -11,17 +11,22 @@ import type { WebFetchBody, WebFetchProvider, WebFetchRequest, WebFetchResult } 
 import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { Response } from 'undici'
 import { classifyContentType, decoderForCharset, decoderForHtml, isSameOrigin, parseCharset, validateFetchUrl } from './policy.ts'
+import type { PdfExtraction } from './pdf-extract.ts'
+import { PdfDocumentError, PdfEngineLoadError, PdfExtractionUnavailableError } from './pdf-errors.ts'
+import { extractPdfInWorker } from './pdf-thread.ts'
 
 /** Resolved provider limits (the plugin's schemastery Config supplies defaults). */
 export interface HttpFetchLimits {
   /** Maximum response body size in bytes (read is aborted past this). */
   maxResponseBytes: number
-  /** Maximum decoded body length in characters (truncated past this). */
+  /** Maximum decoded body length in characters (truncated past this); also bounds extracted PDF text. */
   maxBodyChars: number
   /** Default fetch timeout in milliseconds. */
   timeoutMs: number
   /** Maximum number of (same-origin) redirect hops to follow. */
   maxRedirects: number
+  /** Maximum PDF pages whose text is extracted. */
+  maxPdfPages: number
   /** `User-Agent` header sent on every request. */
   userAgent: string
 }
@@ -34,14 +39,14 @@ export class HttpFetchProvider implements WebFetchProvider {
   readonly id = LOCAL_FETCH_PROVIDER_ID
   /** Picker description: what this provider suits and what it costs or cannot do. */
   readonly description: NonNullable<WebFetchProvider['description']> = {
-    en: 'Fetches URLs directly from this machine with no API key or charges, including intranet and loopback addresses. Decodes text, HTML, JSON, and XML only; no JavaScript, cookies, or PDFs. You can also try DeepSeek Fetch API.',
-    zh: '本机直接请求，免 API Key 与计费，可访问内网和本机。仅解码 HTML、JSON 等文本，不执行 JavaScript、不带登录态，不支持 PDF；也可以试试 DeepSeek Fetch API',
-    ja: 'このマシンから URL を直接取得し、API キーや料金は不要で、イントラネットやループバックのアドレスにもアクセスできます。テキスト、HTML、JSON、XML のみをデコードし、JavaScript、Cookie、PDF には対応しません。DeepSeek Fetch API も試せます。',
-    es: 'Obtiene las URL directamente desde este equipo, sin clave de API ni cargos, incluidas direcciones de la intranet y de bucle invertido. Solo decodifica texto, HTML, JSON y XML; sin JavaScript, cookies ni PDF. También puede probar DeepSeek Fetch API.',
-    fr: 'Récupère les URL directement depuis cette machine, sans clé API ni frais, y compris les adresses intranet et de bouclage. Ne décode que le texte, le HTML, le JSON et le XML ; ni JavaScript, ni cookies, ni PDF. Vous pouvez aussi essayer DeepSeek Fetch API.',
-    de: 'Ruft URLs direkt von diesem Rechner ab, ohne API-Schlüssel oder Kosten, auch Intranet- und Loopback-Adressen. Dekodiert nur Text, HTML, JSON und XML; kein JavaScript, keine Cookies, keine PDFs. Sie können auch DeepSeek Fetch API ausprobieren.',
-    ru: 'Загружает URL напрямую с этого компьютера без ключа API и оплаты, включая адреса интрасети и loopback. Декодирует только текст, HTML, JSON и XML; без JavaScript, cookie и PDF. Можно также попробовать DeepSeek Fetch API.',
-    pt: 'Obtém URLs diretamente desta máquina, sem chave de API nem cobranças, incluindo endereços da intranet e de loopback. Decodifica apenas texto, HTML, JSON e XML; sem JavaScript, cookies ou PDFs. Você também pode experimentar a DeepSeek Fetch API.',
+    en: 'Fetches URLs directly from this machine with no API key or charges, including intranet and loopback addresses. Decodes text, HTML, JSON, XML, and text-based PDFs; no JavaScript or cookies, and scanned PDFs need OCR. You can also try DeepSeek Fetch API.',
+    zh: '本机直接请求，免 API Key 与计费，可访问内网和本机。可解码 HTML、JSON 等文本以及可提取文本的 PDF，不执行 JavaScript、不带登录态，扫描版 PDF 需要 OCR；也可以试试 DeepSeek Fetch API',
+    ja: 'このマシンから URL を直接取得し、API キーや料金は不要で、イントラネットやループバックのアドレスにもアクセスできます。テキスト、HTML、JSON、XML、テキストを抽出できる PDF をデコードし、JavaScript や Cookie には対応せず、スキャンした PDF には OCR が必要です。DeepSeek Fetch API も試せます。',
+    es: 'Obtiene las URL directamente desde este equipo, sin clave de API ni cargos, incluidas direcciones de la intranet y de bucle invertido. Decodifica texto, HTML, JSON, XML y PDF con texto; sin JavaScript ni cookies, y los PDF escaneados necesitan OCR. También puede probar DeepSeek Fetch API.',
+    fr: 'Récupère les URL directement depuis cette machine, sans clé API ni frais, y compris les adresses intranet et de bouclage. Décode le texte, le HTML, le JSON, le XML et les PDF textuels ; ni JavaScript ni cookies, et les PDF numérisés nécessitent un OCR. Vous pouvez aussi essayer DeepSeek Fetch API.',
+    de: 'Ruft URLs direkt von diesem Rechner ab, ohne API-Schlüssel oder Kosten, auch Intranet- und Loopback-Adressen. Dekodiert Text, HTML, JSON, XML und textbasierte PDFs; kein JavaScript, keine Cookies, und gescannte PDFs benötigen OCR. Sie können auch DeepSeek Fetch API ausprobieren.',
+    ru: 'Загружает URL напрямую с этого компьютера без ключа API и оплаты, включая адреса интрасети и loopback. Декодирует текст, HTML, JSON, XML и PDF с текстом; без JavaScript и cookie, а для сканированных PDF нужен OCR. Можно также попробовать DeepSeek Fetch API.',
+    pt: 'Obtém URLs diretamente desta máquina, sem chave de API nem cobranças, incluindo endereços da intranet e de loopback. Decodifica texto, HTML, JSON, XML e PDFs com texto; sem JavaScript ou cookies, e PDFs digitalizados precisam de OCR. Você também pode experimentar a DeepSeek Fetch API.',
   }
 
   /** @param limits - resolved transport and response limits. */
@@ -131,6 +136,7 @@ export class HttpFetchProvider implements WebFetchProvider {
       await response.body?.cancel()
       throw new WebError(`unsupported content type "${contentType ?? 'unknown'}"`, 'WEB_UNSUPPORTED_CONTENT_TYPE')
     }
+    if (kind === 'pdf') return await this.readPdf(response, finalUrl, signal)
 
     // A header charset is checked before reading so an unsupported one releases the stream early.
     // HTML without one is decided from its own bytes after the read.
@@ -167,6 +173,55 @@ export class HttpFetchProvider implements WebFetchProvider {
       body,
       truncated: truncatedByBytes || truncatedByChars,
     }
+  }
+
+  /**
+   * Read the PDF bytes under the byte cap, then extract page text in a Worker
+   * Thread. Extraction shares the fetch deadline, and every exit terminates the
+   * Worker. A byte-cap cut cannot yield a complete document, so it fails as
+   * `WEB_FETCH_TOO_LARGE`; PDF.js failures become `WEB_PDF_UNREADABLE` because a
+   * corrupt or encrypted document cannot be repaired into usable text.
+   */
+  private async readPdf(response: Response, finalUrl: URL, signal: AbortSignal): Promise<WebFetchResult> {
+    const { bytes, truncatedByBytes } = await this.readCapped(response, signal)
+    if (truncatedByBytes) {
+      throw new WebError(`PDF exceeds the maximum of ${this.limits.maxResponseBytes} bytes`, 'WEB_FETCH_TOO_LARGE')
+    }
+    let extraction: PdfExtraction
+    try {
+      extraction = await extractPdfInWorker(
+        bytes,
+        { maxPages: this.limits.maxPdfPages, maxChars: this.limits.maxBodyChars },
+        signal,
+      )
+    } catch (error: unknown) {
+      if (signal.aborted) throw translateAbortOrNetwork(error, signal)
+      if (error instanceof PdfExtractionUnavailableError) {
+        throw new WebError(
+          'this packaged runtime does not include PDF extraction; use the Node or desktop distribution',
+          'WEB_PDF_UNAVAILABLE',
+          { cause: error },
+        )
+      }
+      if (error instanceof PdfEngineLoadError) {
+        throw new WebError(error.message, 'WEB_PROVIDER_ERROR', { cause: error })
+      }
+      if (error instanceof PdfDocumentError) {
+        throw new WebError(
+          'PDF content could not be read; it may be corrupt, encrypted, or unsupported',
+          'WEB_PDF_UNREADABLE',
+          { cause: error },
+        )
+      }
+      throw new WebError('PDF extraction failed in its worker', 'WEB_PROVIDER_ERROR', { cause: error })
+    }
+    const body: WebFetchBody = {
+      kind: 'pdf',
+      content: extraction.content,
+      pageCount: extraction.pageCount,
+      pagesExtracted: extraction.pagesExtracted,
+    }
+    return { url: finalUrl.toString(), statusCode: response.status, body, truncated: extraction.truncated }
   }
 
   /**

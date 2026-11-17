@@ -38,6 +38,8 @@ export interface Config {
   timeoutMs?: number
   /** Maximum number of same-origin redirect hops to follow. */
   maxRedirects?: number
+  /** Maximum PDF pages whose text is extracted; later pages are not read. */
+  maxPdfPages?: number
   /** `User-Agent` header sent on every request. */
   userAgent?: string
 }
@@ -47,6 +49,7 @@ export const Config: z<Config> = z.object({
   maxBodyChars: z.number().default(100_000),
   timeoutMs: z.number().default(30_000),
   maxRedirects: z.number().default(5),
+  maxPdfPages: z.number().default(50),
   userAgent: z.string().default(DEFAULT_USER_AGENT),
 })
 
@@ -57,6 +60,13 @@ type ResolvedConfig = Required<Config>
 function assertPositiveFinite(name: string, value: number): void {
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`web-fetch-http: ${name} must be a positive finite number`)
+  }
+}
+
+/** A page count limit must be a positive integer. */
+function assertPositiveInteger(name: string, value: number): void {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`web-fetch-http: ${name} must be a positive integer`)
   }
 }
 
@@ -83,11 +93,13 @@ export function apply(ctx: Context, config: Config): void {
   assertPositiveFinite('maxBodyChars', resolved.maxBodyChars)
   assertTimeoutMs(resolved.timeoutMs)
   assertNonNegativeInteger('maxRedirects', resolved.maxRedirects)
+  assertPositiveInteger('maxPdfPages', resolved.maxPdfPages)
   const limits: HttpFetchLimits = {
     maxResponseBytes: resolved.maxResponseBytes,
     maxBodyChars: resolved.maxBodyChars,
     timeoutMs: resolved.timeoutMs,
     maxRedirects: resolved.maxRedirects,
+    maxPdfPages: resolved.maxPdfPages,
     userAgent: resolved.userAgent,
   }
   ctx.web.registerFetchProvider(new HttpFetchProvider(limits))

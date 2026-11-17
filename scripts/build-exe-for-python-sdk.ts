@@ -300,8 +300,11 @@ class SingleExeBuild {
     if (this.staging === root || root.startsWith(this.staging + sep)) {
       throw new Error(`build-exe-for-python-sdk: refusing to clear staging dir ${this.staging}: it contains the repo root.`)
     }
-    if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] rm -rf ${this.staging}`)
-    else await rm(this.staging, { recursive: true, force: true })
+    // Clear the whole generated runtime tree: it lives inside the deployed
+    // Python package, so leaving an earlier build there would copy it into the
+    // staging closure and inflate the executable.
+    if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] rm -rf ${resolve(root, PYTHON_RUNTIME_DIR)}`)
+    else await rm(resolve(root, PYTHON_RUNTIME_DIR), { recursive: true, force: true })
     await this.runPnpm('deploy', [
       '--filter',
       DEPLOY_ROOT_PACKAGE,
@@ -316,6 +319,29 @@ class SingleExeBuild {
       this.staging,
     ])
     await this.materializeStagedLinks()
+    // PDF extraction would add a 13.7 MB engine and push the runtime wheel past
+    // PyPI's per-file limit; the packaged runtime reports WEB_PDF_UNAVAILABLE.
+    // Node and desktop distributions keep the dependency.
+    const prunedRuntimePatterns = [
+      // The engine itself, including the virtual-store copy.
+      'node_modules/**/pdfjs-dist',
+      // PDF.js's optional native canvas is installed because the dependency is
+      // production-scoped; text extraction never renders a page.
+      'node_modules/@napi-rs/canvas*',
+    ]
+    if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] rm -rf ${prunedRuntimePatterns.join(', ')}`)
+    else {
+      for (const pattern of prunedRuntimePatterns) {
+        for await (const path of glob(pattern, { cwd: this.staging })) {
+          await rm(join(this.staging, path), { recursive: true, force: true })
+        }
+        const remaining: string[] = []
+        for await (const path of glob(pattern, { cwd: this.staging })) remaining.push(path)
+        if (remaining.length > 0) {
+          throw new Error(`build-exe-for-python-sdk: ${pattern} remains in the staged runtime: ${remaining.join(', ')}`)
+        }
+      }
+    }
     if (this.cli.dryRun) {
       for (const name of DEPLOY_ONLY_DOCS) console.log(`build-exe-for-python-sdk: [dry-run] rm -f ${join(this.staging, name)}`)
     } else {
@@ -486,7 +512,14 @@ class SingleExeBuild {
     if (this.cli.dryRun) console.log(`build-exe-for-python-sdk: [dry-run] keep only node-pty prebuilds ${selected}`)
     else {
       const source = join(packageDirectory, 'prebuilds', selected)
-      if (existsSync(source)) await cp(source, join(prebuilds, selected), { recursive: true })
+      const destination = join(prebuilds, selected)
+      // A hoisted local deploy can resolve both paths to one directory.
+      if (existsSync(source)) {
+        // A hoisted deploy can hardlink these files; replacing the directory
+        // first keeps `cp` from treating src and dest as the same file.
+        await rm(destination, { recursive: true, force: true })
+        await cp(source, destination, { recursive: true })
+      }
       for (const entry of await readdir(prebuilds, { withFileTypes: true })) {
         if (entry.isDirectory() && entry.name !== selected) await rm(join(prebuilds, entry.name), { recursive: true, force: true })
       }

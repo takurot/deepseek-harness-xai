@@ -47,6 +47,14 @@ export interface WebSearchBlockProps {
   className?: string | undefined
 }
 
+/** PDF page accounting shown on a fetch card, matching the persisted fetch meta. */
+export interface WebFetchPdfInfo {
+  /** Total pages in the document. */
+  pageCount: number
+  /** Pages whose text the extraction represented. */
+  pagesExtracted: number
+}
+
 /** A `web_fetch` card: the retrieval summary for one fetched URL. */
 export interface WebFetchBlockProps {
   kind: 'fetch'
@@ -58,6 +66,8 @@ export interface WebFetchBlockProps {
   statusCode: number
   /** True when the provider or the output cap cut the fetched content. */
   truncated: boolean
+  /** Extracted PDF page accounting; absent for an HTML or text body. */
+  pdf?: WebFetchPdfInfo | undefined
   /** Extra class merged onto the wrapper (callers position; this component draws). */
   className?: string | undefined
 }
@@ -72,6 +82,8 @@ export interface WebBlockLabels {
   failedQueries: string
   http: string
   contentTruncated: string
+  /** PDF page summary; receives the extracted page count and the document total. */
+  pdfPages: (extracted: number, total: number) => string
   markdown: MarkdownLabels
 }
 
@@ -213,12 +225,13 @@ function WebSearchBlock({ answer, sources, truncated, failedQueries, labels, cla
  * @param props - see {@link WebFetchBlockProps}.
  * @returns the fetch card element.
  */
-function WebFetchBlock({ url, statusCode, truncated, labels, className }: WebFetchBlockProps) {
+function WebFetchBlock({ url, statusCode, truncated, pdf, labels, className }: WebFetchBlockProps) {
   return (
     <div className={clsx(css.block, css.fetch, className)} data-web="fetch">
       <SafeLink url={url} label={url} className={css.fetchUrl} />
       <div className={css.fetchMeta}>
         <span className={css.status}>{labels.http} {statusCode}</span>
+        {pdf !== undefined && <span className={css.pdf}>{labels.pdfPages(pdf.pagesExtracted, pdf.pageCount)}</span>}
         {truncated && <span className={css.truncated}>{labels.contentTruncated}</span>}
       </div>
     </div>

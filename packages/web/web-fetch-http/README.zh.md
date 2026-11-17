@@ -1,5 +1,5 @@
 ---
-description: "ctx.web 的匿名 HTTP(S) 抓取后端：部署方如何挂载有界的 URL 抓取，含同源重定向与仅文本解码。"
+description: "ctx.web 的匿名 HTTP(S) 抓取后端：部署方如何挂载有界的 URL 抓取，含同源重定向、有界文本解码与 PDF 文本提取。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-有了 `dsh-web-fetch-http`，harness 可以通过 web 服务（`ctx.web`）抓取 HTTP(S) 页面，并在不发送凭据的情况下获得状态码与有界、解码后的内容。当组合需要 URL 校验、仅同源重定向、字节和字符上限及显式产品 `User-Agent` 时选择它。它把非 2xx 响应作为结果而非错误返回，并拒绝二进制数据与不受支持的内容类型。它不限制目标地址，因此可以访问 loopback 与内网主机。面向模型的 `web_fetch` 工具位于 `dsh-tool-web`，由它渲染本提供方的正文。
+有了 `dsh-web-fetch-http`，harness 可以通过 web 服务（`ctx.web`）抓取 HTTP(S) 页面，并在不发送凭据的情况下获得状态码与有界、解码后的正文，包括从 PDF 响应中提取的逐页文本。当组合需要 URL 校验、仅同源重定向、字节和字符上限及显式产品 `User-Agent` 时选择它。它把非 2xx 响应作为结果而非错误返回，在隔离的 Worker 线程中提取 PDF 文本，并拒绝其他二进制数据与不受支持的内容类型。它不限制目标地址，因此可以访问 loopback 与内网主机。面向模型的 `web_fetch` 工具位于 `dsh-tool-web`，由它渲染本提供方的正文。
 
 ## 目录
 
@@ -46,22 +46,23 @@ kind: "package-reference"
 | `maxBodyChars` | `100,000` | 解码主体最大字符数 |
 | `timeoutMs` | `30,000` | 抓取超时——资源兜底，不是面向模型的工具预算 |
 | `maxRedirects` | `5` | 同源重定向最大跳数（`0` 表示不跟随） |
+| `maxPdfPages` | `50` | 提取文本的最大 PDF 页数；后续页面不会被读取 |
 | `userAgent` | `deepseek-harness/…` | 每次请求发送的 `User-Agent` 标头 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-web-fetch-http)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
 ### 抓取返回什么
 
-成功调用产生 `WebFetchResult`：允许的重定向之后的最终 URL、HTTP 状态码、分类为 `html` 或 `text` 的解码正文，以及 `truncated` 标志。非 2xx 响应是结果而非错误——状态码是被抓取资源状态的一部分；`WebError` 只用于无法安全获取或表示资源的失败。
+成功调用产生 `WebFetchResult`：允许的重定向之后的最终 URL、HTTP 状态码、分类为 `html`、`text` 或 `pdf` 的解码正文，以及 `truncated` 标志。`pdf` 正文携带用 U+000C 连接的逐页文本、文档的 `pageCount` 与 `pagesExtracted` 页数；扫描件得到空页分段而不是错误。非 2xx 响应是结果而非错误——状态码是被抓取资源状态的一部分；`WebError` 只用于无法安全获取或表示资源的失败。
 
 ```text
 const page = await ctx.web.fetch({ url: 'https://example.com' })
-// page.body.kind === 'html' | 'text'; page.statusCode === 200 | 404 | ...
+// page.body.kind === 'html' | 'text' | 'pdf'; page.statusCode === 200 | 404 | ...
 ```
 
 ### 传输行为
 
-提供方保持请求匿名且有界：只接受不含内嵌凭据且不超过 2,048 个字符的 `http:` 与 `https:` URL。请求经过进程级 dispatcher，因此已安装的代理策略生效，目标地址由系统解析器选择；任何目标地址都被允许。同源重定向会被跟随；跨源重定向会失败并要求重新调用。提供方还强制执行字节、字符、跳数和时间上限，拒绝不支持的内容类型，并发送显式产品 `User-Agent`。
+提供方保持请求匿名且有界：只接受不含内嵌凭据且不超过 2,048 个字符的 `http:` 与 `https:` URL。请求经过进程级 dispatcher，因此已安装的代理策略生效，目标地址由系统解析器选择；任何目标地址都被允许。同源重定向会被跟随；跨源重定向会失败并要求重新调用。提供方还强制执行字节、字符、页数、跳数和时间上限，拒绝不支持的内容类型，并发送显式产品 `User-Agent`。PDF 文本提取在同一个抓取期限内、于 Worker 线程中运行，任何结局都会终止该 Worker。超过字节上限的 PDF 不会被部分解码：它以 `WEB_FETCH_TOO_LARGE` 失败。
 
 当标头没有声明 charset 且响应是 HTML 时，提供方读取页面自身的声明：字节顺序标记，否则是完整包含在前 1,024 字节内的第一个 `<meta charset>` 或 `<meta http-equiv="content-type">`。有界预扫描跳过注释及其他标签，包括带引号的属性值；未终止的标签或注释消耗剩余字节。属性名按 ASCII 不区分大小写匹配，重复属性以首次出现为准，`charset` 优先于 `content`，与属性顺序无关；`content` 要求 `http-equiv` 的值精确匹配 `content-type`。标头 charset 始终优先。`<meta>` 中解码器不支持的标签会以 `WEB_UNSUPPORTED_CONTENT_TYPE` 失败，而不是返回乱码；`<meta>` 中的 UTF-16 标签按 UTF-8 读取。没有声明的页面仍按 UTF-8。只读取声明，不做猜测：没有统计式检测。
 
@@ -69,7 +70,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 ### 失败与恢复
 
-失败会抛出 `WebError`，其中包含可供程序路由的错误码：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_REDIRECT_BLOCKED`、`WEB_UNSUPPORTED_CONTENT_TYPE`、`WEB_ABORTED` 或 `WEB_PROVIDER_ERROR`。`WEB_UNSUPPORTED_CONTENT_TYPE` 涵盖不支持的媒体类型、不支持的 charset 声明，以及畸形声明恢复过程中遇到的非法 UTF-8。内容编码层数过多且正文不完整的响应会以 `WEB_PROVIDER_ERROR` 失败，不会终止宿主进程。直接调用方可以按错误码路由；面向模型的 `web_fetch` 工具会在自己的错误包装层内把失败文本呈现给模型。
+失败会抛出 `WebError`，其中包含可供程序路由的错误码：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_REDIRECT_BLOCKED`、`WEB_UNSUPPORTED_CONTENT_TYPE`、`WEB_PDF_UNREADABLE`、`WEB_PDF_UNAVAILABLE`、`WEB_ABORTED` 或 `WEB_PROVIDER_ERROR`。`WEB_UNSUPPORTED_CONTENT_TYPE` 涵盖不支持的媒体类型、不支持的 charset 声明，以及畸形声明恢复过程中遇到的非法 UTF-8。`WEB_PDF_UNREADABLE` 涵盖损坏、加密或不支持的 PDF；PDF 提取 Worker 的故障是 `WEB_PROVIDER_ERROR`。`WEB_PDF_UNAVAILABLE` 表示该构建不含提取引擎：打包的 Python runtime wheel 就是如此，其错误信息会指出应改用 Node 或桌面发行版。内容编码层数过多且正文不完整的响应会以 `WEB_PROVIDER_ERROR` 失败，不会终止宿主进程。直接调用方可以按错误码路由；面向模型的 `web_fetch` 工具会在自己的错误包装层内把失败文本呈现给模型。
 
 -----
 
@@ -93,12 +94,15 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：配置 schema、上限验证、提供方注册 |
-| [`src/provider.ts`](src/provider.ts) | `HttpFetchProvider`：传输、重定向跟随、有界读取、charset 解码 |
+| [`src/provider.ts`](src/provider.ts) | `HttpFetchProvider`：传输、重定向跟随、有界读取、charset 解码、PDF 提取 |
+| [`src/pdf-extract.ts`](src/pdf-extract.ts) | 有界的 PDF.js 页面文本提取及其页数／字符统计 |
+| [`src/pdf-thread.ts`](src/pdf-thread.ts) | 提取的 Worker 线程生命周期，任何结局都会终止 |
+| [`src/worker.ts`](src/worker.ts) | Worker 入口：校验请求并回报文本或文档故障 |
 | [`src/policy.ts`](src/policy.ts) | URL 校验、同源检查、内容类型分类、charset 解析与 HTML charset 嗅探 |
 
 ### 读取路径
 
-抓取先校验 URL，再发送请求。每次同源重定向都重复 URL 校验；跨源重定向在接收响应字节前失败。最终响应按 `Content-Type` 分类、在字节上限内读取，再按标头 charset 解码；没有标头 charset 的 HTML 则按页面自身的声明解码（含有 UTF-8 的畸形标头声明使用严格 UTF-8 恢复）；解码后的文本再截断到字符上限。
+抓取先校验 URL，再发送请求。每次同源重定向都重复 URL 校验；跨源重定向在接收响应字节前失败。最终响应按 `Content-Type` 分类、在字节上限内读取，再按标头 charset 解码；没有标头 charset 的 HTML 则按页面自身的声明解码（含有 UTF-8 的畸形标头声明使用严格 UTF-8 恢复）；解码后的文本再截断到字符上限。`pdf` 响应在字节上限内读取，并在 Worker 线程中逐页提取。
 
 </details>
 
@@ -121,7 +125,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 <a id="model-experience"></a>
 ## 模型体验
 
-间接地，通过 `dsh-tool-web`：该工具把本提供方经 `maxBodyChars` 限制的解码文本或由 HTML 转换得到的 markdown 置于抓取结果包装层内，而重定向、标头与传输上限保持隐藏。
+间接地，通过 `dsh-tool-web`：该工具把本提供方经 `maxBodyChars` 限制的解码文本、由 HTML 转换得到的 markdown，或 PDF 逐页文本（`[Page N of <total>]` 标记、页数上限提示与无文本／OCR 提示）置于抓取结果包装层内，而重定向、标头与传输上限保持隐藏。
 
 #### KV Cache 影响
 
@@ -135,7 +139,11 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 这些限制说明提供方何时不安全或不合适。它们是当前包约束。
 
 - **可以访问私有目标**——loopback、内网与云元数据地址与其他主机一样会被抓取。需要阻止模型访问这些地址的部署必须添加 `tools/pre-execute` 策略、网络隔离，或不挂载抓取工具。
-- **只解码文本内容**——包括 html/xhtml 与 `text/*` 加 JSON/XML 家族；缺少 `Content-Type` 或任何二进制类型都会抛出 `WEB_UNSUPPORTED_CONTENT_TYPE`，可提取文本的 PDF 解码属于明确的延期工作。
+- **只解码文本内容**——包括 html/xhtml、`text/*` 加 JSON/XML 家族，以及可提取文本的 PDF；缺少 `Content-Type` 或任何其他二进制类型都会抛出 `WEB_UNSUPPORTED_CONTENT_TYPE`。扫描版 PDF 没有文本层，提取会返回空页，OCR 不在范围内。
+- **打包的 Python runtime 不含 PDF 引擎**——为满足 PyPI 单文件大小上限，runtime wheel 省略了 `pdfjs-dist`，因此其中的 PDF 抓取会以 `WEB_PDF_UNAVAILABLE` 失败；非 PDF 抓取不受影响。Node 与桌面发行版包含该引擎。
+- **PDF.js 解析是严格的**——`stopAtErrors` 会让结构损坏的文档以 `WEB_PDF_UNREADABLE` 失败，而不是恢复出部分页面，运维可以据此把它与被截断的响应区分开。
+- **响应 MIME 类型决定 PDF 处理**——只有 `application/pdf` 会选择文本提取；以其他类型（例如 `application/octet-stream`）提供的 PDF 仍会以 `WEB_UNSUPPORTED_CONTENT_TYPE` 失败。
+- **大 PDF 仍受字节上限约束**——超过 `maxResponseBytes`（默认 5,000,000 字节）的 PDF 会以 `WEB_FETCH_TOO_LARGE` 失败，而不是返回部分文档；需要抓取大型论文的部署应提高该上限。
 - **charset 检测只依据声明**——标头优先，其次是 HTML 页面前 1,024 字节内的字节顺序标记或 `<meta>`；未声明的旧编码页面仍按 UTF-8 解码并出现替换字符，不支持且不含 UTF-8 标签的声明会抛出异常。
 - **UTF-8 恢复是一种优先规则，不是编码检测**——同一组字节可能同时是合法的 UTF-8 和其他编码，长响应也不例外。恢复路径在这种情况下选择 UTF-8；不含 UTF-8 标签的畸形声明仍不受支持。
 

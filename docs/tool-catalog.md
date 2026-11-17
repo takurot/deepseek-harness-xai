@@ -2641,7 +2641,7 @@ Source: [`packages/skill/tool-workspace-dependencies/src/index.ts`](../packages/
 
 ### `web_fetch`
 
-Fetch the content of a specific HTTP(S) URL and return it decoded to text.
+Fetch the content of a specific HTTP(S) URL and return it decoded to text. PDF pages are extracted as text; a scanned PDF without a text layer returns no text and needs OCR.
 
 ```json
 {

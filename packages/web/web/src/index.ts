@@ -37,6 +37,14 @@ export type {
   WebSearchSource,
 } from './types.ts'
 
+/**
+ * Separator between page spans in a `pdf` {@link WebFetchBody.content}: U+000C
+ * FORM FEED. A provider joins its page text with this value and a consumer
+ * splits on it, so the separator is one seam contract rather than a literal
+ * repeated per package.
+ */
+export const WEB_FETCH_PDF_PAGE_SEPARATOR = '\u000C'
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     web: WebRuntime

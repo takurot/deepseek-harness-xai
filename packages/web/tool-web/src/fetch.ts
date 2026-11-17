@@ -10,6 +10,7 @@ import TurndownService from 'turndown'
 import { gfm } from '@joplin/turndown-plugin-gfm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, ToolResult, WebFetchResultView } from '@deepseek-ai/dsh-tools'
+import { WEB_FETCH_PDF_PAGE_SEPARATOR } from '@deepseek-ai/dsh-web'
 import type { WebFetchBody, WebFetchResult } from '@deepseek-ai/dsh-web'
 import { assertNever, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { EXTERNAL_WEB_CONTENT_NOTICE } from './trust.ts'
@@ -229,17 +230,64 @@ interface RenderedBody {
   sourceTruncated: boolean
 }
 
+/** The page-cut notice for a rendered prefix ending at page `shown`. */
+function pdfPageCutNotice(shown: number, pageCount: number): string {
+  return `[PDF: first ${shown} of ${pageCount} pages extracted.]`
+}
+
+/** Split seam PDF content into trimmed page spans. */
+function pdfPageTexts(content: string): string[] {
+  return content.split(WEB_FETCH_PDF_PAGE_SEPARATOR).map(text => text.trim())
+}
+
+/**
+ * Render page blocks that fit a character budget. Every page span counts as
+ * consumed, including a text-free one, so a trailing blank page never looks
+ * like a cut. A block that cannot fit is included only when the budget holds
+ * its complete marker, its newline, and at least one text character.
+ */
+function renderPdfBlocks(
+  pageTexts: readonly string[],
+  pageCount: number,
+  budget: number,
+): { text: string; consumed: number; cut: boolean } {
+  const blocks: string[] = []
+  let length = 0
+  let consumed = 0
+  for (const [index, text] of pageTexts.entries()) {
+    if (text === '') {
+      consumed = index + 1
+      continue
+    }
+    const block = `[Page ${index + 1} of ${pageCount}]\n${text}`
+    const separator = blocks.length > 0 ? 2 : 0
+    const marker = `[Page ${index + 1} of ${pageCount}]`
+    if (length + separator + block.length > budget) {
+      const remaining = budget - length - separator
+      if (remaining >= marker.length + 2) {
+        blocks.push(block.slice(0, remaining))
+        consumed = index + 1
+      }
+      return { text: blocks.join('\n\n'), consumed, cut: true }
+    }
+    blocks.push(block)
+    length += separator + block.length
+    consumed = index + 1
+  }
+  return { text: blocks.join('\n\n'), consumed, cut: false }
+}
+
 /**
  * Render a fetched body to model-facing markdown text.
  *
  * @param body - the decoded body; `html` is converted via turndown, `text`
- *   passes through verbatim.
+ *   passes through verbatim, and `pdf` page text gains page markers.
  * @param maxInputChars - maximum source characters processed synchronously.
  * @returns the rendered prefix and whether the source was cut. HTML nested
  *   beyond {@link MAX_CONVERSION_DEPTH} or rejected by turndown is omitted so
  *   raw active markup never reaches the model-facing result.
  */
-function renderBody(body: WebFetchBody, maxInputChars: number): RenderedBody {
+function renderBody(body: Exclude<WebFetchBody, { kind: 'pdf' }>, maxInputChars: number): RenderedBody {
   const content = body.content.slice(0, maxInputChars)
   const sourceTruncated = content.length !== body.content.length
   switch (body.kind) {
@@ -255,7 +303,7 @@ function renderBody(body: WebFetchBody, maxInputChars: number): RenderedBody {
       }
     case 'text':
       return { text: content, sourceTruncated }
-    /* v8 ignore next 2 -- WebFetchBody is a closed union; this arm is unreachable and only makes adding a kind a compile error. */
+    /* v8 ignore next 2 -- the renderable union is closed; this arm only makes adding a kind a compile error. */
     default:
       return assertNever(body, 'unhandled web fetch body kind')
   }
@@ -271,8 +319,10 @@ interface RenderedFetch {
   /**
    * True when the provider capped the body, a pre-conversion source cut applied,
    * or the complete output exceeded `maxOutputChars`. This is the effective
-   * truncation the returned text reflects (its footer), wider than the
-   * provider-only `WebFetchResult.truncated`.
+   * truncation, wider than the provider-only `WebFetchResult.truncated`. A
+   * text-free PDF, or a provider that reports fewer extracted pages without its
+   * truncation flag, can report true without the footer because the text itself
+   * states the omission.
    */
   truncated: boolean
 }
@@ -327,13 +377,72 @@ const renderCache = new WeakMap<WebFetchResult, Map<number, RenderedFetch>>()
  */
 function computeFetchOutput(result: WebFetchResult, maxOutputChars: number): RenderedFetch {
   const header = `Fetched ${result.url} (HTTP ${result.statusCode})\n\n${EXTERNAL_WEB_CONTENT_NOTICE}\n\n`
+  if (result.body.kind === 'pdf') return computePdfFetchOutput(result.body, result.truncated, header, maxOutputChars)
   const rendered = renderBody(result.body, maxOutputChars)
   const prefix = `${header}${rendered.text}`
   const truncated = result.truncated || rendered.sourceTruncated || prefix.length > maxOutputChars
-  const full = `${prefix}${truncated ? TRUNCATION_FOOTER : ''}`
+  const footer = truncated ? TRUNCATION_FOOTER : ''
+  const full = `${prefix}${footer}`
   if (full.length <= maxOutputChars) return { text: full, truncated }
-  if (maxOutputChars < TRUNCATION_FOOTER.length) return { text: full.slice(0, maxOutputChars), truncated }
-  return { text: `${prefix.slice(0, maxOutputChars - TRUNCATION_FOOTER.length)}${TRUNCATION_FOOTER}`, truncated }
+  if (maxOutputChars < footer.length) return { text: full.slice(0, maxOutputChars), truncated }
+  return { text: `${prefix.slice(0, maxOutputChars - footer.length)}${footer}`, truncated }
+}
+
+/**
+ * Render a PDF body whose page-cut notice reflects the pages the final text
+ * actually shows, including a cut made by the complete-output cap. A cap that
+ * cannot hold one page block degrades to the header and truncation footer.
+ *
+ * @param body - the seam's `pdf` body.
+ * @param providerTruncated - the provider's own truncation flag.
+ * @param header - the fixed `Fetched …` plus untrusted-content header.
+ * @param maxOutputChars - cap on the complete returned string.
+ * @returns the bounded text and effective truncation.
+ */
+function computePdfFetchOutput(body: Extract<WebFetchBody, { kind: 'pdf' }>, providerTruncated: boolean, header: string, maxOutputChars: number): RenderedFetch {
+  const pageTexts = pdfPageTexts(body.content)
+  /** Header plus footer only, for a cap that cannot fit one page block. */
+  const minimal = (): RenderedFetch => {
+    const base = `${header}${TRUNCATION_FOOTER}`
+    return { text: base.length <= maxOutputChars ? base : base.slice(0, maxOutputChars), truncated: true }
+  }
+  if (!pageTexts.some(text => text !== '')) {
+    const shown = Math.min(body.pagesExtracted, pageTexts.length)
+    const scope = shown < body.pageCount ? `in the first ${shown} of ${body.pageCount} pages` : 'in this PDF'
+    const text = `${header}[PDF: no extractable text found ${scope}. It may be a scanned document; OCR is not supported.]`
+    return {
+      text: text.length <= maxOutputChars ? text : text.slice(0, maxOutputChars),
+      truncated: providerTruncated || text.length > maxOutputChars,
+    }
+  }
+  const available = Math.min(body.pagesExtracted, pageTexts.length)
+  // Phase one: a provider that did not cut may still fit entirely, so render
+  // without reserving the footer and keep the exact text when every page fits.
+  if (!providerTruncated) {
+    const plain = renderPdfBlocks(pageTexts.slice(0, available), body.pageCount, maxOutputChars - header.length)
+    if (!plain.cut) {
+      const notice = plain.consumed < body.pageCount ? pdfPageCutNotice(plain.consumed, body.pageCount) : ''
+      const text = `${header}${notice === '' ? '' : `${notice}\n\n`}${plain.text}`
+      if (text.length <= maxOutputChars) return { text, truncated: plain.consumed < body.pageCount }
+    }
+  }
+  // Phase two: reserve the footer and shrink the page budget until the notice
+  // and the blocks below it agree.
+  let limit = available
+  for (;;) {
+    const notice = limit < body.pageCount ? pdfPageCutNotice(limit, body.pageCount) : ''
+    const budget = maxOutputChars - header.length - (notice === '' ? 0 : notice.length + 2) - TRUNCATION_FOOTER.length
+    if (budget <= 0) return minimal()
+    const blocks = renderPdfBlocks(pageTexts.slice(0, limit), body.pageCount, budget)
+    // Only leading text-free spans fit; a notice without a block would claim
+    // pages the body does not show.
+    if (blocks.text === '') return minimal()
+    const text = `${header}${notice === '' ? '' : `${notice}\n\n`}${blocks.text}${TRUNCATION_FOOTER}`
+    if (blocks.consumed === limit && text.length <= maxOutputChars) {
+      return { text, truncated: providerTruncated || blocks.cut || blocks.consumed < pageTexts.length }
+    }
+    limit = blocks.consumed
+  }
 }
 
 /**
@@ -375,6 +484,13 @@ export interface WebFetchMeta {
   statusCode: number
   /** True when the provider, a source cut, or the output cap trimmed the content. */
   truncated: boolean
+  /** PDF page accounting; absent for an HTML or text body. */
+  pdf?: {
+    /** Total pages in the document. */
+    readonly pageCount: number
+    /** Pages whose text the extraction represented. */
+    readonly pagesExtracted: number
+  }
 }
 
 /**
@@ -387,10 +503,17 @@ export interface WebFetchMeta {
  * @param value - the canonical `web_fetch` output value (the seam's result shape).
  * @param maxOutputChars - the deployment's output cap, the same one
  *   {@link formatFetchOutput} applies to the render text.
- * @returns the URL, status code, and effective truncation flag.
+ * @returns the URL, status code, effective truncation flag, and PDF page accounting when present.
  */
 export function fetchMetaFromValue(value: WebFetchResult, maxOutputChars: number): JsonValue {
-  return { url: value.url, statusCode: value.statusCode, truncated: renderFetchOutput(value, maxOutputChars).truncated }
+  return {
+    url: value.url,
+    statusCode: value.statusCode,
+    truncated: renderFetchOutput(value, maxOutputChars).truncated,
+    ...value.body.kind === 'pdf'
+      ? { pdf: { pageCount: value.body.pageCount, pagesExtracted: value.body.pagesExtracted } }
+      : {},
+  }
 }
 
 /**
@@ -403,9 +526,19 @@ export function fetchMetaFromValue(value: WebFetchResult, maxOutputChars: number
  */
 export function fetchMetaFromResult(meta: unknown): WebFetchMeta | undefined {
   if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return undefined
-  const { url, statusCode, truncated } = meta as Record<string, unknown>
+  const { url, statusCode, truncated, pdf: rawPdf } = meta as Record<string, unknown>
   if (typeof url !== 'string' || typeof statusCode !== 'number' || typeof truncated !== 'boolean') return undefined
-  return { url, statusCode, truncated }
+  let pdf: WebFetchMeta['pdf']
+  if (rawPdf !== undefined) {
+    if (typeof rawPdf !== 'object' || rawPdf === null || Array.isArray(rawPdf)) return undefined
+    const { pageCount, pagesExtracted } = rawPdf as Record<string, unknown>
+    if (!Number.isInteger(pageCount) || (pageCount as number) < 1) return undefined
+    if (!Number.isInteger(pagesExtracted) || (pagesExtracted as number) < 1 || (pagesExtracted as number) > (pageCount as number)) {
+      return undefined
+    }
+    pdf = { pageCount: pageCount as number, pagesExtracted: pagesExtracted as number }
+  }
+  return { url, statusCode, truncated, ...pdf === undefined ? {} : { pdf } }
 }
 
 /**
@@ -431,6 +564,7 @@ export function presentFetchResult(args: { url: string }, result: ToolResult): W
     url: meta.url,
     statusCode: meta.statusCode,
     truncated: meta.truncated,
+    ...meta.pdf === undefined ? {} : { pdf: meta.pdf },
   }
 }
 
@@ -457,7 +591,7 @@ export function applyWebFetchTool(ctx: Context, timeoutMs: number, maxOutputChar
 
   ctx.tools.register(defineTool({
     name: 'web_fetch',
-    description: 'Fetch the content of a specific HTTP(S) URL and return it decoded to text.',
+    description: 'Fetch the content of a specific HTTP(S) URL and return it decoded to text. PDF pages are extracted as text; a scanned PDF without a text layer returns no text and needs OCR.',
     parameters: {
       url: { type: 'string', required: true, description: 'The HTTP(S) URL to fetch.' },
     },
@@ -487,6 +621,16 @@ export function applyWebFetchTool(ctx: Context, timeoutMs: number, maxOutputChar
                   content: { type: 'string', required: true },
                 },
               },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  kind: { type: 'string', required: true, const: 'pdf' },
+                  content: { type: 'string', required: true },
+                  pageCount: { type: 'integer', required: true },
+                  pagesExtracted: { type: 'integer', required: true },
+                },
+              },
             ],
           },
           truncated: { type: 'boolean', required: true },
@@ -507,7 +651,14 @@ export function applyWebFetchTool(ctx: Context, timeoutMs: number, maxOutputChar
       return {
         url: result.url,
         statusCode: result.statusCode,
-        body: { kind: result.body.kind, content: result.body.content },
+        body: result.body.kind === 'pdf'
+          ? {
+            kind: result.body.kind,
+            content: result.body.content,
+            pageCount: result.body.pageCount,
+            pagesExtracted: result.body.pagesExtracted,
+          }
+          : { kind: result.body.kind, content: result.body.content },
         truncated: result.truncated,
       }
     },

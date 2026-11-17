@@ -217,6 +217,14 @@ describe('WebBlock fetch card', () => {
     expect(view.getByText('HTTP 200')).toBeTruthy()
   })
 
+  it('shows the PDF page summary only for a PDF fetch', () => {
+    const pdf = render(<WebBlock kind="fetch" url="https://example.com/paper.pdf" statusCode={200} truncated={false} pdf={{ pageCount: 3, pagesExtracted: 2 }} />)
+    expect(pdf.getByText('PDF · 2/3 页')).toBeTruthy()
+    cleanup()
+    const plain = render(<WebBlock kind="fetch" url="https://example.com/page" statusCode={200} truncated={false} />)
+    expect(plain.queryByText(/PDF/)).toBeNull()
+  })
+
   it('renders a non-http fetch url as plain text with no href', () => {
     const view = render(<WebBlock kind="fetch" url="file:///etc/passwd" statusCode={200} truncated={false} />)
     const label = view.getByText('file:///etc/passwd')

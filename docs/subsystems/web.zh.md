@@ -101,7 +101,10 @@ interface WebFetchResult {
   readonly statusCode: number
   /** Decoded body, classified by content kind. */
   readonly body: WebFetchBody
-  /** True when the provider capped the decoded body. */
+  /**
+   * True when the provider capped the decoded body. For a PDF body this covers
+   * the page cut and the extracted-character cut.
+   */
   readonly truncated: boolean
 }
 ```
@@ -119,7 +122,18 @@ interface WebFetchResult {
 type WebFetchBody =
   | { readonly kind: 'html'; readonly content: string }
   | { readonly kind: 'text'; readonly content: string }
+  | {
+    readonly kind: 'pdf'
+    /** Extracted page text joined by {@link WEB_FETCH_PDF_PAGE_SEPARATOR}; an empty page contributes an empty span. */
+    readonly content: string
+    /** Total pages in the document. */
+    readonly pageCount: number
+    /** Pages whose text is represented in `content`; a page or character cut can leave fewer than `pageCount`. */
+    readonly pagesExtracted: number
+  }
 ```
+
+`pdf` 正文是从 PDF 响应中提取的文本，而不是渲染后的页面：`content` 用 U+000C FORM FEED 连接每一页提取出的文本，`pageCount`/`pagesExtracted` 分别报告文档总页数与 `content` 中已有文本的页数。空页贡献一个空的分段，因此扫描件（没有文本层）得到的是空页分段而不是错误；OCR 不在范围内。当页数上限或字符上限截断了文档时，`truncated` 为 true。`dsh-web-fetch-http` 提供方不会返回部分解码的 PDF：超过字节上限的响应以 `WEB_FETCH_TOO_LARGE` 失败，损坏、加密或不支持的文档以 `WEB_PDF_UNREADABLE` 失败。
 
 ## 提供方可用性
 
@@ -137,7 +151,7 @@ HTTP 提供方不限制目的地址：`web_fetch` 会像访问其他主机一样
 
 ## 错误
 
-`WebError extends HarnessError`（[core.md](core.zh.md) 错误分类体系），带有 `code: string`（开放式，与其他 seam 的错误一致——`LlmError`、`SubagentError`），而非封闭联合类型：提供方可以在不修改 `dsh-web` 的情况下抛出自己的错误代码，消费方必须容忍未知错误代码。错误代码按所有者划分。共享的 `WebRuntime` 约定会抛出与 seam 无关的错误代码：`WEB_PROVIDER_UNAVAILABLE`、`WEB_PROVIDER_CONFIGURED_MISSING`、`WEB_PROVIDER_CONFIGURED_UNAVAILABLE`、`WEB_PROVIDER_AMBIGUOUS`、`WEB_DUPLICATE_PROVIDER`（注册时的编程错误，类似 `LlmRuntime` 的 `DUPLICATE_ADAPTER`）、`WEB_ABORTED`，以及 `WEB_PROVIDER_ERROR`（提供方自身故障经 seam 暴露时使用的兜底代码，包括 DNS、连接被拒绝、TLS 等网络或传输故障）。抓取传输层错误代码由 `dsh-web-fetch-http` 实现拥有，不同的抓取后端无需抛出它们：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_REDIRECT_BLOCKED`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_UNSUPPORTED_CONTENT_TYPE`。
+`WebError extends HarnessError`（[core.md](core.zh.md) 错误分类体系），带有 `code: string`（开放式，与其他 seam 的错误一致——`LlmError`、`SubagentError`），而非封闭联合类型：提供方可以在不修改 `dsh-web` 的情况下抛出自己的错误代码，消费方必须容忍未知错误代码。错误代码按所有者划分。共享的 `WebRuntime` 约定会抛出与 seam 无关的错误代码：`WEB_PROVIDER_UNAVAILABLE`、`WEB_PROVIDER_CONFIGURED_MISSING`、`WEB_PROVIDER_CONFIGURED_UNAVAILABLE`、`WEB_PROVIDER_AMBIGUOUS`、`WEB_DUPLICATE_PROVIDER`（注册时的编程错误，类似 `LlmRuntime` 的 `DUPLICATE_ADAPTER`）、`WEB_ABORTED`，以及 `WEB_PROVIDER_ERROR`（提供方自身故障经 seam 暴露时使用的兜底代码，包括 DNS、连接被拒绝、TLS 等网络或传输故障）。抓取传输层错误代码由 `dsh-web-fetch-http` 实现拥有，不同的抓取后端无需抛出它们：`WEB_INVALID_URL`、`WEB_BLOCKED_URL`、`WEB_REDIRECT_BLOCKED`、`WEB_FETCH_TOO_LARGE`、`WEB_FETCH_TIMEOUT`、`WEB_UNSUPPORTED_CONTENT_TYPE`、`WEB_PDF_UNREADABLE`、`WEB_PDF_UNAVAILABLE`。
 
 ## 服务
 

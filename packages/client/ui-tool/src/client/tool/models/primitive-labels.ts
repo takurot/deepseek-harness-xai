@@ -105,6 +105,7 @@ export function webBlockLabels(t: T): WebBlockLabels {
     failedQueries: t('web.failedQueries'),
     http: t('web.http'),
     contentTruncated: t('web.contentTruncated'),
+    pdfPages: (extracted, total) => t('web.pdfPages', { extracted, total }),
     markdown: markdownLabels(t),
   }
 }

@@ -189,6 +189,11 @@
   font: var(--dsw-font-xs-13);
 }
 
+.pdf {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+
 /* The fetch card's truncation note sits inline beside the status, so it drops
    the search card's top margin. */
 .fetch .truncated {

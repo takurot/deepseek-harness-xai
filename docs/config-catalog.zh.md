@@ -4662,7 +4662,7 @@ export type ApprovalPolicy = 'ask' | 'never'
 ## `@deepseek-ai/dsh-web`
 
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/web/web/src/index.ts:62`](../packages/web/web/src/index.ts)
+- `source`: [`packages/web/web/src/index.ts:70`](../packages/web/web/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -4778,6 +4778,8 @@ export interface Config {
   timeoutMs?: number
   /** Maximum number of same-origin redirect hops to follow. */
   maxRedirects?: number
+  /** Maximum PDF pages whose text is extracted; later pages are not read. */
+  maxPdfPages?: number
   /** `User-Agent` header sent on every request. */
   userAgent?: string
 }

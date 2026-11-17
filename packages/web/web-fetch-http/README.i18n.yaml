@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/web/web-fetch-http/README.md
 /:
-  en: dba7f5089d194048
-  zh: 956905ee19f6f362
+  en: dc08efa6143e414c
+  zh: 8cb062f4ee1a2c11
 /deepseek-ai-dsh-web-fetch-http:
   en: 2e839bfc4c365701
   zh: 62dd5239ae93471c
 /deepseek-ai-dsh-web-fetch-http/summary:
-  en: afb0ecfdd563bced
-  zh: 734f74bf506e34e2
+  en: 7ee29f5304a6d905
+  zh: 3f55b8fe272d514d
 /deepseek-ai-dsh-web-fetch-http/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -21,17 +21,17 @@
   en: acb7517f571c38b8
   zh: 8ee9da18953ab65e
 /deepseek-ai-dsh-web-fetch-http/use-this-package/minimal-configuration:
-  en: e4534189d5230861
-  zh: 5905731d7b5d9c60
+  en: f46e0e353ef0f944
+  zh: 1e2aff192002e097
 /deepseek-ai-dsh-web-fetch-http/use-this-package/what-a-fetch-returns:
-  en: 2d18cdcc9b53dd0f
-  zh: 3bc6ca7c5933ee5d
+  en: 9fae79d2425faabc
+  zh: de7c5ca2c4c491c4
 /deepseek-ai-dsh-web-fetch-http/use-this-package/transport-behavior:
-  en: a5ccb666ad66de59
-  zh: f6110310f98e7ff4
+  en: 0dfb97ed459d9398
+  zh: 69863709d179acfe
 /deepseek-ai-dsh-web-fetch-http/use-this-package/failures-and-recovery:
-  en: 152d9b2e033e47e6
-  zh: 89bae04576ad84eb
+  en: 19a65d0606802cd6
+  zh: a3933877264a1ff9
 /deepseek-ai-dsh-web-fetch-http/understand-the-implementation:
   en: 9842c69ad3636bb3
   zh: 3cdc3f816cbdd0cb
@@ -39,23 +39,23 @@
   en: 422128dac5eebdde
   zh: 25ba5f49b305a056
 /deepseek-ai-dsh-web-fetch-http/understand-the-implementation/source-map:
-  en: d072e18150fdcc43
-  zh: f19e9520c4c4fcc2
+  en: d2e1987280278890
+  zh: b8e3d5520058fa21
 /deepseek-ai-dsh-web-fetch-http/understand-the-implementation/read-path:
-  en: 12cfdfa453458681
-  zh: 501de2b2a0243d55
+  en: 1cc5d22dbbc311ce
+  zh: 87abe824b161ce73
 /deepseek-ai-dsh-web-fetch-http/further-exploration:
   en: eeaaf0b455673a1c
   zh: 0874f9f44ff9a220
 /deepseek-ai-dsh-web-fetch-http/model-experience:
-  en: 5c488f8d23ce3e90
-  zh: 3cc8f8dc3ab60b65
+  en: 30eee76ac031dbf6
+  zh: 705dc14fbcc95567
 /deepseek-ai-dsh-web-fetch-http/model-experience/kv-cache-effect:
   en: 40294c1c31b74824
   zh: d75d48f485447a74
 /deepseek-ai-dsh-web-fetch-http/known-limitations-and-deferred-work:
-  en: 1baa6d9884efb46a
-  zh: d4b2e018f1bc2d7d
+  en: bb0a53ce5e9c5a7d
+  zh: fdbe7cdc0a60e19f
 /deepseek-ai-dsh-web-fetch-http/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98

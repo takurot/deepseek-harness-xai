@@ -35,6 +35,17 @@ interface WebSearchQueryFailure {
   code: string
 }
 
+/** Validate the persisted PDF page accounting; `undefined` means the body was not a PDF. */
+function webPdf(value: unknown): { pageCount: number; pagesExtracted: number } | undefined | null {
+  if (value === undefined) return undefined
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const { pageCount, pagesExtracted } = value as Record<string, unknown>
+  if (typeof pageCount !== 'number' || !Number.isInteger(pageCount) || pageCount < 1) return null
+  if (typeof pagesExtracted !== 'number' || !Number.isInteger(pagesExtracted)
+    || pagesExtracted < 1 || pagesExtracted > pageCount) return null
+  return { pageCount, pagesExtracted }
+}
+
 function webSources(value: unknown): WebSource[] | null {
   if (!Array.isArray(value)) return null
   const sources: WebSource[] = []
@@ -93,11 +104,14 @@ export function webCardModel(block: ToolCallBlock): WebCardModelProps | null {
   }
   if (typeof meta.url !== 'string') return null
   if (typeof meta.statusCode !== 'number' || !Number.isInteger(meta.statusCode)) return null
+  const pdf = webPdf(meta.pdf)
+  if (pdf === null) return null
   return {
     kind: 'fetch',
     url: meta.url,
     statusCode: meta.statusCode,
     truncated: meta.truncated,
+    ...pdf === undefined ? {} : { pdf },
   }
 }
 
