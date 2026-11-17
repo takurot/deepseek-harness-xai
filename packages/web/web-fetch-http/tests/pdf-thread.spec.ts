@@ -61,6 +61,13 @@ it('reports a Worker-reported extraction failure as a document error', async () 
   await expect(result).rejects.toThrow('Invalid PDF structure')
 })
 
+it('reports a password-protected document as a document error naming the password', async () => {
+  const { result, worker } = start()
+  worker.emit('message', { ok: false, message: 'No password given' })
+  await expect(result).rejects.toBeInstanceOf(PdfDocumentError)
+  await expect(result).rejects.toThrow('No password given')
+})
+
 it.each([
   null,
   { pageCount: 2 },

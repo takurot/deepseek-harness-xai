@@ -228,34 +228,43 @@ interface RenderedBody {
   text: string
   /** Whether the source was cut before conversion to bound synchronous work. */
   sourceTruncated: boolean
+  /**
+   * The body carries no usable text at all, so a generic "fetch a narrower
+   * section" truncation footer would advise a remedy the document cannot offer.
+   */
+  noText?: boolean
 }
-
-/** Model-facing notice for a PDF whose pages carry no extractable text layer. */
-const PDF_NO_TEXT_NOTICE = '[No extractable text found in this PDF. It may be a scanned document; OCR is not supported.]'
 
 /**
  * Render extracted PDF text with document page markers. Page numbers are the
  * document's own, so a page without text leaves a gap rather than renumbering.
- * A page or character cut is stated once at the top; a document with no text on
- * any extracted page states that explicitly instead of rendering empty markers.
+ * The leading notice reports the pages actually present after the output cap
+ * sliced `content`, not the provider's wider extraction count. A document with
+ * no text on any present page states that explicitly, folding any page cut into
+ * the same notice instead of rendering empty markers.
  *
- * @param content - page text joined by U+000C, possibly cut by the output cap.
+ * @param content - page text joined by the seam separator, possibly cut by the output cap.
  * @param pageCount - total pages in the document.
- * @param pagesExtracted - pages represented in `content`.
- * @returns the bounded page blocks and any cap or no-text notice.
+ * @param pagesExtracted - pages represented in the provider's full content.
+ * @returns the bounded page blocks and whether the body carries no text.
  */
-function renderPdfText(content: string, pageCount: number, pagesExtracted: number): string {
+function renderPdfText(content: string, pageCount: number, pagesExtracted: number): Pick<RenderedBody, 'text' | 'noText'> {
+  const pages = content.split(WEB_FETCH_PDF_PAGE_SEPARATOR)
+  const shown = Math.min(pagesExtracted, pages.length)
   const blocks: string[] = []
-  if (pagesExtracted < pageCount) blocks.push(`[PDF: first ${pagesExtracted} of ${pageCount} pages extracted.]`)
   let textFound = false
-  for (const [index, page] of content.split(WEB_FETCH_PDF_PAGE_SEPARATOR).entries()) {
+  for (const [index, page] of pages.entries()) {
     const text = page.trim()
     if (text === '') continue
     textFound = true
     blocks.push(`[Page ${index + 1} of ${pageCount}]\n${text}`)
   }
-  if (!textFound) blocks.push(PDF_NO_TEXT_NOTICE)
-  return blocks.join('\n\n')
+  if (!textFound) {
+    const scope = shown < pageCount ? `in the first ${shown} of ${pageCount} pages` : 'in this PDF'
+    return { text: `[PDF: no extractable text found ${scope}. It may be a scanned document; OCR is not supported.]`, noText: true }
+  }
+  if (shown < pageCount) blocks.unshift(`[PDF: first ${shown} of ${pageCount} pages extracted.]`)
+  return { text: blocks.join('\n\n') }
 }
 
 /**
@@ -285,7 +294,7 @@ function renderBody(body: WebFetchBody, maxInputChars: number): RenderedBody {
     case 'text':
       return { text: content, sourceTruncated }
     case 'pdf':
-      return { text: renderPdfText(content, body.pageCount, body.pagesExtracted), sourceTruncated }
+      return { ...renderPdfText(content, body.pageCount, body.pagesExtracted), sourceTruncated }
     /* v8 ignore next 2 -- WebFetchBody is a closed union; this arm is unreachable and only makes adding a kind a compile error. */
     default:
       return assertNever(body, 'unhandled web fetch body kind')
@@ -358,13 +367,87 @@ const renderCache = new WeakMap<WebFetchResult, Map<number, RenderedFetch>>()
  */
 function computeFetchOutput(result: WebFetchResult, maxOutputChars: number): RenderedFetch {
   const header = `Fetched ${result.url} (HTTP ${result.statusCode})\n\n${EXTERNAL_WEB_CONTENT_NOTICE}\n\n`
+  const pdf = computePdfFetchOutput(result, header, maxOutputChars)
+  if (pdf !== undefined) return pdf
   const rendered = renderBody(result.body, maxOutputChars)
   const prefix = `${header}${rendered.text}`
   const truncated = result.truncated || rendered.sourceTruncated || prefix.length > maxOutputChars
-  const full = `${prefix}${truncated ? TRUNCATION_FOOTER : ''}`
+  // A text-free PDF cannot honor the footer's "fetch a narrower section" advice.
+  const footer = truncated && rendered.noText !== true ? TRUNCATION_FOOTER : ''
+  const full = `${prefix}${footer}`
   if (full.length <= maxOutputChars) return { text: full, truncated }
-  if (maxOutputChars < TRUNCATION_FOOTER.length) return { text: full.slice(0, maxOutputChars), truncated }
-  return { text: `${prefix.slice(0, maxOutputChars - TRUNCATION_FOOTER.length)}${TRUNCATION_FOOTER}`, truncated }
+  if (maxOutputChars < footer.length) return { text: full.slice(0, maxOutputChars), truncated }
+  return { text: `${prefix.slice(0, maxOutputChars - footer.length)}${footer}`, truncated }
+}
+
+/**
+ * Render page blocks that fit a character budget, reporting the highest
+ * document page whose text is represented. A block crossing the budget keeps
+ * its fitting prefix, so a cut is visible inside the block itself.
+ */
+function renderPdfBlocks(pageTexts: readonly string[], pageCount: number, budget: number): { text: string; shown: number; cut: boolean } {
+  const blocks: string[] = []
+  let length = 0
+  let shown = 0
+  for (const [index, text] of pageTexts.entries()) {
+    if (text === '') continue
+    const block = `[Page ${index + 1} of ${pageCount}]\n${text}`
+    const separator = blocks.length > 0 ? 2 : 0
+    if (length + separator + block.length > budget) {
+      const remaining = budget - length - separator
+      // A prefix shorter than the page marker would hide the page it counts.
+      if (remaining >= `[Page ${index + 1} of ${pageCount}]`.length) {
+        blocks.push(block.slice(0, remaining))
+        shown = index + 1
+      }
+      return { text: blocks.join('\n\n'), shown, cut: true }
+    }
+    blocks.push(block)
+    length += separator + block.length
+    shown = index + 1
+  }
+  return { text: blocks.join('\n\n'), shown, cut: false }
+}
+
+/**
+ * Render a PDF body whose page-cut notice reflects the pages the final text
+ * actually shows, including a cut made by the complete-output cap. Returns
+ * `undefined` for a budget too small to hold the header and one block, so the
+ * shared capped-render path can slice the text instead.
+ *
+ * @param result - the seam's fetch outcome.
+ * @param header - the fixed `Fetched …` plus untrusted-content header.
+ * @param maxOutputChars - cap on the complete returned string.
+ * @returns the bounded text and effective truncation, or undefined for a tiny cap.
+ */
+function computePdfFetchOutput(result: WebFetchResult, header: string, maxOutputChars: number): RenderedFetch | undefined {
+  if (result.body.kind !== 'pdf') return undefined
+  const body = result.body
+  const pageTexts = body.content.split(WEB_FETCH_PDF_PAGE_SEPARATOR).map(text => text.trim())
+  if (!pageTexts.some(text => text !== '')) {
+    const rendered = renderPdfText(body.content, body.pageCount, body.pagesExtracted)
+    const text = `${header}${rendered.text}`
+    return {
+      text: text.length <= maxOutputChars ? text : text.slice(0, maxOutputChars),
+      truncated: result.truncated || text.length > maxOutputChars,
+    }
+  }
+  let shown = Math.min(body.pagesExtracted, pageTexts.length)
+  for (;;) {
+    const notice = shown < body.pageCount ? `[PDF: first ${shown} of ${body.pageCount} pages extracted.]` : ''
+    // Reserve the footer because a page-block cut may add it; when nothing was
+    // cut it is omitted and the smaller text simply fits.
+    const budget = maxOutputChars - header.length - (notice === '' ? 0 : notice.length + 2) - TRUNCATION_FOOTER.length
+    if (budget <= 0) return undefined
+    const blocks = renderPdfBlocks(pageTexts.slice(0, shown), body.pageCount, budget)
+    if (blocks.shown === 0) return undefined
+    const footer = result.truncated || blocks.cut ? TRUNCATION_FOOTER : ''
+    const text = `${header}${notice === '' ? '' : `${notice}\n\n`}${blocks.text}${footer}`
+    if (blocks.shown === shown) return { text, truncated: result.truncated || blocks.cut || blocks.shown < pageTexts.length }
+    // Fewer pages fit than the notice claimed; retry with the smaller count so
+    // the notice and the blocks below it agree.
+    shown = blocks.shown
+  }
 }
 
 /**

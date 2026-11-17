@@ -360,8 +360,66 @@ describe('fetch formatting', () => {
       url: 'https://a.test', statusCode: 200, truncated: false,
       body: { kind: 'pdf', content: '\u000C', pageCount: 2, pagesExtracted: 2 },
     }, NO_CAP)
-    expect(out).toContain('[No extractable text found in this PDF. It may be a scanned document; OCR is not supported.]')
+    expect(out).toContain('[PDF: no extractable text found in this PDF. It may be a scanned document; OCR is not supported.]')
     expect(out).not.toContain('[Page')
+  })
+
+  it('folds a page cut into the no-text notice and omits the unusable truncation footer', () => {
+    const out = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: true,
+      body: { kind: 'pdf', content: '\u000C', pageCount: 3, pagesExtracted: 2 },
+    }, NO_CAP)
+    expect(out).toContain('[PDF: no extractable text found in the first 2 of 3 pages. It may be a scanned document; OCR is not supported.]')
+    expect(out).not.toContain('[Page')
+    expect(out).not.toContain('Content truncated')
+  })
+
+  it('keeps the page-cut notice when the tiny-cap fallback renders PDF text', () => {
+    const footer = '\n\n(Content truncated. Fetch a more specific URL or section for the full text.)'
+    const notice = '[PDF: first 2 of 3 pages extracted.]'
+    const cap = HEADER.length + notice.length + footer.length
+    const out = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: true,
+      body: { kind: 'pdf', content: 'One\u000CTwo', pageCount: 3, pagesExtracted: 2 },
+    }, cap)
+    expect(out).toContain(notice)
+    expect(out).toContain('Content truncated')
+    expect(out.length).toBeLessThanOrEqual(cap)
+  })
+
+  it('bounds a no-text PDF notice by the output cap', () => {
+    const out = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: true,
+      body: { kind: 'pdf', content: '\u000C', pageCount: 3, pagesExtracted: 2 },
+    }, 60)
+    expect(out.length).toBeLessThanOrEqual(60)
+  })
+
+  it('states the pages actually rendered when the tool cap cuts the provider content', () => {
+    const pages = (count: number) => Array.from({ length: count }, (_value, index) => `Page ${index + 1} body`).join('\u000C')
+    const render = (pageCount: number, pagesExtracted: number, content: string, cap: number) => formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: pageCount > pagesExtracted,
+      body: { kind: 'pdf', content, pageCount, pagesExtracted },
+    }, cap)
+    for (const [pageCount, pagesExtracted, cap] of [[20, 20, 400], [40, 30, 500]] as const) {
+      const out = render(pageCount, pagesExtracted, pages(pagesExtracted), cap)
+      const notice = /\[PDF: first (\d+) of (\d+) pages extracted\.\]/u.exec(out)
+      expect(notice, out).not.toBeNull()
+      expect(Number(notice?.[2])).toBe(pageCount)
+      expect(notice?.[1]).toBe(String((out.match(/\[Page /gu) ?? []).length))
+      expect(out.length).toBeLessThanOrEqual(cap)
+    }
+  })
+
+  it('falls back to a sliced header when the PDF budget cannot hold one page marker', () => {
+    const footer = '(Content truncated. Fetch a more specific URL or section for the full text.)'
+    const cap = HEADER.length + footer.length + 8
+    const out = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: true,
+      body: { kind: 'pdf', content: 'abcdef', pageCount: 1, pagesExtracted: 1 },
+    }, cap)
+    expect(out.length).toBeLessThanOrEqual(cap)
+    expect(out.startsWith('Fetched https://a.test')).toBe(true)
   })
 
   it('bounds a PDF result at exact and tiny output caps, page markers included', () => {

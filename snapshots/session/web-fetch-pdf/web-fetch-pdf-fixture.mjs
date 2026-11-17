@@ -1,6 +1,6 @@
 /**
  * Deterministic PDF provider for the web-fetch-pdf snapshot scenario: one
- * three-page text PDF and one two-page scanned (text-free) PDF on OS-assigned
+ * three-page text PDF and one three-page scanned (text-free) PDF on OS-assigned
  * loopback ports behind the real HTTP transport and the real PDF extraction
  * Worker. Recording and replay therefore exercise page markers, the page cap,
  * and the scanned-document notice without external network while retaining the
@@ -83,7 +83,7 @@ const LIMITS = {
   maxBodyChars: 100_000,
   timeoutMs: 30_000,
   maxRedirects: 5,
-  // Two pages prove the page-cap notice on the three-page document.
+  // Two pages prove the page-cap notice on both three-page documents.
   maxPdfPages: 2,
   userAgent: 'deepseek-harness-snapshot/1.0',
 }

@@ -1,5 +1,5 @@
 ---
-description: "The anonymous HTTP(S) fetch backend for ctx.web: how deployments mount bounded URL retrieval with same-origin redirects and text-only decoding."
+description: "The anonymous HTTP(S) fetch backend for ctx.web: how deployments mount bounded URL retrieval with same-origin redirects, bounded text decoding, and PDF text extraction."
 kind: "package-reference"
 ---
 
@@ -125,7 +125,7 @@ Read these pages when the package-level contract is not enough. They move from t
 <a id="model-experience"></a>
 ## Model Experience
 
-Indirectly, through `dsh-tool-web`, which renders this provider's `maxBodyChars`-bounded decoded text or markdown-shaped HTML under its fetch-result wrapper while redirects, headers, and transport limits remain hidden.
+Indirectly, through `dsh-tool-web`, which renders this provider's `maxBodyChars`-bounded decoded text, markdown-shaped HTML, or PDF page text (`[Page N of <total>]` markers, the page-cut notice, and the no-text/OCR notice) under its fetch-result wrapper while redirects, headers, and transport limits remain hidden.
 
 #### KV Cache effect
 
@@ -140,6 +140,8 @@ These limits define when the provider is unsafe or a poor fit. They are current 
 
 - **Private destinations are reachable** — loopback, private-network, and cloud metadata addresses are fetched like any other host. A deployment that must keep the model away from them needs a `tools/pre-execute` policy, network confinement, or no fetch tool.
 - **Only textual content decodes** — html/xhtml, `text/*` plus JSON/XML families, and text-based PDFs; a missing `Content-Type` or any other binary type throws `WEB_UNSUPPORTED_CONTENT_TYPE`. A scanned PDF has no text layer, so extraction returns empty pages and OCR is out of scope.
+- **PDF.js parsing is strict** — `stopAtErrors` makes a document with a damaged structure fail as `WEB_PDF_UNREADABLE` rather than recover a partial page, so operators can tell it apart from a cut-off response.
+- **The response MIME type decides PDF handling** — only `application/pdf` selects extraction; a PDF served as another type, such as `application/octet-stream`, still fails as `WEB_UNSUPPORTED_CONTENT_TYPE`.
 - **Large PDFs are still byte-capped** — a PDF larger than `maxResponseBytes` (5,000,000 bytes by default) fails as `WEB_FETCH_TOO_LARGE` rather than returning a partial document; raise the cap for a deployment that fetches large papers.
 - **Charset detection is declaration-only** — the header wins, then a byte order mark or `<meta>` in an HTML page's first 1,024 bytes; an undeclared legacy-encoded page still decodes as UTF-8 with replacement characters, and unsupported declarations without a UTF-8 label throw.
 - **UTF-8 recovery is a preference, not encoding detection** — bytes can be valid as both UTF-8 and another encoding, even in a long response. Recovery chooses UTF-8 in that case; malformed declarations without a UTF-8 label remain unsupported.

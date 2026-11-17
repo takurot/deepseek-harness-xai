@@ -1,5 +1,5 @@
 ---
-description: "ctx.web 的匿名 HTTP(S) 抓取后端：部署方如何挂载有界的 URL 抓取，含同源重定向与仅文本解码。"
+description: "ctx.web 的匿名 HTTP(S) 抓取后端：部署方如何挂载有界的 URL 抓取，含同源重定向、有界文本解码与 PDF 文本提取。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-有了 `dsh-web-fetch-http`，harness 可以通过 web 服务（`ctx.web`）抓取 HTTP(S) 页面，并在不发送凭据的情况下获得状态码与有界、解码后的内容。当组合需要 URL 校验、仅同源重定向、字节和字符上限及显式产品 `User-Agent` 时选择它。它把非 2xx 响应作为结果而非错误返回，并拒绝二进制数据与不受支持的内容类型。它不限制目标地址，因此可以访问 loopback 与内网主机。面向模型的 `web_fetch` 工具位于 `dsh-tool-web`，由它渲染本提供方的正文。
+有了 `dsh-web-fetch-http`，harness 可以通过 web 服务（`ctx.web`）抓取 HTTP(S) 页面，并在不发送凭据的情况下获得状态码与有界、解码后的正文，包括从 PDF 响应中提取的逐页文本。当组合需要 URL 校验、仅同源重定向、字节和字符上限及显式产品 `User-Agent` 时选择它。它把非 2xx 响应作为结果而非错误返回，在隔离的 Worker 线程中提取 PDF 文本，并拒绝其他二进制数据与不受支持的内容类型。它不限制目标地址，因此可以访问 loopback 与内网主机。面向模型的 `web_fetch` 工具位于 `dsh-tool-web`，由它渲染本提供方的正文。
 
 ## 目录
 
@@ -125,7 +125,7 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 <a id="model-experience"></a>
 ## 模型体验
 
-间接地，通过 `dsh-tool-web`：该工具把本提供方经 `maxBodyChars` 限制的解码文本或由 HTML 转换得到的 markdown 置于抓取结果包装层内，而重定向、标头与传输上限保持隐藏。
+间接地，通过 `dsh-tool-web`：该工具把本提供方经 `maxBodyChars` 限制的解码文本、由 HTML 转换得到的 markdown，或 PDF 逐页文本（`[Page N of <total>]` 标记、页数上限提示与无文本／OCR 提示）置于抓取结果包装层内，而重定向、标头与传输上限保持隐藏。
 
 #### KV Cache 影响
 
@@ -140,6 +140,8 @@ const page = await ctx.web.fetch({ url: 'https://example.com' })
 
 - **可以访问私有目标**——loopback、内网与云元数据地址与其他主机一样会被抓取。需要阻止模型访问这些地址的部署必须添加 `tools/pre-execute` 策略、网络隔离，或不挂载抓取工具。
 - **只解码文本内容**——包括 html/xhtml、`text/*` 加 JSON/XML 家族，以及可提取文本的 PDF；缺少 `Content-Type` 或任何其他二进制类型都会抛出 `WEB_UNSUPPORTED_CONTENT_TYPE`。扫描版 PDF 没有文本层，提取会返回空页，OCR 不在范围内。
+- **PDF.js 解析是严格的**——`stopAtErrors` 会让结构损坏的文档以 `WEB_PDF_UNREADABLE` 失败，而不是恢复出部分页面，运维可以据此把它与被截断的响应区分开。
+- **响应 MIME 类型决定 PDF 处理**——只有 `application/pdf` 会选择文本提取；以其他类型（例如 `application/octet-stream`）提供的 PDF 仍会以 `WEB_UNSUPPORTED_CONTENT_TYPE` 失败。
 - **大 PDF 仍受字节上限约束**——超过 `maxResponseBytes`（默认 5,000,000 字节）的 PDF 会以 `WEB_FETCH_TOO_LARGE` 失败，而不是返回部分文档；需要抓取大型论文的部署应提高该上限。
 - **charset 检测只依据声明**——标头优先，其次是 HTML 页面前 1,024 字节内的字节顺序标记或 `<meta>`；未声明的旧编码页面仍按 UTF-8 解码并出现替换字符，不支持且不含 UTF-8 标签的声明会抛出异常。
 - **UTF-8 恢复是一种优先规则，不是编码检测**——同一组字节可能同时是合法的 UTF-8 和其他编码，长响应也不例外。恢复路径在这种情况下选择 UTF-8；不含 UTF-8 标签的畸形声明仍不受支持。
