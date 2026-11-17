@@ -422,6 +422,51 @@ describe('fetch formatting', () => {
     expect(out.startsWith('Fetched https://a.test')).toBe(true)
   })
 
+  it('states a page cut from an inconsistent non-truncated provider body and falls back when it cannot fit', () => {
+    const value = {
+      url: 'https://a.test', statusCode: 200, truncated: false,
+      body: { kind: 'pdf' as const, content: 'One', pageCount: 2, pagesExtracted: 1 },
+    }
+    expect(formatFetchOutput(value, NO_CAP)).toContain('[PDF: first 1 of 2 pages extracted.]')
+    const tight = formatFetchOutput(value, HEADER.length + '[Page 1 of 2]\nOne'.length)
+    expect(tight.length).toBeLessThanOrEqual(HEADER.length + '[Page 1 of 2]\nOne'.length)
+  })
+
+  it('does not call a trailing text-free page a cut', () => {
+    const body = { kind: 'pdf' as const, content: 'One\u000C', pageCount: 2, pagesExtracted: 2 }
+    const out = formatFetchOutput({ url: 'https://a.test', statusCode: 200, truncated: false, body }, NO_CAP)
+    expect(out).not.toContain('[PDF:')
+    expect(out).not.toContain('Content truncated')
+    expect(out).toContain('[Page 1 of 2]\nOne')
+    expect((fetchMetaFromValue({ url: 'https://a.test', statusCode: 200, truncated: false, body }, NO_CAP) as { truncated: boolean }).truncated)
+      .toBe(false)
+    const capped = formatFetchOutput({
+      url: 'https://a.test', statusCode: 200, truncated: true,
+      body: { ...body, pageCount: 3 },
+    }, NO_CAP)
+    expect(capped).toContain('[PDF: first 2 of 3 pages extracted.]')
+    expect(capped).toContain('Content truncated')
+  })
+
+  it('keeps an exactly fitting PDF identical and only truncates below that length', () => {
+    const body = {
+      kind: 'pdf' as const,
+      content: 'Alpha page\u000CBeta page\u000CGamma page',
+      pageCount: 3,
+      pagesExtracted: 3,
+    }
+    const value = { url: 'https://a.test', statusCode: 200, truncated: false, body }
+    const uncapped = formatFetchOutput(value, NO_CAP)
+    const exact = formatFetchOutput(value, uncapped.length)
+    expect(exact).toBe(uncapped)
+    expect(exact).not.toContain('Content truncated')
+    expect((fetchMetaFromValue(value, uncapped.length) as { truncated: boolean }).truncated).toBe(false)
+    const below = formatFetchOutput(value, uncapped.length - 1)
+    expect(below.length).toBeLessThanOrEqual(uncapped.length - 1)
+    expect(below).toContain('Content truncated')
+    expect((fetchMetaFromValue(value, uncapped.length - 1) as { truncated: boolean }).truncated).toBe(true)
+  })
+
   it('bounds a PDF result at exact and tiny output caps, page markers included', () => {
     const body = { kind: 'pdf' as const, content: 'abcdef', pageCount: 1, pagesExtracted: 1 }
     const exactText = `${HEADER}[Page 1 of 1]\nabcdef`
