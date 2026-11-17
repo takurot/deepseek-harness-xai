@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { captureAuditProcess, classifyDependencyAudit } from './dependency-audit.ts'
+import { captureAuditProcess, classifyDependencyAudit, type DependencyAuditInput } from './dependency-audit.ts'
 
 const importer = 'packages/experimental/subagent-oar'
 const locator = '@earendil-works/pi-coding-agent@1.3.0(peer@2.0.0)'
@@ -55,6 +55,78 @@ describe('dependency audit policy', () => {
       findings: [{ advisory: 'GHSA-g3hv-75wg-m249', package: 'minimatch', version: '10.2.6', chains: [{
         importer, identities: exception.chain, categories: ['apps/cli/package.json'], exception: { status: 'matched', trackingIssue: exception.trackingIssue },
       }] }],
+    })
+  })
+
+  it('counts one advisory once when it lists several affected versions', () => {
+    const value: DependencyAuditInput = {
+      ...input(),
+      raw: JSON.stringify({ ...audit, advisories: { '1164999': { ...audit.advisories['1164999'], findings: [
+        { version: '10.2.6', paths: ['packages__experimental__subagent-oar>@earendil-works/pi-coding-agent>minimatch'], dev: false, optional: false, bundled: false },
+        { version: '10.2.5', paths: ['packages__experimental__subagent-oar>@earendil-works/pi-coding-agent>minimatch'], dev: false, optional: false, bundled: false },
+      ] } } }),
+      exceptions: { formatVersion: 1, exceptions: [exception, { ...exception, version: '10.2.5' }] },
+    }
+    const report = classifyDependencyAudit(value)
+    expect(report.failures).not.toContain('audit severity counts contradict advisory findings')
+    expect(report.counts?.byCategory).toEqual({ 'apps/cli/package.json': 2 })
+  })
+
+  it('classifies an advisory whose response omits the fixed range', () => {
+    const omitted = { ...audit.advisories['1164999'], vulnerable_versions: '*', patched_versions_unpublished: true }
+    const { patched_versions: _omit, ...withoutFixedRange } = omitted
+    const value: DependencyAuditInput = {
+      ...input(),
+      raw: JSON.stringify({ ...audit, advisories: { '1164999': withoutFixedRange } }),
+    }
+    expect(classifyDependencyAudit(value)).toMatchObject({
+      status: 'passed', findings: [{ fixedRange: null, chains: [{ exception: { status: 'matched' } }] }],
+    })
+  })
+
+  it('classifies an advisory whose fixed version is not published yet', () => {
+    const unpublished = {
+      ...audit.advisories['1164999'],
+      id: 1247710, github_advisory_id: 'GHSA-fc5q-39xc-vjpf', module_name: 'minimatch',
+      title: 'Pattern optimization', severity: 'high', vulnerable_versions: '<=10.2.6', patched_versions: null,
+    }
+    const value: DependencyAuditInput = {
+      ...input(),
+      raw: JSON.stringify({ ...audit, advisories: { '1247710': unpublished } }),
+      exceptions: { formatVersion: 1, exceptions: [{ ...exception, advisory: 'GHSA-fc5q-39xc-vjpf', package: 'minimatch' }] },
+    }
+    expect(classifyDependencyAudit(value)).toMatchObject({
+      status: 'passed',
+      findings: [{ advisory: 'GHSA-fc5q-39xc-vjpf', fixedRange: null, chains: [{ exception: { status: 'matched' } }] }],
+    })
+    expect(classifyDependencyAudit({ ...value, exceptions: { formatVersion: 1, exceptions: [] } })).toMatchObject({
+      status: 'failed',
+      findings: [{ advisory: 'GHSA-fc5q-39xc-vjpf', fixedRange: null, chains: [{ exception: { status: 'none' } }] }],
+    })
+  })
+
+  it('matches a direct dependency exception whose chain names only the package', () => {
+    const value: DependencyAuditInput = {
+      raw: JSON.stringify({ ...audit, advisories: { '1164999': { ...audit.advisories['1164999'], findings: [{
+        version: '10.2.6', paths: ['packages__hmr>minimatch'], dev: false, optional: false, bundled: false,
+      }] } } }),
+      auditExitCode: 1, auditError: null, stderr: '', capturedAt: '2026-11-11T00:00:00.000Z', repositoryCommit: 'fixture',
+      importers: [{ dir: 'packages/hmr', name: 'hmr' }],
+      distributionRoots: [{ manifestPath: 'apps/cli/package.json', verification: 'membership-only', workspacePackages: [{ name: 'hmr', manifestPath: 'packages/hmr/package.json' }], failures: [] }],
+      lockfile: {
+        lockfileVersion: '9.0',
+        importers: { 'packages/hmr': { dependencies: { minimatch: '10.2.6' } } },
+        packages: { 'packages/hmr': {}, 'minimatch@10.2.6': {} },
+        snapshots: { 'minimatch@10.2.6': {} },
+      },
+      exceptions: {
+        formatVersion: 1,
+        exceptions: [{ ...exception, importer: 'packages/hmr', chain: [{ name: 'minimatch', version: '10.2.6', locator: 'minimatch@10.2.6' }] }],
+      },
+    }
+    expect(classifyDependencyAudit(value)).toMatchObject({
+      status: 'passed',
+      findings: [{ chains: [{ importer: 'packages/hmr', identities: [{ name: 'minimatch' }], exception: { status: 'matched' } }] }],
     })
   })
 

@@ -21,6 +21,412 @@
       "expires": "2026-11-25",
       "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/40",
       "reason": "Trigger absence is inferred from the pinned external and bundled minimatch level-1 defaults and resource/model-filter calls with default or nocase-only options. Project/package patterns are reachable; the 64 KiB cap is not a demonstrated mitigation. Qualify the parent/pi-ai/OAR updates and both copies in Issue 40. Caller options and embedded identity require recorded source review outside this CI membership check; a level-2 caller or changed/unresolved embedded identity invalidates this rationale."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.4",
+      "importer": "packages/test-support/client-runtime",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "tinyglobby",
+          "version": "0.2.17",
+          "locator": "tinyglobby@0.2.17"
+        },
+        {
+          "name": "fdir",
+          "version": "6.5.0",
+          "locator": "fdir@6.5.0(picomatch@4.0.4)"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.4",
+          "locator": "picomatch@4.0.4"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.4",
+      "importer": "packages/test-support/client-runtime",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "tinyglobby",
+          "version": "0.2.17",
+          "locator": "tinyglobby@0.2.17"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.4",
+          "locator": "picomatch@4.0.4"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.4",
+      "importer": "packages/test-support/client-runtime",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "vite",
+          "version": "8.2.4",
+          "locator": "vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0)"
+        },
+        {
+          "name": "tinyglobby",
+          "version": "0.2.17",
+          "locator": "tinyglobby@0.2.17"
+        },
+        {
+          "name": "fdir",
+          "version": "6.5.0",
+          "locator": "fdir@6.5.0(picomatch@4.0.4)"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.4",
+          "locator": "picomatch@4.0.4"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.4",
+      "importer": "packages/test-support/client-runtime",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "vite",
+          "version": "8.2.4",
+          "locator": "vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0)"
+        },
+        {
+          "name": "tinyglobby",
+          "version": "0.2.17",
+          "locator": "tinyglobby@0.2.17"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.4",
+          "locator": "picomatch@4.0.4"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.4",
+      "importer": "packages/test-support/session-snapshot",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "tinyglobby",
+          "version": "0.2.17",
+          "locator": "tinyglobby@0.2.17"
+        },
+        {
+          "name": "fdir",
+          "version": "6.5.0",
+          "locator": "fdir@6.5.0(picomatch@4.0.4)"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.4",
+          "locator": "picomatch@4.0.4"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.4",
+      "importer": "packages/test-support/session-snapshot",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "tinyglobby",
+          "version": "0.2.17",
+          "locator": "tinyglobby@0.2.17"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.4",
+          "locator": "picomatch@4.0.4"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.4",
+      "importer": "packages/test-support/session-snapshot",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "vite",
+          "version": "8.2.4",
+          "locator": "vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0)"
+        },
+        {
+          "name": "tinyglobby",
+          "version": "0.2.17",
+          "locator": "tinyglobby@0.2.17"
+        },
+        {
+          "name": "fdir",
+          "version": "6.5.0",
+          "locator": "fdir@6.5.0(picomatch@4.0.4)"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.4",
+          "locator": "picomatch@4.0.4"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.4",
+      "importer": "packages/test-support/session-snapshot",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "vite",
+          "version": "8.2.4",
+          "locator": "vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0)"
+        },
+        {
+          "name": "tinyglobby",
+          "version": "0.2.17",
+          "locator": "tinyglobby@0.2.17"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.4",
+          "locator": "picomatch@4.0.4"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.4",
+      "importer": "vendor/hmr",
+      "chain": [
+        {
+          "name": "picomatch",
+          "version": "4.0.4",
+          "locator": "picomatch@4.0.4"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.7",
+      "importer": "packages/boot/hmr",
+      "chain": [
+        {
+          "name": "picomatch",
+          "version": "4.0.7",
+          "locator": "picomatch@4.0.7"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.7",
+      "importer": "packages/experimental/webworker-packer",
+      "chain": [
+        {
+          "name": "picomatch",
+          "version": "4.0.7",
+          "locator": "picomatch@4.0.7"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.7",
+      "importer": "packages/experimental/webworker-runtime",
+      "chain": [
+        {
+          "name": "picomatch",
+          "version": "4.0.7",
+          "locator": "picomatch@4.0.7"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.7",
+      "importer": "packages/test-support/client-runtime",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.7",
+          "locator": "picomatch@4.0.7"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.7",
+      "importer": "packages/test-support/client-runtime",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "vite",
+          "version": "8.2.4",
+          "locator": "vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0)"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.7",
+          "locator": "picomatch@4.0.7"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.7",
+      "importer": "packages/test-support/session-snapshot",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.7",
+          "locator": "picomatch@4.0.7"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
+    },
+    {
+      "advisory": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "version": "4.0.7",
+      "importer": "packages/test-support/session-snapshot",
+      "chain": [
+        {
+          "name": "vitest",
+          "version": "4.1.12",
+          "locator": "vitest@4.1.12(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(@vitest/coverage-v8@4.1.12)(happy-dom@21.0.4)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))"
+        },
+        {
+          "name": "vite",
+          "version": "8.2.4",
+          "locator": "vite@8.2.4(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0)"
+        },
+        {
+          "name": "picomatch",
+          "version": "4.0.7",
+          "locator": "picomatch@4.0.7"
+        }
+      ],
+      "expires": "2026-12-18",
+      "trackingIssue": "https://github.com/takurot/deepseek-harness-xai/issues/71",
+      "reason": "Membership exception, not proven unreachability. Each recorded chain is bounded: HMR compiles the operator-owned `ignored` configuration into picomatch patterns (packages/boot/hmr, vendor/hmr); the webworker packer compiles its fixed EXCLUDE/PAGE_ASSETS constants and each packed manifest's `files` allowlist; the experimental webworker runtime shell expands caller-supplied glob words (bash -c, find -name) with picomatch inside a dedicated, SIGKILL-able Web Worker whose preview performs no model inference; and the remaining chains are test-run tooling (vitest, tinyglobby, fdir). ReDoS needs a malicious pattern string: the shell is the only path where a caller-supplied pattern reaches picomatch and it is contained by that worker boundary. No fixed release is published (patched_versions null with patched_versions_unpublished), so the dependency cannot be updated yet; re-evaluate when picomatch 4.0.8+ publishes. Caller options and embedded identity require recorded source review outside this CI membership check."
     }
   ]
 }
