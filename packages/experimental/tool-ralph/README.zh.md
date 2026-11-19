@@ -31,7 +31,7 @@ kind: "package-reference"
 
 模型提交 `{ objective, maxRounds?, maxElapsedMs?, maxTotalTokens? }`，调用会阻塞到整个运行结算。部署配置中的每一项限制既是默认值，也是对应调用覆盖值的上限，因此调用只能收紧部署预算。终态结果为 `complete`、`blocked` 或 `budget-limited`，携带最后一份有界报告、已启动的 Round 数量，以及预算停止运行时的原因；普通子 agent 失败会返回错误，其中标明失败的 Round，并在存在时保留上一次成功交接。
 
-预算只在 Round 开始前检查：当运行的经过时间或已结算子 agent 的提供方上报 token 用量达到配置的预算后，不会启动下一个 Round，运行以 `budget-limited` 结算。正在运行的 Round 绝不会被切断，因此一个很长的 Round 仍可能超出预算。完全无法统计的 token 预算也以同样的 `budget-limited` 停止结算，并指明无法统计的子 agent，而不是把部分总量当作完整成本。每个终态结果还会报告汇总的子 agent token 用量，以及宿主无法统计的子 agent 数量。
+预算只在 Round 开始前检查：当运行的经过时间或已结算子 agent 的提供方上报 token 用量达到配置的预算后，不会启动下一个 Round，运行以 `budget-limited` 结算。正在运行的 Round 绝不会被切断，因此一个很长的 Round 仍可能超出预算。完全无法统计的 token 预算也以同样的 `budget-limited` 停止结算，并给出无法统计的子 agent 数量，而不是把部分总量当作完整成本。每个终态结果还会报告汇总的子 agent token 用量，以及宿主无法统计的子 agent 数量。
 
 ### 每个 Round 看到什么
 

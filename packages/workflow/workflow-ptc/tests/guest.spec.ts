@@ -439,6 +439,17 @@ describe('workflow run budgets', () => {
     expect(result.usage).toBeUndefined()
   })
 
+  it('counts calls waiting for a slot against the total-agent cap', async () => {
+    const test = fixture(
+      "return await parallel([() => agent('one'), () => agent('two'), () => agent('three')])",
+      {}, { maxConcurrentAgents: 1, maxTotalAgents: 2 },
+    )
+    const result = await runWorkflowGuest(test.host)
+    expect(result.stopReason).toBe('error')
+    expect(result.error).toContain('total agent cap (2)')
+    expect(test.requests.length).toBeLessThanOrEqual(2)
+  })
+
   it('refuses a queued child whose token budget was reached while it waited', async () => {
     const test = fixture(
       "return await parallel([() => agent('one'), () => agent('two')])",

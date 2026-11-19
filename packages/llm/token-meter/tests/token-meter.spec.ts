@@ -178,6 +178,16 @@ describe('TokenMeter session usage', () => {
     await ctx.fiber.dispose()
   })
 
+  it('returns a detached copy that later reads do not observe', async () => {
+    const { ctx, meter } = await mounted()
+    const session = ctx.sessions.create()
+    appendSuccessfulCall(session, header('mock'), { usage: { inputTokens: 9, outputTokens: 2 } })
+    const first = meter.sessionUsage(session)
+    ;(first as { uncachedInputTokens: number }).uncachedInputTokens = 999
+    expect(meter.sessionUsage(session).uncachedInputTokens).toBe(9)
+    await ctx.fiber.dispose()
+  })
+
   it('reports zero buckets for a session without provider usage', async () => {
     const { ctx, meter } = await mounted()
     const session = ctx.sessions.create()

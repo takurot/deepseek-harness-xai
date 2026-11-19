@@ -19,7 +19,7 @@ Status: implemented
 - 检查只在 `agent()` 准入时执行——即在等待并发槽位之后——因此被拒绝的调用会释放槽位且不计入已启动数量；运行可能因已在执行的子 agent 而超出预算。达到任一预算即抛出带 `BUDGET_EXHAUSTED` 代码的致命 `WorkflowError`；由脚本决定如何结算。正在运行的子 agent 绝不会被取消。
 - 子 agent 用量来自 token meter：宿主在发布子 agent 时捕获其活动中的 `Session`，结算后读取 `ctx.tokenMeter.sessionUsage(session)`。被 seed 的会话以父级历史的副本开头，其总量无法归因于该子 agent：该子 agent 视为无法统计，而带 token 预算的运行会在启动前拒绝继承父级上下文的提供方。Session 不可用、未挂载 token meter，或其日志未记录任何提供方用量的子 agent 会被排除，并计入 `WorkflowResult.childrenWithoutUsage`。
 - 当 token 预算遇到无法统计的子 agent 时，下一次准入以 `BUDGET_UNENFORCEABLE` 被拒绝，而不是把部分总和呈现为完整成本。Ralph 同样捕获该代码并结算为 `budget-limited`，因为已完成的 Round 与它们的有界交接正是上文“直接失败”替代方案被否决的理由。
-- `WorkflowResult` 报告汇总 `usage` 与 `childrenWithoutUsage`；Ralph 把二者回传给父模型，其固定脚本捕获 `BUDGET_EXHAUSTED`，并以引擎给出的原因文本结算为 `budget-limited`。
+- `WorkflowResult` 报告汇总 `usage` 与 `childrenWithoutUsage`；Ralph 把二者回传给父模型，其固定脚本捕获两种预算代码，并以引擎给出的原因文本结算为 `budget-limited`。
 
 ## Why the engine, not the script
 

@@ -97,11 +97,11 @@ interface WorkflowResult {
   /** The failure message (present iff `stopReason` is not `completed`). */
   error?: string
   /**
-   * How many `agent()` calls the run accepted over its whole lifetime. On a
-   * graceful settlement this is the script-side count (calls still queued for
-   * a concurrency slot included); on a termination path (cancellation or
-   * process failure) it degrades to the host-observed count — calls queued
-   * inside a terminated script are unknowable then.
+   * How many children the run had actually started when the script settled.
+   * A call still waiting for a concurrency slot at that moment is not counted,
+   * so an unawaited `agent()` can start a child after this figure is taken; on
+   * a termination path (cancellation or process failure) the count degrades to
+   * the host-observed one.
    */
   agentsStarted: number
   /**
@@ -110,14 +110,18 @@ interface WorkflowResult {
    * reports it, so it is absent there.
    */
   usage?: WorkflowUsage
-  /** Settled children excluded from {@link usage} because their usage was unreadable; present iff greater than zero. */
+  /**
+   * Settled children excluded from {@link usage} because their usage could not
+   * be attributed to them — no readable provider usage, or a seeded session
+   * that already contained its parent's history; present iff greater than zero.
+   */
   childrenWithoutUsage?: number
 }
 ```
 
 ## 子 agent 用量汇总：`WorkflowUsage`
 
-`WorkflowResult.usage` 把本次运行中已结算子 agent 的提供方上报用量按四个互不重叠的桶相加。`childrenWithoutUsage` 统计宿主无法读取用量的已结算子 agent——没有本地 Session、没有 token meter，或没有任何已记录的提供方用量——因此消费方可以区分完整总量与部分总量。在终止路径上，guest 从不上报这两个字段，因此二者均缺席。
+`WorkflowResult.usage` 把本次运行中已结算子 agent 的提供方上报用量按四个互不重叠的桶相加。`childrenWithoutUsage` 统计宿主无法把用量归因于其自身的已结算子 agent——没有本地 Session、没有 token meter、没有任何已记录的提供方用量，或会话是被 seed 且已包含父级历史——因此消费方可以区分完整总量与部分总量。在终止路径上，guest 从不上报这两个字段，因此二者均缺席。
 
 ```ts type-equiv
 /**

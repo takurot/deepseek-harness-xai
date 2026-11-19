@@ -97,11 +97,11 @@ interface WorkflowResult {
   /** The failure message (present iff `stopReason` is not `completed`). */
   error?: string
   /**
-   * How many `agent()` calls the run accepted over its whole lifetime. On a
-   * graceful settlement this is the script-side count (calls still queued for
-   * a concurrency slot included); on a termination path (cancellation or
-   * process failure) it degrades to the host-observed count — calls queued
-   * inside a terminated script are unknowable then.
+   * How many children the run had actually started when the script settled.
+   * A call still waiting for a concurrency slot at that moment is not counted,
+   * so an unawaited `agent()` can start a child after this figure is taken; on
+   * a termination path (cancellation or process failure) the count degrades to
+   * the host-observed one.
    */
   agentsStarted: number
   /**
@@ -110,14 +110,18 @@ interface WorkflowResult {
    * reports it, so it is absent there.
    */
   usage?: WorkflowUsage
-  /** Settled children excluded from {@link usage} because their usage was unreadable; present iff greater than zero. */
+  /**
+   * Settled children excluded from {@link usage} because their usage could not
+   * be attributed to them — no readable provider usage, or a seeded session
+   * that already contained its parent's history; present iff greater than zero.
+   */
   childrenWithoutUsage?: number
 }
 ```
 
 ## Aggregate child usage: `WorkflowUsage`
 
-`WorkflowResult.usage` sums the provider-reported usage of the run's settled children in four disjoint buckets. `childrenWithoutUsage` counts the settled children whose usage the host could not read — no local Session, no token meter, or no recorded provider usage — so a consumer can tell a complete total from a partial one. Both fields are absent on a termination path, where the guest never reports them.
+`WorkflowResult.usage` sums the provider-reported usage of the run's settled children in four disjoint buckets. `childrenWithoutUsage` counts the settled children whose usage the host could not attribute to them — no local Session, no token meter, no recorded provider usage, or a seeded session that already contained its parent's history — so a consumer can tell a complete total from a partial one. Both fields are absent on a termination path, where the guest never reports them.
 
 ```ts type-equiv
 /**

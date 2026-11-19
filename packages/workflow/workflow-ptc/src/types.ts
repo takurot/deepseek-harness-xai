@@ -64,9 +64,10 @@ export interface ChildResult {
   stopReason: string
   /**
    * Cumulative provider-reported usage of the child's session, when the host
-   * could read a nonzero figure. Absent for a child without a local Session,
-   * without a mounted token meter, or whose session recorded no provider
-   * usage; the run reports those as `childrenWithoutUsage`.
+   * could attribute a nonzero figure to the child. Absent for a child without
+   * a local Session, without a mounted token meter, whose session recorded no
+   * provider usage, or whose seeded session already contained its parent's
+   * history; the run reports those as `childrenWithoutUsage`.
    */
   usage?: WorkflowUsage
 }
