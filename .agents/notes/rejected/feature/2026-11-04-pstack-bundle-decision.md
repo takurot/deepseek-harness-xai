@@ -24,12 +24,12 @@ The pack was mounted through an overlay that pointed `skill-filesystem`'s `custo
 | Root composition | `--dump-config` shows `customSkillDirs` reaching `skill-filesystem`; loading and composition complete without error. |
 | Slash invocation | `/poteto-help` loads the body and follows its relative `../poteto-mode/SKILL.md` reference. |
 | Model invocation through the `skill` tool | Not available by design: 57 of 58 skills declare `disable-model-invocation: true`, which removes them from the model catalog and the `skill` tool; the `/name` gesture is their only entry point. |
-| Subagent delegation | Not verified. The skills reference pstack's `Task` 26 times, which its Claude Code adapter maps to that harness's `Agent` tool; dsh delegates through the separate [`tool-subagent`](../../../../packages/subagent/tool-subagent/README.md) seam with its own parameters. |
+| Subagent delegation | Not verified. The skills reference pstack's `Task` throughout, which its Claude Code adapter maps to that harness's `Agent` tool; dsh delegates through the separate [`tool-subagent`](../../../../packages/subagent/tool-subagent/README.md) seam with its own parameters. |
 | Agent files | Not loaded: `agents/poteto-agent.md` and `comment-sicko.md` are Claude Code agent definitions, which dsh does not read. |
 | Model-route mapping | Unsupported: `/setup-pstack` writes `~/.claude/rules/pstack-models.md` through its Claude Code adapter and `~/.cursor/rules/pstack-models.mdc` natively; dsh reads neither. |
 | Workflow execution | Not verified: `/poteto-mode` was never run on a real task, and `/why` (MCP) was never exercised. |
 
-`skill-filesystem` scans the project roots, `customSkillDirs`, `$DSH_HOME/skills`, and `$DSH_AGENTS_HOME/skills` (default `~/.agents/skills`) in [rank order](../../../../packages/skill/skill-filesystem/README.md), plus an optional bundled root at rank 600; `~/.claude/skills` is never one of them. The `setup-pstack` entry observed on 2026-11-04 therefore came from the overlay's own `customSkillDirs` mount. Users who converted pstack into `~/.agents/skills` do get it through the default `user-agents` root.
+`skill-filesystem` scans the project roots, `customSkillDirs`, `$DSH_HOME/skills`, and `$DSH_AGENTS_HOME/skills` (default `~/.agents/skills`) in [rank order](../../../../packages/skill/skill-filesystem/README.md), plus an optional bundled root at rank 600; `~/.claude/skills` is not a default root (pointing `customSkillDirs` at it is a user choice). The `setup-pstack` entry observed on 2026-11-04 therefore came from the overlay's own `customSkillDirs` mount. Users who converted pstack into `~/.agents/skills` do get it through the default `user-agents` root.
 
 ## Alternatives considered
 
@@ -47,7 +47,7 @@ The pack was mounted through an overlay that pointed `skill-filesystem`'s `custo
 
 ## Consequences
 
-- pstack is operated, not shipped: add the pack's `skills` directory to `skill-filesystem`'s `customSkillDirs`, or place (or symlink) that directory under a default root such as `$DSH_AGENTS_HOME/skills` — its skill directories must be direct children of the root, because discovery is one level deep. `customSkillDirs` is the narrower choice when the pack should stay replaceable and out of the user's shared agent root.
-- Only the slash-invocation path is supported for the 57 workflow skills that declare `disable-model-invocation: true`; the remaining skill (`setup-pstack`) stays model-invocable. A deployment that wants model invocation must edit the pack, and accepts that its bodies still assume Claude Code's tools.
+- pstack is operated, not shipped: add the pack's `skills` directory to `skill-filesystem`'s `customSkillDirs` (the narrowest option), or place (or symlink) each of its skill directories directly under a default root such as `$DSH_AGENTS_HOME/skills`, because discovery is one level deep. `customSkillDirs` is the narrower choice when the pack should stay replaceable and out of the user's shared agent root.
+- Only the slash-invocation path is supported for the 57 workflow skills that declare `disable-model-invocation: true`; the remaining skill (`setup-pstack`) stays model-invocable. A deployment that wants model invocation must edit the pack, and accepts that its bodies still assume another harness's tools.
 - Subagent delegation, model-route mapping, and Claude Code agent files remain unconverted. A `Task` call has no matching dsh tool and fails as an unknown tool; the model-route mapping is never applied, and agent-definition files are never loaded, so neither produces a diagnostic.
 - Reconsider bundling when the workflow itself becomes portable: dsh's [`tool-subagent`](../../../../packages/subagent/tool-subagent/README.md) accepts a `Task`-shaped call, or pstack ships a dsh-compatible delegation mode, and there is a named owner for upstream tracking. A licence review of the copied source and a snapshot scenario would then be part of the same change.

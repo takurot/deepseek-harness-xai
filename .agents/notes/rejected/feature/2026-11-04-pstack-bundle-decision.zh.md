@@ -24,12 +24,12 @@ Status: rejected — pstack 保持为用户提供的 `customSkillDirs` 技能包
 | 根组合 | `--dump-config` 显示 `customSkillDirs` 传入 `skill-filesystem`；加载与组合均无错误。 |
 | 斜杠调用 | `/poteto-help` 加载正文，并沿其相对引用 `../poteto-mode/SKILL.md` 继续读取。 |
 | 经 `skill` 工具的模型调用 | 按设计不可用：58 个技能中有 57 个声明 `disable-model-invocation: true`，这会把它们从模型目录与 `skill` 工具中移除；`/name` 手势是它们唯一的入口。 |
-| Subagent 委派 | 未验证。技能正文 26 次引用 pstack 的 `Task`，其 Claude Code 适配器把该调用映射到那个 harness 的 `Agent` 工具；dsh 通过独立的 [`tool-subagent`](../../../../packages/subagent/tool-subagent/README.zh.md) seam 以自有参数委派。 |
+| Subagent 委派 | 未验证。技能正文多处引用 pstack 的 `Task`，其 Claude Code 适配器把该调用映射到那个 harness 的 `Agent` 工具；dsh 通过独立的 [`tool-subagent`](../../../../packages/subagent/tool-subagent/README.zh.md) seam 以自有参数委派。 |
 | Agent 文件 | 未加载：`agents/poteto-agent.md` 与 `comment-sicko.md` 是 Claude Code agent 定义，dsh 不读取。 |
 | 模型路由映射 | 不支持：`/setup-pstack` 经其 Claude Code 适配器写入 `~/.claude/rules/pstack-models.md`，原生写入 `~/.cursor/rules/pstack-models.mdc`；dsh 都不读取。 |
 | 工作流执行 | 未验证：`/poteto-mode` 从未在真实任务上运行，`/why`（MCP）从未被实际调用。 |
 
-`skill-filesystem` 按[rank 顺序](../../../../packages/skill/skill-filesystem/README.zh.md)扫描项目根、`customSkillDirs`、`$DSH_HOME/skills` 与 `$DSH_AGENTS_HOME/skills`（默认 `~/.agents/skills`），外加 rank 600 的可选打包根；`~/.claude/skills` 从不在其中。因此 2026-11-04 观测到的 `setup-pstack` 条目来自 overlay 自身的 `customSkillDirs` 挂载。把 pstack 放到 `~/.agents/skills` 的用户则确实会通过默认 `user-agents` 根获得它。
+`skill-filesystem` 按[rank 顺序](../../../../packages/skill/skill-filesystem/README.zh.md)扫描项目根、`customSkillDirs`、`$DSH_HOME/skills` 与 `$DSH_AGENTS_HOME/skills`（默认 `~/.agents/skills`），外加 rank 600 的可选打包根；`~/.claude/skills` 不是默认根（把 `customSkillDirs` 指向它是用户的选择）。因此 2026-11-04 观测到的 `setup-pstack` 条目来自 overlay 自身的 `customSkillDirs` 挂载。把 pstack 放到 `~/.agents/skills` 的用户则确实会通过默认 `user-agents` 根获得它。
 
 ## Alternatives considered
 
@@ -47,7 +47,7 @@ Status: rejected — pstack 保持为用户提供的 `customSkillDirs` 技能包
 
 ## Consequences
 
-- pstack 只被运营，不被交付：把该技能包的 `skills` 目录加入 `skill-filesystem` 的 `customSkillDirs`，或把该目录安置（或软链接）到默认根（例如 `$DSH_AGENTS_HOME/skills`）——其技能目录必须是该根的直接子级，因为发现深度为一层。当技能包应保持可替换且不进入用户共享 agent 根时，`customSkillDirs` 是更窄的选择。
-- 该技能包自身只支持斜杠调用路径的，是 57 个声明 `disable-model-invocation: true` 的工作流技能；剩下的技能（`setup-pstack`）仍可被模型调用。希望模型调用的部署必须修改该技能包，并接受其正文仍假定 Claude Code 工具。
+- pstack 只被运营，不被交付：把该技能包的 `skills` 目录加入 `skill-filesystem` 的 `customSkillDirs`（最窄的选择），或把其中每个技能目录直接安置（或软链接）到默认根（例如 `$DSH_AGENTS_HOME/skills`），因为发现深度为一层。当技能包应保持可替换且不进入用户共享 agent 根时，`customSkillDirs` 是更窄的选择。
+- 该技能包自身只支持斜杠调用路径的，是 57 个声明 `disable-model-invocation: true` 的工作流技能；剩下的技能（`setup-pstack`）仍可被模型调用。希望模型调用的部署必须修改该技能包，并接受其正文仍假定其他 harness 的工具。
 - Subagent 委派、模型路由映射与 Claude Code agent 文件仍未被转换。`Task` 调用在 dsh 中没有对应工具，会作为未知工具失败；模型路由映射从不生效，agent 定义文件从不加载，因此二者都不会产生诊断。
 - 当工作流本身变得可移植时重新考虑打包：dsh 的 [`tool-subagent`](../../../../packages/subagent/tool-subagent/README.zh.md) 接受 `Task` 形状的调用，或 pstack 发布 dsh 兼容的委派模式，并且有明确的上游跟踪负责人。复制源代码的许可证审查与快照场景届时会属于同一改动。
