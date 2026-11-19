@@ -9,8 +9,8 @@
   en: f5015432a536b0dd
   zh: 57e4f564cd4c966c
 /deepseek-ai-dsh-tool-ralph/summary:
-  en: 9821960147153443
-  zh: 0b24aab94a5dc12b
+  en: d3e07dcbce6aba5b
+  zh: ccc44300ee55e6fe
 /deepseek-ai-dsh-tool-ralph/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -18,14 +18,14 @@
   en: 13380e1170c6a3b5
   zh: 2f2665f2ee5ff6f7
 /deepseek-ai-dsh-tool-ralph/use-this-package/calling-the-tool:
-  en: f43e8fbcf272ac45
-  zh: 46719b415d9ad4bf
+  en: 59ee92d1df056bbc
+  zh: 2baac4bc4c57ff2b
 /deepseek-ai-dsh-tool-ralph/use-this-package/what-each-round-sees:
   en: 2d8b861c4bcb9424
   zh: 63c7b2d00c324727
 /deepseek-ai-dsh-tool-ralph/use-this-package/config:
-  en: 4f0ba81742e46af0
-  zh: e47ba7d9737fa51f
+  en: f028020960cf82de
+  zh: 3523ab692b2bf00b
 /deepseek-ai-dsh-tool-ralph/understand-the-implementation:
   en: 0999ea3a4c9da48c
   zh: 83013ee36a8689af
@@ -72,8 +72,8 @@
   en: e4c7376d4f29dbd5
   zh: 6b7a9eaf69c9ea53
 /deepseek-ai-dsh-tool-ralph/model-experience/tool-schema/what-the-model-sees:
-  en: d3e219e3f0e507ed
-  zh: daf8093ed21eb9cf
+  en: e25673ed58d34373
+  zh: bb8166e4490f1528
 /deepseek-ai-dsh-tool-ralph/model-experience/tool-schema/token-effect:
   en: 0af719618f9f99d2
   zh: a719a4e5df1406a4
@@ -84,8 +84,8 @@
   en: 55181fb745ab8135
   zh: ebeea6a8748986d2
 /deepseek-ai-dsh-tool-ralph/model-experience/child-requests-and-parent-result/what-the-model-sees:
-  en: 788029304e88ea74
-  zh: 0e0281c7cc393dff
+  en: 9d141e8bd370e443
+  zh: 389840210d0aaf39
 /deepseek-ai-dsh-tool-ralph/model-experience/child-requests-and-parent-result/token-effect:
   en: ab2d30ed91979cbc
   zh: bb074b02c4b05e4f
@@ -93,8 +93,8 @@
   en: 8f28959dc87d1f2f
   zh: c034c5c0bdaf9bba
 /deepseek-ai-dsh-tool-ralph/known-limitations-and-deferred-work:
-  en: 4e3629e8de05fe18
-  zh: 5b33af22079a2ca7
+  en: 7ca63a0f650f0dbe
+  zh: 011bf01148211e55
 /deepseek-ai-dsh-tool-ralph/known-limitations-and-deferred-work/dev-note:
-  en: 8f24c317039e1974
-  zh: c6209969ad21f16c
+  en: 89410ad2dc206552
+  zh: 30a4bf6a94ce03c6

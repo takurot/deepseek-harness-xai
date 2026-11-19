@@ -65,7 +65,12 @@ function assertBodyParses(body: string, name: string): void {
 }
 
 /** Resolve one run's provider route before publishing work. */
-function resolveSubagentProvider(ctx: Context, configured: string, override: string | undefined): string {
+function resolveSubagentProvider(
+  ctx: Context,
+  configured: string,
+  override: string | undefined,
+  inheritsParent: boolean,
+): string {
   const provider = override ?? configured
   if (provider.length === 0 || provider !== provider.trim()) {
     throw new WorkflowError(
@@ -73,10 +78,26 @@ function resolveSubagentProvider(ctx: Context, configured: string, override: str
       'INVALID_ARGUMENT',
     )
   }
-  if (ctx.subagents.getProvider(provider) === undefined) {
+  const registered = ctx.subagents.getProvider(provider)
+  if (registered === undefined) {
     throw new WorkflowError(`no subagent provider registered for "${provider}"`, 'AGENT_START')
   }
+  if (inheritsParent && registered.inheritsParentContext) {
+    throw new WorkflowError(
+      `workflow maxTotalTokens cannot be enforced with the inheriting provider "${provider}": a seeded child's usage includes its parent's history`,
+      'INVALID_ARGUMENT',
+    )
+  }
   return provider
+}
+
+/** Resolve one run's optional elapsed-time budget, rejecting a value it cannot enforce. */
+function resolveBudget(requested: number | undefined, name: 'maxElapsedMs' | 'maxTotalTokens'): number | undefined {
+  if (requested === undefined) return undefined
+  if (!Number.isSafeInteger(requested) || requested < 1) {
+    throw new WorkflowError(`workflow ${name} must be a positive safe integer`, 'INVALID_ARGUMENT')
+  }
+  return requested
 }
 
 /** Resolve one run's total-child cap against the engine deployment ceiling. */
@@ -134,7 +155,14 @@ class PtcWorkflowEngine extends WorkflowEngine {
   start(request: WorkflowStartRequest): WorkflowRun {
     const meta = validateMeta(request.meta)
     assertBodyParses(request.script, meta.name)
-    const subagentProvider = resolveSubagentProvider(this.ctx, this.config.provider, request.subagentProvider)
+    const maxElapsedMs = resolveBudget(request.maxElapsedMs, 'maxElapsedMs')
+    const maxTotalTokens = resolveBudget(request.maxTotalTokens, 'maxTotalTokens')
+    const subagentProvider = resolveSubagentProvider(
+      this.ctx,
+      this.config.provider,
+      request.subagentProvider,
+      maxTotalTokens !== undefined,
+    )
     const maxTotalAgents = resolveMaxTotalAgents(request.maxTotalAgents, this.config.maxTotalAgents)
     const id = WorkflowRunId(randomUUID())
     const info: WorkflowRunInfo = { id, meta }
@@ -145,6 +173,8 @@ class PtcWorkflowEngine extends WorkflowEngine {
       maxTotalAgents,
       maxItemsPerCall: this.config.maxItemsPerCall,
       syncTimeoutMs: this.config.syncTimeoutMs,
+      ...maxElapsedMs === undefined ? {} : { maxElapsedMs },
+      ...maxTotalTokens === undefined ? {} : { maxTotalTokens },
     }
     const init: WorkerInit = {
       meta,

@@ -38,7 +38,12 @@ describe('workflow guest callbacks', () => {
       log('starting')
       return await agent(args.prompt, { label: 'Answer', provider: 'openai', model: 'small', schema: { type: 'object' } })
     `, { childResult: async () => ({ output: [], structured: { answer: 42 }, stopReason: 'completed' }) })
-    await expect(runWorkflowGuest(test.host)).resolves.toEqual({ value: { answer: 42 }, stopReason: 'completed', agentsStarted: 1 })
+    await expect(runWorkflowGuest(test.host)).resolves.toEqual({
+      value: { answer: 42 },
+      stopReason: 'completed',
+      agentsStarted: 1,
+      childrenWithoutUsage: 1,
+    })
     expect(test.requests).toEqual([{ prompt: 'answer this', provider: 'openai', model: 'small', schema: { type: 'object' } }])
     expect(test.events).toEqual([
       { type: 'phase', title: 'Read' },
@@ -349,5 +354,148 @@ describe('workflow script validation', () => {
       expect(result.stopReason).toBe('error')
       expect(result.error).toContain('per-call cap (1)')
     }
+  })
+})
+
+describe('workflow run budgets', () => {
+  const USAGE = { uncachedInputTokens: 40, outputTokens: 10, cacheReadTokens: 2, cacheWriteTokens: 3 }
+
+  it('refuses the next agent after the elapsed-time budget without cutting the running round', async () => {
+    const test = fixture(`
+      const first = await agent('slow')
+      let second
+      try { await agent('refused') } catch (error) { second = error.code }
+      return { first, second }
+    `, {
+      async childResult() {
+        await new Promise(resolve => setTimeout(resolve, 400))
+        return { output: [{ type: 'text', text: 'finished' }], stopReason: 'completed' }
+      },
+    }, { maxElapsedMs: 100 })
+    await expect(runWorkflowGuest(test.host)).resolves.toMatchObject({
+      value: { first: 'finished', second: 'BUDGET_EXHAUSTED' },
+      stopReason: 'completed',
+      agentsStarted: 1,
+    })
+    expect(test.requests).toHaveLength(1)
+  })
+
+  it('refuses the next agent once settled children reach the token budget and reports their usage', async () => {
+    const test = fixture(`
+      const first = await agent('one')
+      let second
+      try { await agent('two') } catch (error) { second = error.code }
+      return { first, second }
+    `, {
+      childResult: async () => ({
+        output: [{ type: 'text', text: 'ok' }],
+        stopReason: 'completed',
+        usage: USAGE,
+      }),
+    }, { maxTotalTokens: 50 })
+    await expect(runWorkflowGuest(test.host)).resolves.toEqual({
+      value: { first: 'ok', second: 'BUDGET_EXHAUSTED' },
+      stopReason: 'completed',
+      agentsStarted: 1,
+      usage: USAGE,
+    })
+    expect(test.requests).toHaveLength(1)
+  })
+
+  it('starts another agent below the token budget and accumulates settled usage', async () => {
+    let call = 0
+    const test = fixture(`
+      const first = await agent('one')
+      const second = await agent('two')
+      return first + second
+    `, {
+      childResult: async () => ({
+        output: [{ type: 'text', text: String(++call) }],
+        stopReason: 'completed',
+        usage: { uncachedInputTokens: 5, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      }),
+    }, { maxTotalTokens: 12 })
+    await expect(runWorkflowGuest(test.host)).resolves.toMatchObject({
+      value: '12',
+      stopReason: 'completed',
+      agentsStarted: 2,
+      usage: { uncachedInputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    })
+    expect(test.requests).toHaveLength(2)
+  })
+
+  it('refuses a token budget it cannot enforce and counts unreadable children', async () => {
+    const unenforceable = fixture('await agent("one"); return await agent("two")', {}, { maxTotalTokens: 100 })
+    const denied = await runWorkflowGuest(unenforceable.host)
+    expect(denied.stopReason).toBe('error')
+    expect(denied.error).toContain('cannot enforce its token budget')
+    expect(denied.agentsStarted).toBe(1)
+
+    const readable = fixture('return await agent("one")', {
+      childResult: async () => ({ output: [{ type: 'text', text: 'one' }], stopReason: 'completed' }),
+    })
+    const result = await runWorkflowGuest(readable.host)
+    expect(result).toMatchObject({ stopReason: 'completed', agentsStarted: 1, childrenWithoutUsage: 1 })
+    expect(result.usage).toBeUndefined()
+  })
+
+  it('counts calls waiting for a slot against the total-agent cap', async () => {
+    const test = fixture(
+      "return await parallel([() => agent('one'), () => agent('two'), () => agent('three')])",
+      {}, { maxConcurrentAgents: 1, maxTotalAgents: 2 },
+    )
+    const result = await runWorkflowGuest(test.host)
+    expect(result.stopReason).toBe('error')
+    expect(result.error).toContain('total agent cap (2)')
+    expect(test.requests.length).toBeLessThanOrEqual(2)
+  })
+
+  it('refuses a queued child whose token budget was reached while it waited', async () => {
+    const test = fixture(
+      "return await parallel([() => agent('one'), () => agent('two')])",
+      { childResult: async () => ({ output: [], stopReason: 'completed', usage: USAGE }) },
+      { maxConcurrentAgents: 1, maxTotalTokens: 50 },
+    )
+    const result = await runWorkflowGuest(test.host)
+    expect(result.stopReason).toBe('error')
+    expect(result.error).toContain('reached its token budget')
+    expect(result.agentsStarted).toBe(1)
+    expect(test.requests).toHaveLength(1)
+  })
+
+  it('refuses a queued child whose elapsed-time budget ran out while it waited', async () => {
+    const test = fixture(
+      "return await parallel([() => agent('one'), () => agent('two')])",
+      {
+        async childResult() {
+          await new Promise(resolve => setTimeout(resolve, 400))
+          return { output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }
+        },
+      },
+      { maxConcurrentAgents: 1, maxElapsedMs: 100 },
+    )
+    const result = await runWorkflowGuest(test.host)
+    expect(result.stopReason).toBe('error')
+    expect(result.error).toContain('reached its elapsed-time budget')
+    expect(result.agentsStarted).toBe(1)
+    expect(test.requests).toHaveLength(1)
+  })
+
+  it('keeps settled usage on a failing script', async () => {
+    const test = fixture(
+      "await agent('one'); throw new Error('after the child')",
+      { childResult: async () => ({ output: [], stopReason: 'completed', usage: USAGE }) },
+    )
+    const result = await runWorkflowGuest(test.host)
+    expect(result).toMatchObject({
+      stopReason: 'error',
+      agentsStarted: 1,
+      usage: USAGE,
+    })
+  })
+
+  it('reports no usage fields until a child settles', async () => {
+    const result = await runWorkflowGuest(fixture('return 1').host)
+    expect(result).toEqual({ value: 1, stopReason: 'completed', agentsStarted: 0 })
   })
 })

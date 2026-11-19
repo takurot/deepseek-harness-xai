@@ -63,6 +63,22 @@ export interface WorkflowMeta {
 export type WorkflowStopReason = 'completed' | 'cancelled' | 'error'
 
 /**
+ * Provider-reported token usage summed over one run's settled children, in the
+ * same disjoint buckets the token meter records. Reasoning tokens are already
+ * inside `outputTokens` and are never counted again.
+ */
+export interface WorkflowUsage {
+  /** Prompt-side input tokens that were neither served from nor written to cache. */
+  uncachedInputTokens: number
+  /** Completion tokens, including reasoning tokens. */
+  outputTokens: number
+  /** Prompt tokens served from the provider's cache. */
+  cacheReadTokens: number
+  /** Prompt tokens written to the provider's cache. */
+  cacheWriteTokens: number
+}
+
+/**
  * The outcome resolved by a live workflow run. `value` is
  * the script's materialized return value (plain host-realm JSON data; `null`
  * when the script returned `undefined`) — meaningful only for `completed`.
@@ -77,13 +93,26 @@ export interface WorkflowResult {
   /** The failure message (present iff `stopReason` is not `completed`). */
   error?: string
   /**
-   * How many `agent()` calls the run accepted over its whole lifetime. On a
-   * graceful settlement this is the script-side count (calls still queued for
-   * a concurrency slot included); on a termination path (cancellation or
-   * process failure) it degrades to the host-observed count — calls queued
-   * inside a terminated script are unknowable then.
+   * How many children the run had actually started when the script settled.
+   * A call still waiting for a concurrency slot at that moment is not counted,
+   * so an unawaited `agent()` can start a child after this figure is taken; on
+   * a termination path (cancellation or process failure) the count degrades to
+   * the host-observed one.
    */
   agentsStarted: number
+  /**
+   * Cumulative usage of the settled children whose provider reported it.
+   * Absent until a child settles; a termination result the host synthesizes
+   * (cancellation or process failure) omits it because the guest never
+   * reported it.
+   */
+  usage?: WorkflowUsage
+  /**
+   * Settled children excluded from {@link usage} because their usage could not
+   * be attributed to them — no readable provider usage, or a seeded session
+   * that already contained its parent's history; present iff greater than zero.
+   */
+  childrenWithoutUsage?: number
 }
 
 /** Identifying detail for a run, carried by every `workflow/*` event as borrowed immutable data, never the live run. */
@@ -117,15 +146,15 @@ export interface WorkflowAgentEndInfo extends WorkflowAgentInfo {
 
 /**
  * A settled run's outcome as event data (the `workflow/end` payload): the
- * {@link WorkflowResult} minus `value` (a listener observing outcomes must not
- * receive a mutable alias of the caller's result value; a consumer that needs
- * the value holds the run and awaits `result`).
+ * {@link WorkflowResult} minus its `value` and its child usage aggregate (a
+ * listener observing outcomes must not receive a mutable alias of the caller's
+ * result; a consumer that needs either holds the run and awaits `result`).
  */
 export interface WorkflowResultInfo {
   /** Why the run settled. */
   stopReason: WorkflowStopReason
   /** The failure message (present iff `stopReason` is not `completed`). */
   error?: string
-  /** How many `agent()` calls the run accepted (see {@link WorkflowResult.agentsStarted}). */
+  /** How many children the run had started when it settled (see {@link WorkflowResult.agentsStarted}). */
   agentsStarted: number
 }

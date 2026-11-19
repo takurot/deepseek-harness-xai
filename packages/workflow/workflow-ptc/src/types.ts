@@ -6,7 +6,7 @@
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ObjectJsonSchema } from '@deepseek-ai/dsh-tools'
-import type { WorkflowMeta } from '@deepseek-ai/dsh-workflow'
+import type { WorkflowMeta, WorkflowUsage } from '@deepseek-ai/dsh-workflow'
 
 /**
  * Ordinary script limits enforced by the guest helpers.
@@ -20,6 +20,10 @@ export interface WorkerLimits {
   maxItemsPerCall: number
   /** VM timeout for the script's initial synchronous slice. */
   syncTimeoutMs: number
+  /** Elapsed-time budget from the guest's start; reached means no further `agent()` call starts. */
+  maxElapsedMs?: number
+  /** Settlement-token budget; reached means no further `agent()` call starts. */
+  maxTotalTokens?: number
 }
 
 /** The initialization data returned by the host before the script runs. */
@@ -58,6 +62,14 @@ export interface ChildResult {
   structured?: unknown
   /** Why the child run ended (`'completed'` is the only value the runtime branches on). */
   stopReason: string
+  /**
+   * Cumulative provider-reported usage of the child's session, when the host
+   * could attribute a nonzero figure to the child. Absent for a child without
+   * a local Session, without a mounted token meter, whose session recorded no
+   * provider usage, or whose seeded session already contained its parent's
+   * history; the run reports those as `childrenWithoutUsage`.
+   */
+  usage?: WorkflowUsage
 }
 
 /**

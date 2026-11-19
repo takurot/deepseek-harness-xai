@@ -17,9 +17,10 @@ import type {
   WorkflowAgentInfo,
   WorkflowMeta,
   WorkflowResult,
+  WorkflowUsage,
 } from '@deepseek-ai/dsh-workflow'
 import { materializeFromRealm, MaterializeError, renderThrown } from './realm.ts'
-import type { ChildHandle, ChildPort, WorkerLimits } from './types.ts'
+import type { ChildHandle, ChildPort, ChildResult, WorkerLimits } from './types.ts'
 
 /** The observers the execution reports progress through (the session posts them to the host). */
 export interface ExecutionObserver {
@@ -54,13 +55,21 @@ function defaultLabel(prompt: string): string {
  * cancellation and cleanup of any dropped child work.
  */
 export class WorkflowExecution {
-  /** 1-based count of `agent()` calls started (the `agentsStarted` result field). */
+  /** `agent()` calls admitted to the concurrency queue (the runaway-backstop count). */
+  private accepted = 0
+  /** 1-based count of children actually started (the `agentsStarted` result field). */
   private started = 0
+  /** Cumulative usage of settled children that reported it; absent until one does. */
+  private usage: WorkflowUsage | undefined
+  /** Settled children whose usage the host could not read. */
+  private childrenWithoutUsage = 0
   private activeSlots = 0
   private readonly slotWaiters: (() => void)[] = []
   private currentPhase: string | undefined
   private readonly context: vm.Context
   private readonly compiled: vm.Script
+  /** Monotonic start of the script's execution, for the elapsed-time budget. */
+  private readonly startedAt = performance.now()
 
   constructor(
     meta: WorkflowMeta,
@@ -107,9 +116,20 @@ export class WorkflowExecution {
       const scriptPromise = this.compiled.runInContext(this.context, { timeout: this.limits.syncTimeoutMs }) as Promise<unknown>
       const raw: unknown = await this.contain(Promise.resolve(scriptPromise))
       const value = raw === undefined ? null : this.materializeResult(raw)
-      return { value, stopReason: 'completed', agentsStarted: this.started }
+      return {
+        value,
+        stopReason: 'completed',
+        agentsStarted: this.started,
+        ...this.settledUsage(),
+      }
     } catch (error: unknown) {
-      return { value: null, stopReason: 'error', error: renderThrown(error), agentsStarted: this.started }
+      return {
+        value: null,
+        stopReason: 'error',
+        error: renderThrown(error),
+        agentsStarted: this.started,
+        ...this.settledUsage(),
+      }
     }
   }
 
@@ -135,6 +155,64 @@ export class WorkflowExecution {
         `the workflow's return value is not plain JSON data — ${error.message}. Return only JSON-serializable objects/arrays/scalars.`,
         'RESULT_UNSERIALIZABLE',
         { cause: error },
+      )
+    }
+  }
+
+  /** The usage fields a settled run reports, omitted until a child settled at all. */
+  private settledUsage(): Pick<WorkflowResult, 'usage' | 'childrenWithoutUsage'> {
+    if (this.usage === undefined && this.childrenWithoutUsage === 0) return {}
+    return {
+      ...this.usage === undefined ? {} : { usage: this.usage },
+      ...this.childrenWithoutUsage === 0 ? {} : { childrenWithoutUsage: this.childrenWithoutUsage },
+    }
+  }
+
+  /** Accumulate one settled child's provider usage, or count it as unreadable. */
+  private recordUsage(result: ChildResult): void {
+    if (result.usage === undefined) {
+      this.childrenWithoutUsage += 1
+      return
+    }
+    const current = this.usage
+    this.usage = {
+      uncachedInputTokens: (current?.uncachedInputTokens ?? 0) + result.usage.uncachedInputTokens,
+      outputTokens: (current?.outputTokens ?? 0) + result.usage.outputTokens,
+      cacheReadTokens: (current?.cacheReadTokens ?? 0) + result.usage.cacheReadTokens,
+      cacheWriteTokens: (current?.cacheWriteTokens ?? 0) + result.usage.cacheWriteTokens,
+    }
+  }
+
+  /**
+   * Refuse a child start once a configured run budget is reached. Checked only
+   * here, at admission: a started child always runs to its own settlement.
+   */
+  private assertBudget(): void {
+    const { maxElapsedMs, maxTotalTokens } = this.limits
+    if (maxElapsedMs !== undefined) {
+      const elapsedMs = performance.now() - this.startedAt
+      if (elapsedMs >= maxElapsedMs) {
+        throw new WorkflowError(
+          `this run reached its elapsed-time budget (${elapsedMs} ms of ${maxElapsedMs} ms) — no further agents will start`,
+          'BUDGET_EXHAUSTED',
+        )
+      }
+    }
+    if (maxTotalTokens === undefined) return
+    if (this.childrenWithoutUsage > 0) {
+      throw new WorkflowError(
+        `this run cannot enforce its token budget: ${this.childrenWithoutUsage} settled child agent(s) reported no usage`,
+        'BUDGET_UNENFORCEABLE',
+      )
+    }
+    const total = this.usage === undefined
+      ? 0
+      : this.usage.uncachedInputTokens + this.usage.outputTokens
+        + this.usage.cacheReadTokens + this.usage.cacheWriteTokens
+    if (total >= maxTotalTokens) {
+      throw new WorkflowError(
+        `this run reached its token budget (${total} of ${maxTotalTokens} tokens) — no further agents will start`,
+        'BUDGET_EXHAUSTED',
       )
     }
   }
@@ -165,19 +243,22 @@ export class WorkflowExecution {
       throw new WorkflowError('agent() requires a non-empty prompt string', 'INVALID_ARGUMENT')
     }
     const opts = this.readAgentOptions(rawOpts)
-    if (this.started >= this.limits.maxTotalAgents) {
+    if (this.accepted >= this.limits.maxTotalAgents) {
       throw new WorkflowError(
         `this run reached its total agent cap (${this.limits.maxTotalAgents}) — a runaway-loop backstop; raise the applicable maxTotalAgents limit if the scale is intentional`,
         'AGENT_CAP',
       )
     }
-    this.started += 1
-    const seq = this.started
+    this.accepted += 1
     const label = opts.label ?? defaultLabel(rawPrompt)
     const phase = opts.phase ?? this.currentPhase
 
     await this.acquireSlot()
     try {
+      // Admitted calls wait for a slot, so the budget is re-checked at the
+      // point a child would actually start; a refused call releases the slot
+      // and does not count as started.
+      this.assertBudget()
       let run: ChildHandle
       try {
         run = await this.children.startAgent({
@@ -189,6 +270,8 @@ export class WorkflowExecution {
       } catch (error: unknown) {
         throw new WorkflowError(`agent() could not start a child: ${renderThrown(error)}`, 'AGENT_START', { cause: error })
       }
+      this.started += 1
+      const seq = this.started
       const info: WorkflowAgentInfo = { seq, label, ...phase !== undefined ? { phase } : {}, childId: brandString<SessionId>(run.id) }
       this.observer.agentStart(info)
       try {
@@ -204,6 +287,7 @@ export class WorkflowExecution {
           this.observer.agentEnd({ ...info, outcome: 'failed' })
           throw new WorkflowError(`child agent run failed: ${renderThrown(error)}`, 'AGENT_RESULT', { cause: error })
         }
+        this.recordUsage(result)
         if (result.stopReason === 'completed') {
           if (opts.schema !== undefined) {
             // The provider honored outputSchema (capability-gated at start), so

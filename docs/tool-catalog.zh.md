@@ -1709,7 +1709,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `ralph`
 
-围绕一个不可变目标运行使用全新 agent 的前台 Ralph 循环。仅当直接人类明确要求 Ralph 或使用全新 agent 迭代时使用。每个 Round 都会启动一个全新子级，该子级看不到父级对话或先前子会话；共享工作区充当长期记忆，Round 之间只传递有界的结构化报告。当工作进程报告完成、报告具体阻塞项或达到 Round 上限时，调用返回。普通的长期同会话工作应使用 goal 工具。
+围绕一个不可变目标运行使用全新 agent 的前台 Ralph 循环。仅当直接人类明确要求 Ralph 或使用全新 agent 迭代时使用。每个 Round 都会启动一个全新子级，该子级看不到父级对话或先前子会话；共享工作区充当长期记忆，Round 之间只传递有界的结构化报告。当工作进程报告完成、报告具体阻塞项，或达到 Round、经过时间或 token 预算时，调用返回。普通的长期同会话工作应使用 goal 工具。
 
 ```json
 {
@@ -1722,6 +1722,14 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "maxRounds": {
       "type": "number",
       "description": "Optional positive safe-integer round cap, bounded by the deployment ceiling."
+    },
+    "maxElapsedMs": {
+      "type": "number",
+      "description": "Optional elapsed-time budget in milliseconds; a configured deployment ceiling bounds it and the engine refuses the next round once it is reached."
+    },
+    "maxTotalTokens": {
+      "type": "number",
+      "description": "Optional budget for the tokens the run's settled children consumed; a configured deployment ceiling bounds it and the engine refuses the next round once it is reached."
     }
   },
   "required": [

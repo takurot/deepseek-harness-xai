@@ -27,6 +27,23 @@ export interface WorkflowStartRequest {
   subagentProvider?: string
   /** Optional per-run total-child ceiling. */
   maxTotalAgents?: number
+  /**
+   * Optional elapsed-time budget in milliseconds, measured from the moment the
+   * guest starts running the script. Once reached, `agent()` refuses to start
+   * another child with a fatal `BUDGET_EXHAUSTED` error; a running child is
+   * never cancelled.
+   */
+  maxElapsedMs?: number
+  /**
+   * Optional token budget: cumulative provider-reported usage of the run's
+   * settled children. Once reached, `agent()` refuses to start another child
+   * with a fatal `BUDGET_EXHAUSTED` error; a running child is never cancelled.
+   * A run whose settled children report no readable usage refuses its next
+   * child with `BUDGET_UNENFORCEABLE` instead of silently under-counting, and
+   * a provider that inherits parent context is rejected at start because a
+   * seeded child's log already contains its parent's history.
+   */
+  maxTotalTokens?: number
   /** The agent on whose behalf the run executes (parent of every child). */
   parent: Agent
   /** Cancels the run when aborted. */

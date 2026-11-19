@@ -44,7 +44,7 @@ const reviews = await parallel([
 return { reviewed: reviews.length }
 ```
 
-When the script settles, the run's result resolves with the returned value, the stop reason, and the number of children started. A script that returns nothing yields `null`.
+When the script settles, the run's result resolves with the returned value, the stop reason, the number of children started, and — once a child settles — the provider-reported usage summed over its settled children plus `childrenWithoutUsage` for children the host could not measure. A script that returns nothing yields `null`.
 
 ### Programmatic runs
 
@@ -126,7 +126,7 @@ These limits define what the capability does not yet support. They are current c
 - **No background start/poll API on the seam** — `ctx.workflowEngine.start()` returns one holder-owned run; background execution is a behavior of the model-facing consumer, not a seam operation.
 - **No journaling or resume** — scripts, child progress, and intermediate values are not checkpointed, so a process restart cannot continue a run.
 - **No saved or nested workflows** — the capability starts caller-supplied scripts only, and a workflow script receives no `workflow()` hook for recursive orchestration.
-- **No token-budget vocabulary** — engines cap concurrency, items, and children, but neither the request nor the result accounts for model tokens across children.
+- **No price or cost accounting** — the request carries optional elapsed-time and token budgets and the result reports provider usage, but no engine prices those tokens or enforces a spend ceiling.
 - **Runs are holder-owned, not service-tracked** — unloading the engine does not discover independent live handles; every consumer must dispose the run it started.
 
 <a id="dev-note"></a>

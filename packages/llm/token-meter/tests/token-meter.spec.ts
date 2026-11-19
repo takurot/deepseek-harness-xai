@@ -150,6 +150,74 @@ describe('TokenMeter configuration and registration', () => {
   })
 })
 
+describe('TokenMeter session usage', () => {
+  async function mounted() {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(TokenMeter)
+    return { ctx, meter: ctx.tokenMeter }
+  }
+
+  it('reports cumulative provider usage across a session log', async () => {
+    const { ctx, meter } = await mounted()
+    const session = ctx.sessions.create()
+    appendSuccessfulCall(session, header('mock'), {
+      usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2 },
+    })
+    appendSuccessfulCall(session, header('mock'), {
+      turn: 2,
+      usage: { inputTokens: 5, outputTokens: 3, cacheWriteTokens: 7 },
+    })
+    expect(meter.sessionUsage(session)).toEqual({
+      uncachedInputTokens: 15,
+      outputTokens: 7,
+      cacheReadTokens: 2,
+      cacheWriteTokens: 7,
+    })
+    await ctx.fiber.dispose()
+  })
+
+  it('returns a detached copy that later reads do not observe', async () => {
+    const { ctx, meter } = await mounted()
+    const session = ctx.sessions.create()
+    appendSuccessfulCall(session, header('mock'), { usage: { inputTokens: 9, outputTokens: 2 } })
+    const first = meter.sessionUsage(session)
+    ;(first as { uncachedInputTokens: number }).uncachedInputTokens = 999
+    expect(meter.sessionUsage(session).uncachedInputTokens).toBe(9)
+    await ctx.fiber.dispose()
+  })
+
+  it('reports zero buckets for a session without provider usage', async () => {
+    const { ctx, meter } = await mounted()
+    const session = ctx.sessions.create()
+    appendSuccessfulCall(session, header('mock'))
+    expect(meter.sessionUsage(session)).toEqual({
+      uncachedInputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    })
+    await ctx.fiber.dispose()
+  })
+
+  it('folds a detached session with no live store entry', async () => {
+    const { ctx, meter } = await mounted()
+    const session = Session.create(SessionId('detached-usage'))
+    appendSuccessfulCall(session, header('mock'), {
+      usage: { inputTokens: 8, outputTokens: 2 },
+    })
+    expect(ctx.sessions.get(session.id)).toBeUndefined()
+    expect(meter.sessionUsage(session)).toEqual({
+      uncachedInputTokens: 8,
+      outputTokens: 2,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    })
+    await ctx.fiber.dispose()
+  })
+})
+
 describe('TokenMeter pricing', () => {
   it('prices every built-in content shape and merge-extended blocks with one fixed heuristic', () => {
     const service = meter()

@@ -94,6 +94,8 @@ async function setup(options?: SetupOptions) {
   if (options?.config?.maxRounds !== undefined) config.maxRounds = options.config.maxRounds
   if (options?.config?.maxHandoffChars !== undefined) config.maxHandoffChars = options.config.maxHandoffChars
   if (options?.config?.maxResultChars !== undefined) config.maxResultChars = options.config.maxResultChars
+  if (options?.config?.maxElapsedMs !== undefined) config.maxElapsedMs = options.config.maxElapsedMs
+  if (options?.config?.maxTotalTokens !== undefined) config.maxTotalTokens = options.config.maxTotalTokens
   const fiber = await ctx.plugin(toolRalph, config)
   const parent = { id: SessionId('caller'), options: {} } as unknown as Agent
   return { ctx, engine: ctx.workflowEngine as StubEngine, parent, fiber }
@@ -172,6 +174,8 @@ describe('dsh-tool-ralph', () => {
       runId: 'ralph-1',
       agentsStarted: 1,
       result: { status: 'complete', roundsStarted: 1, report: COMPLETE },
+      usage: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      childrenWithoutUsage: 0,
     })
     expect((result.content[0] as { text: string }).text)
       .toContain('Ralph worker reported completion after 1 round.')
@@ -196,9 +200,12 @@ describe('dsh-tool-ralph', () => {
       status: 'budget-limited',
       roundsStarted: 2,
       report: CONTINUE,
+      reason: 'this run reached its 2-round limit',
     }, 2)
     expect((limitedResult.content[0] as { text: string }).text)
-      .toContain('Ralph reached its 2 rounds limit; the worker reported work remaining.')
+      .toContain('Ralph stopped after 2 rounds.')
+    expect((limitedResult.content[0] as { text: string }).text)
+      .toContain('Reason: this run reached its 2-round limit.')
   })
 
   it('bounds the complete parent result and labels worker-reported completion', async () => {
@@ -336,6 +343,106 @@ describe('dsh-tool-ralph', () => {
     expect(() => { toolRalph.apply(new Context(), { maxRounds: 0 }) }).toThrow('positive safe integer')
     expect(() => { toolRalph.apply(new Context(), { maxHandoffChars: 1.5 }) }).toThrow('positive safe integer')
     expect(() => { toolRalph.apply(new Context(), { maxResultChars: 0 }) }).toThrow('positive safe integer')
+    expect(() => { toolRalph.apply(new Context(), { maxElapsedMs: 0 }) }).toThrow('maxElapsedMs must be a positive safe integer')
+    expect(() => { toolRalph.apply(new Context(), { maxElapsedMs: 1.5 }) }).toThrow('maxElapsedMs must be a positive safe integer')
+    expect(() => { toolRalph.apply(new Context(), { maxTotalTokens: -1 }) }).toThrow('maxTotalTokens must be a positive safe integer')
+    expect(() => { toolRalph.apply(new Context(), { maxTotalTokens: Number.NaN }) }).toThrow('maxTotalTokens must be a positive safe integer')
+  })
+
+  it('passes configured run budgets to the engine and bounds call overrides', async () => {
+    const { ctx, engine, parent } = await setup({ config: { maxElapsedMs: 5_000, maxTotalTokens: 90_000 } })
+    const pending = execute(ctx, { objective: 'Work.', maxElapsedMs: 1_000, maxTotalTokens: 50_000 }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+    expect(engine.requests[0]).toMatchObject({ maxElapsedMs: 1_000, maxTotalTokens: 50_000 })
+    await settleCompleted(engine, pending, { status: 'complete', roundsStarted: 1, report: COMPLETE })
+
+    const defaults = execute(ctx, { objective: 'Work.' }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(2) })
+    expect(engine.requests[1]).toMatchObject({ maxElapsedMs: 5_000, maxTotalTokens: 90_000 })
+    await settleCompleted(engine, defaults, { status: 'complete', roundsStarted: 1, report: COMPLETE })
+
+    for (const args of [{ maxElapsedMs: 5_001 }, { maxTotalTokens: 90_001 }, { maxElapsedMs: 0 }, { maxTotalTokens: 1.5 }]) {
+      const rejected = await execute(ctx, { objective: 'Work.', ...args }, { agent: parent })
+      expect(rejected.isError).toBe(true)
+    }
+    expect(engine.requests).toHaveLength(2)
+  })
+
+  it('renders singular usage notes and the aggregated usage of a completed run', async () => {
+    const { ctx, engine, parent } = await setup()
+    const pending = execute(ctx, { objective: 'Work.' }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+    engine.settle({
+      value: { status: 'complete', roundsStarted: 1, report: COMPLETE },
+      stopReason: 'completed',
+      agentsStarted: 1,
+      usage: { uncachedInputTokens: 7, outputTokens: 3, cacheReadTokens: 1, cacheWriteTokens: 0 },
+      childrenWithoutUsage: 1,
+    })
+    const text = ((await pending).content[0] as { text: string }).text
+    expect(text).toContain('Ralph worker reported completion after 1 round.')
+    expect(text).toContain('Child token usage: 7 input, 3 output, 1 cache read, 0 cache write; 1 child agent reported no usage.')
+  })
+
+  it('omits budgets from the engine request when neither the deployment nor the call sets one', async () => {
+    const { ctx, engine, parent } = await setup()
+    const pending = execute(ctx, { objective: 'Work.' }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+    expect(engine.requests[0]).not.toHaveProperty('maxElapsedMs')
+    expect(engine.requests[0]).not.toHaveProperty('maxTotalTokens')
+    await settleCompleted(engine, pending, { status: 'complete', roundsStarted: 1, report: COMPLETE })
+  })
+
+  it('renders a budget stop before the first round without a usage line', async () => {
+    const { ctx, engine, parent } = await setup()
+    const pending = execute(ctx, { objective: 'Work.' }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+    engine.settle({
+      value: {
+        status: 'budget-limited',
+        roundsStarted: 0,
+        report: null,
+        reason: 'this run reached its elapsed-time budget (1200 ms of 1000 ms) — no further agents will start',
+      },
+      stopReason: 'completed',
+      agentsStarted: 0,
+    })
+    const result = await pending
+    expect(result.isError).toBe(false)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('Ralph stopped before starting any round.')
+    expect(text).toContain('Reason: this run reached its elapsed-time budget (1200 ms of 1000 ms) — no further agents will start.')
+    expect(text).toContain('No round report was produced.')
+    expect(text).not.toContain('Child token usage:')
+  })
+
+  it('keeps the last handoff and the aggregated usage of a budget stop', async () => {
+    const { ctx, engine, parent } = await setup()
+    const pending = execute(ctx, { objective: 'Work.' }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+    engine.settle({
+      value: {
+        status: 'budget-limited',
+        roundsStarted: 1,
+        report: CONTINUE,
+        reason: 'this run reached its token budget (55 of 50 tokens) — no further agents will start',
+      },
+      stopReason: 'completed',
+      agentsStarted: 1,
+      usage: { uncachedInputTokens: 11, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 2 },
+      childrenWithoutUsage: 2,
+    })
+    const result = await pending
+    expect(result.isError).toBe(false)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('Ralph stopped after 1 round.')
+    expect(text).toContain('Reason: this run reached its token budget (55 of 50 tokens) — no further agents will start.')
+    expect(text).toContain('Implemented the first slice.')
+    expect(text).toContain('Child token usage: 11 input, 5 output, 0 cache read, 2 cache write; 2 child agents reported no usage.')
+    expect(result.value).toMatchObject({
+      usage: { uncachedInputTokens: 11, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 2 },
+      childrenWithoutUsage: 2,
+    })
   })
 
   it('turns malformed fixed-workflow terminal values and reports into errors', async () => {
@@ -344,13 +451,14 @@ describe('dsh-tool-ralph', () => {
       { value: { status: 'complete', roundsStarted: 0, report: COMPLETE }, message: 'malformed terminal result' },
       { value: { status: 'complete', roundsStarted: 3, report: COMPLETE }, message: 'malformed terminal result', config: { maxRounds: 2 } },
       { value: { status: 'mystery', roundsStarted: 1, report: COMPLETE }, message: 'unknown terminal status' },
-      { value: { status: 'budget-limited', roundsStarted: 1, report: CONTINUE }, message: 'before the round limit', config: { maxRounds: 2 } },
+      { value: { status: 'budget-limited', roundsStarted: 0, report: CONTINUE, reason: 'x' }, message: 'with a report', config: { maxRounds: 2 } },
       { value: { status: 'complete', roundsStarted: 1, report: null }, message: 'malformed round report' },
       { value: { status: 'complete', roundsStarted: 1, report: COMPLETE, extra: true }, message: 'malformed terminal result' },
       { value: { status: 'blocked', roundsStarted: 1, report: BLOCKED, extra: true }, message: 'malformed terminal result' },
-      { value: { status: 'budget-limited', roundsStarted: 1, report: CONTINUE, extra: true }, message: 'malformed terminal result', config: { maxRounds: 1 } },
+      { value: { status: 'budget-limited', roundsStarted: 1, report: CONTINUE, reason: 'x', extra: true }, message: 'malformed terminal result', config: { maxRounds: 1 } },
       { value: { status: 'complete', roundsStarted: 1, report: { ...COMPLETE, status: 'continue' } }, message: 'malformed round report' },
-      { value: { status: 'budget-limited', roundsStarted: 1, report: { ...CONTINUE, nextSteps: [] } }, message: 'invalid continuing report', config: { maxRounds: 1 } },
+      { value: { status: 'budget-limited', roundsStarted: 1, report: { ...CONTINUE, nextSteps: [] }, reason: 'x' }, message: 'invalid continuing report', config: { maxRounds: 1 } },
+      { value: { status: 'budget-limited', roundsStarted: 1, report: CONTINUE, reason: ' ' }, message: 'malformed budget reason', config: { maxRounds: 1 } },
       { value: { status: 'complete', roundsStarted: 1, report: { ...COMPLETE, evidence: [] } }, message: 'invalid completion report' },
       { value: { status: 'blocked', roundsStarted: 1, report: { ...BLOCKED, blocker: '' } }, message: 'invalid blocked report' },
       { value: { status: 'complete', roundsStarted: 1, report: { ...COMPLETE, summary: 'x'.repeat(500) } }, message: 'oversized handoff', config: { maxHandoffChars: 100 } },

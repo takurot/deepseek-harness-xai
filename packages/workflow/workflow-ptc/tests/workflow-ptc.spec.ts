@@ -304,6 +304,38 @@ describe('dsh-workflow-ptc', { timeout: 120_000 }, () => {
       expect(starts).toBe(0)
     })
 
+    it('rejects invalid per-run budgets before publishing a run', async () => {
+      const { ctx, parent } = await setup()
+      let starts = 0
+      ctx.on('workflow/start', () => { starts += 1 })
+      const errors: unknown[] = []
+      for (const [field, value] of [
+        ['maxElapsedMs', 0],
+        ['maxElapsedMs', 1.5],
+        ['maxTotalTokens', Number.NaN],
+        ['maxTotalTokens', -3],
+      ] as const) {
+        try {
+          const handle = ctx.workflowEngine.start({
+            ...scripted("return 'must not start'"),
+            parent,
+            [field]: value,
+          })
+          await handle.dispose()
+        } catch (error: unknown) {
+          errors.push(error)
+        }
+      }
+
+      expect(errors).toEqual([
+        expect.objectContaining({ code: 'INVALID_ARGUMENT', message: 'workflow maxElapsedMs must be a positive safe integer' }),
+        expect.objectContaining({ code: 'INVALID_ARGUMENT', message: 'workflow maxElapsedMs must be a positive safe integer' }),
+        expect.objectContaining({ code: 'INVALID_ARGUMENT', message: 'workflow maxTotalTokens must be a positive safe integer' }),
+        expect.objectContaining({ code: 'INVALID_ARGUMENT', message: 'workflow maxTotalTokens must be a positive safe integer' }),
+      ])
+      expect(starts).toBe(0)
+    })
+
     it('rejects invalid per-run total-agent caps before publishing a run', async () => {
       const { ctx, parent } = await setup({ config: { maxTotalAgents: 2 } })
       let starts = 0
@@ -345,6 +377,57 @@ describe('dsh-workflow-ptc', { timeout: 120_000 }, () => {
       expect(result.agentsStarted).toBe(1)
       expect(result.error).toContain('total agent cap (1)')
       await handle.dispose()
+    })
+
+    it('rejects a token budget with a provider that inherits parent history', async () => {
+      const { ctx, parent } = await setup()
+      ctx.subagents.registerProvider({
+        name: 'forkish',
+        capabilities: { agentOptions: true, agentPreset: false, outputSchema: true, depthLimit: false },
+        inheritsParentContext: true,
+        start: () => { throw new Error('the inheriting provider must not start') },
+      })
+      expect(() => ctx.workflowEngine.start({
+        ...scripted('return null'),
+        parent,
+        subagentProvider: 'forkish',
+        maxTotalTokens: 5,
+      })).toThrow('cannot be enforced with the inheriting provider')
+
+      const accepted = ctx.workflowEngine.start({ ...scripted('return null'), parent, subagentProvider: 'forkish' })
+      expect((await accepted.result).stopReason).toBe('completed')
+      await accepted.dispose()
+    })
+
+    it('carries only the configured run budgets into the guest limits', async () => {
+      const { ctx, parent } = await setup()
+      const observations: { limits: Record<string, unknown> }[] = []
+      const originalRun = ctx.ptcRuntime.run.bind(ctx.ptcRuntime)
+      const runSpy = vi.spyOn(ctx.ptcRuntime, 'run').mockImplementation(async (spec) => {
+        observations.push(await spec.bindings[0]!.functions.begin!({}) as { limits: Record<string, unknown> })
+        return originalRun(spec)
+      })
+      try {
+        const tokens = ctx.workflowEngine.start({ ...scripted('return null'), parent, maxTotalTokens: 5 })
+        expect((await tokens.result).stopReason).toBe('completed')
+        await tokens.dispose()
+
+        const elapsed = ctx.workflowEngine.start({ ...scripted('return null'), parent, maxElapsedMs: 1_000 })
+        expect((await elapsed.result).stopReason).toBe('completed')
+        await elapsed.dispose()
+      } finally {
+        runSpy.mockRestore()
+      }
+
+      expect(observations[0]!.limits).toEqual({
+        maxConcurrentAgents: 8,
+        maxTotalAgents: 1000,
+        maxItemsPerCall: 4096,
+        syncTimeoutMs: 5000,
+        maxTotalTokens: 5,
+      })
+      expect(observations[1]!.limits).toMatchObject({ maxElapsedMs: 1_000 })
+      expect(observations[1]!.limits).not.toHaveProperty('maxTotalTokens')
     })
 
     it('a fatal hook error inside the guest kills the script and reports the error', async () => {
@@ -1020,6 +1103,7 @@ await new Promise(() => {})`))
           value: 'survived reload',
           stopReason: 'completed',
           agentsStarted: 1,
+          childrenWithoutUsage: 1,
         })
         expect(provider.runs).toHaveLength(1)
       } finally {

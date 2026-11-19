@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Run JavaScript workflows in fresh Node processes under the calling Session's file sandbox policy. Scripts keep the `agent()`, `parallel()`, `pipeline()`, `phase()` and `log()` hooks while subagents perform delegated work. The same execution provider serves PTC and workflows, including the opt-in Ralph loop. Runs have no overall elapsed deadline; cancellation stops the managed process and disposes child agents. The selected sandbox and subprocess providers determine enforcement and cleanup limits.
+Run JavaScript workflows in fresh Node processes under the calling Session's file sandbox policy. Scripts keep the `agent()`, `parallel()`, `pipeline()`, `phase()` and `log()` hooks while subagents perform delegated work. The same execution provider serves PTC and workflows, including the opt-in Ralph loop. Runs have no overall elapsed deadline; an owning consumer may add per-run elapsed-time and token budgets, which refuse further children instead of cutting a running one. Cancellation stops the managed process and disposes child agents. The selected sandbox and subprocess providers determine enforcement and cleanup limits.
 
 ## Table of Contents
 
@@ -44,13 +44,15 @@ With those dependencies available, mount the engine and its model-facing consume
 | `maxItemsPerCall` | `4096` | Items accepted by one `parallel()` or `pipeline()` call. |
 | `syncTimeoutMs` | `5000` | VM timeout for the script's initial synchronous slice, in milliseconds. |
 
-An owning consumer may set `WorkflowStartRequest.subagentProvider` and lower `WorkflowStartRequest.maxTotalAgents` for one run. Script hooks cannot change either choice. Process heap, output, control and termination limits belong to the Node PTC provider; the engine adds no overall elapsed timer. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-workflow-ptc) defines accepted engine fields.
+An owning consumer may set `WorkflowStartRequest.subagentProvider`, lower `WorkflowStartRequest.maxTotalAgents`, and set `WorkflowStartRequest.maxElapsedMs` or `maxTotalTokens` for one run; script hooks cannot change that policy. Process heap, output, control and termination limits belong to the Node PTC provider; the engine adds no overall elapsed timer. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-workflow-ptc) defines accepted engine fields.
 
 The Node PTC provider's `maxPendingCalls` also limits workflow concurrency: child startup, result waits and disposal use those slots. Progress batches use at most one additional slot. Leave headroom when setting `maxConcurrentAgents`.
 
 ### Results and failures
 
 The script runs with top-level `await`; `meta` and `args` arrive as JSON data. Every `agent()` call starts a managed subagent Activation under the run's fixed parent and waits for its text or structured result. The workflow records its own members and collects their results without adding them to the parent's subagent catalog or sending child settlement notices to the parent model. The final lossless-JSON return value becomes the run result; an ordinary child failure resolves `agent()` to `null`.
+
+A budget is checked only when `agent()` would actually start a child — after any wait for a concurrency slot — so the run may overshoot by at most the children already in flight. Once the run's elapsed time or the summed provider usage of its settled children reaches a configured budget, `agent()` throws a fatal `BUDGET_EXHAUSTED` error and the script decides how to settle; a running child is never cancelled and a refused call does not count as started. Usage comes from the mounted token meter: when a settled child has no local Session, no token meter is mounted, or its session recorded no provider usage, the child is excluded and counted in `WorkflowResult.childrenWithoutUsage`. A seeded child's log starts with a copy of its parent's history, so it is never charged to itself: the child counts as unmeasured, and a run with a token budget rejects a context-inheriting provider at start. A token budget whose children cannot be counted refuses the next start with `BUDGET_UNENFORCEABLE` rather than passing a partial total as the whole cost.
 
 Invalid metadata, an unparseable body, an unavailable provider route or a per-run cap above the ceiling is rejected before a run is published. During execution, hook misuse and tripped cooperative caps fail the workflow. Process failures, unavailable required confinement and PTC output or control limits also fail the run.
 
@@ -153,7 +155,8 @@ These limits qualify workflow execution and cleanup.
 
 - **File confinement and cleanup inherit provider limits** — the Node PTC and subprocess providers define enforcement completeness and the managed process range.
 - **Workflow caps are cooperative** — helper counters limit ordinary scripts; they are not host-enforced security quotas or descendant token budgets.
-- **No overall elapsed deadline** — a run can remain active until it completes, fails or is cancelled. Caller deadlines still apply.
+- **No overall elapsed deadline** — a run can remain active until it completes, fails or is cancelled. Caller deadlines still apply. Per-run budgets refuse new children only, so one long child — or the children already in flight — can still outlast its budget.
+- **Child usage counts one session log** — `tokenUsage` folds the child's own Session, so tokens consumed by descendants that child spawns are not included.
 - **Child cleanup follows provider contracts** — the adapter awaits disposal and pending starts without a separate abandonment timer.
 - **The VM is not a security boundary** — withheld globals guide script authors; OS policy governs code that reaches Node.
 - **Cross-realm errors fail `instanceof Error` inside scripts** — branch on stable fields such as `name` and `code`.

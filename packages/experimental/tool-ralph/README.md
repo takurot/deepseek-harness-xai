@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`ralph` runs a foreground sequence of fresh child agents against one immutable objective, with each round receiving only the previous bounded report and shared workspace state. It returns when a worker reports completion or a concrete blocker, or when the configured round limit is reached; those reports are not independently verified. Parent conversation and prior child sessions are never copied into a new round. Use it only when the direct human explicitly requests Ralph-style fresh-agent iteration; use goal tools for ordinary long-running work and subagents or workflows for bounded delegation.
+`ralph` runs a foreground sequence of fresh child agents against one immutable objective, with each round receiving only the previous bounded report and shared workspace state. It returns when a worker reports completion or a concrete blocker, or when a configured round, elapsed-time, or token budget is reached; those reports are not independently verified. Parent conversation and prior child sessions are never copied into a new round. Use it only when the direct human explicitly requests Ralph-style fresh-agent iteration; use goal tools for ordinary long-running work and subagents or workflows for bounded delegation.
 
 ## Table of Contents
 
@@ -29,7 +29,9 @@ The `ralph` tool runs a fixed foreground loop: one fresh child per round works o
 
 ### Calling the tool
 
-The model submits `{ objective, maxRounds? }` and the call blocks until the whole run settles. The deployment config's `maxRounds` is both the default and a ceiling on a call override. The terminal result is `complete`, `blocked`, or `budget-limited`, carrying the last bounded report and the number of rounds started; an ordinary child failure returns an error naming the failed round and retaining the last successful handoff when one exists.
+The model submits `{ objective, maxRounds?, maxElapsedMs?, maxTotalTokens? }` and the call blocks until the whole run settles. Each deployment config limit is both the default and a ceiling on the matching call override, so a call may only tighten a deployment budget. The terminal result is `complete`, `blocked`, or `budget-limited`, carrying the last bounded report, the number of rounds started, and the reason when a budget stopped the run; an ordinary child failure returns an error naming the failed round and retaining the last successful handoff when one exists.
+
+Budgets are checked only before a round starts: once the run's elapsed time or the provider-reported token usage of its settled children reaches a configured budget, the next round is not started and the run settles `budget-limited`. A running round is never cut, so one long round can still exceed a budget. The same `budget-limited` stop reports a token budget that cannot be counted at all, naming how many children could not be counted instead of presenting a partial total. Every terminal result also reports the aggregated child token usage and how many children the host could not measure.
 
 ### What each round sees
 
@@ -43,6 +45,8 @@ Each child receives only the immutable objective, its current round and cap, a s
 | `maxRounds` | `256` | Default and deployment ceiling for one Ralph run. |
 | `maxHandoffChars` | `16384` | Maximum serialized characters in one round report. |
 | `maxResultChars` | `16384` | Maximum characters in the complete successful parent result. |
+| `maxElapsedMs` | unset | Elapsed-time budget in milliseconds; unset means no elapsed-time budget. |
+| `maxTotalTokens` | unset | Budget for the run's settled-child token usage; unset means no token budget. |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-ralph) is the exhaustive source for every accepted field. The configured provider must exist, support structured output, and report `inheritsParentContext: false`; a call against a provider that violates this fails loudly before any round starts.
 
@@ -127,7 +131,7 @@ Prefix-stable while the plugin scope and guidance text are unchanged. Activation
 
 #### What the model sees
 
-The generated [`ralph` schema](../../../docs/tool-catalog.md#deepseek-aidsh-tool-ralph) exposes one required `objective` string and one optional `maxRounds` number. Provider choice, handoff size, report schema, workflow script, and orchestration behavior are deployment-owned and absent from the call schema.
+The generated [`ralph` schema](../../../docs/tool-catalog.md#deepseek-aidsh-tool-ralph) exposes one required `objective` string and optional `maxRounds`, `maxElapsedMs`, and `maxTotalTokens` numbers. Provider choice, handoff size, report schema, workflow script, and orchestration behavior are deployment-owned and absent from the call schema.
 
 #### Token effect
 
@@ -141,7 +145,7 @@ Prefix-stable while the definition and visibility are unchanged.
 
 #### What the model sees
 
-Each child sees the standalone fixed round prompt plus the structured-output capture contract. The parent sees only the original call and one terminal result containing a worker-reported status, round count, and pretty-printed final report; intermediate child messages and reports do not enter the parent conversation. A failed ordinary child instead yields an error with its round number and, after round one, the last successful handoff.
+Each child sees the standalone fixed round prompt plus the structured-output capture contract. The parent sees only the original call and one terminal result containing a worker-reported status, round count, optional budget reason, aggregated child token usage, and pretty-printed final report; intermediate child messages and reports do not enter the parent conversation. A failed ordinary child instead yields an error with its round number and, after round one, the last successful handoff.
 
 #### Token effect
 
@@ -164,7 +168,8 @@ These limits define what the tool does not yet support. They are current constra
 - **One round is one fresh child** — there is no within-round fan-out, model or provider switching, fork context, or model-call-selected provider.
 - **No enforced recursive-Ralph denial** — structural denial is not implemented; prompt guidance does not enforce a recursion ban.
 - **Ordinary child failure is terminal for the run** — the fixed script reports the failed round and last successful handoff but does not retry; fatal workflow infrastructure failures can end before that state is returned.
-- **Only round count bounds aggregate effort** — token, price, and elapsed-time budgets are deferred.
+- **Budgets stop the next round, not a running one** — elapsed-time and token checks happen only when a round starts, so a single long round can exceed either budget before the run stops.
+- **Token usage counts only measured children** — the figure sums each settled child's own Session usage; a provider that inherits parent context is rejected because a seeded child's log already contains that history. A child whose provider reports none, or which has no local Session or token meter, is excluded and counted in the result; a token budget whose children cannot be measured stops the next round with `budget-limited` instead of reporting a partial total as the whole cost. Descendants spawned by a child are not included, and no price or spend ceiling is derived from tokens.
 
 <a id="dev-note"></a>
 ### Dev Note
@@ -174,6 +179,6 @@ These limits define what the tool does not yet support. They are current constra
 
 This Dev Note is working context for maintainers: open directions that are not decided. It is explicitly non-authoritative — shipped behavior, limits, and accepted rationale live in the sections above, the package code, and the linked Agent Notes.
 
-Open directions: an independent evaluator with evaluator-driven continuation; within-round fan-out and provider selection; and token, price, and elapsed-time budgets beyond the round cap.
+Open directions: an independent evaluator with evaluator-driven continuation; within-round fan-out and provider selection; and price or spend ceilings derived from the reported token usage.
 
 </details>

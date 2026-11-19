@@ -1703,7 +1703,7 @@ The lsp tool keeps provider selection and language-server subprocesses behind ct
 
 ### `ralph`
 
-Run a foreground fresh-agent Ralph loop toward one immutable objective. Use only when the direct human explicitly asks for Ralph or fresh-agent iteration. Each round opens a new child with no parent conversation or prior child session; the shared workspace is long-term memory, and only a bounded structured report crosses rounds. The call returns when a worker reports completion or a concrete blocker, or at the round limit. Ordinary long-running same-session work belongs to goal tools.
+Run a foreground fresh-agent Ralph loop toward one immutable objective. Use only when the direct human explicitly asks for Ralph or fresh-agent iteration. Each round opens a new child with no parent conversation or prior child session; the shared workspace is long-term memory, and only a bounded structured report crosses rounds. The call returns when a worker reports completion or a concrete blocker, or at the round, elapsed-time, or token budget. Ordinary long-running same-session work belongs to goal tools.
 
 ```json
 {
@@ -1716,6 +1716,14 @@ Run a foreground fresh-agent Ralph loop toward one immutable objective. Use only
     "maxRounds": {
       "type": "number",
       "description": "Optional positive safe-integer round cap, bounded by the deployment ceiling."
+    },
+    "maxElapsedMs": {
+      "type": "number",
+      "description": "Optional elapsed-time budget in milliseconds; a configured deployment ceiling bounds it and the engine refuses the next round once it is reached."
+    },
+    "maxTotalTokens": {
+      "type": "number",
+      "description": "Optional budget for the tokens the run's settled children consumed; a configured deployment ceiling bounds it and the engine refuses the next round once it is reached."
     }
   },
   "required": [
