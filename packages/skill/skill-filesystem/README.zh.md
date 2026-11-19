@@ -150,7 +150,7 @@ watcher 触发的失效可促使上述消费方在现有请求历史中追加替
 - **I/O 失败会省略整个根目录**——一个不可读 skill 会使该次观测同时隐藏同根下的可读 skill。其他根仍可用，因此较低优先级的同名 skill 可能提供描述与加载的正文。每次查询都会重试发现，根目录恢复后重新按正常优先级选择。
 - **缺失根观察每次轮询一个路径段**——启动时不存在的根会使用 `fs.watchFile` 按 `watchPollIntervalMs` 轮询，直至 Chokidar 可以附加；这以有界检测延迟换取跨 IDE、Git 与 shell 工作流的可靠创建检测。
 - **无正文修订协议**——已加载正文是普通的已保留工具历史；后续文件编辑会影响后续调用，但既不会改写旧结果，也不会通知正文已变化。
-- **第三方技能包由用户自行维护**——Claude Code 风格的技能包（例如 pstack）只有在自身声明与 dsh 一致时才能通过 `customSkillDirs` 或转换后的根目录工作：其仅斜杠调用的技能不会进入模型目录，其正文可能假定 dsh 未提供的 Claude Code 工具。Harness 不会 vendoring 此类技能包、转换其 agent 文件，也不会映射其模型路由规则（[决策](../../../.agents/notes/rejected/feature/2026-11-04-pstack-bundle-decision.zh.md)）。
+- **第三方技能包属于用户自己的副本**——Claude Code 风格的技能包（例如 pstack）在其布局为一层、`name` 为 kebab-case、`description` 存在、且调用键使用 dsh 的拼写时，可以通过 `customSkillDirs` 或既有根目录加载；额外的 Claude Code 键会被忽略。其 `disable-model-invocation` 技能不会进入模型目录与 `skill` 工具，其正文可能假定 dsh 未提供的 Claude Code 工具（[决策](../../../.agents/notes/rejected/feature/2026-11-04-pstack-bundle-decision.zh.md)）。
 
 <a id="dev-note"></a>
 ### 开发备注

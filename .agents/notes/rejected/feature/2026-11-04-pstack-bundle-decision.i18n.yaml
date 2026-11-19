@@ -6,26 +6,26 @@
   en: d6bba74dbd0c7831
   zh: e6157b7e0a2fc19a
 /agent-note-bundle-pstack-as-a-dsh-skill-distribution/problem:
-  en: ac5bd1a0ae20f6ed
-  zh: ddae31ee94750186
+  en: 3963c2c7d28bb174
+  zh: f19c5dd424342bbd
 /agent-note-bundle-pstack-as-a-dsh-skill-distribution/proposal:
   en: 0159ea617f8b203f
   zh: 018aa5f4fd5fc9f2
-/agent-note-bundle-pstack-as-a-dsh-skill-distribution/verification-what-was-established-2026-11-04:
-  en: 9eb1c320ddd7309b
-  zh: 1c98271b35816591
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution/verification:
+  en: cdf07017422c3ea9
+  zh: 267bda9e24380ca3
 /agent-note-bundle-pstack-as-a-dsh-skill-distribution/alternatives-considered:
   en: 6119e2aff3b6be5a
   zh: 6119e2aff3b6be5a
 /agent-note-bundle-pstack-as-a-dsh-skill-distribution/alternatives-considered/bundle-it-as-an-experimental-package:
-  en: f62101144854351a
-  zh: d9d1b78663742c49
+  en: 8661f0ce2d196599
+  zh: 4b2d8817413f46fc
 /agent-note-bundle-pstack-as-a-dsh-skill-distribution/alternatives-considered/bundle-a-compatibility-shim-instead-translate-task-read-claude-rules:
   en: a8b7723880a8c069
   zh: a3a800b65e56af7a
 /agent-note-bundle-pstack-as-a-dsh-skill-distribution/alternatives-considered/ship-nothing-and-let-users-set-customskilldirs-chosen:
-  en: bb514898e265c5d1
-  zh: 4f1bbf552555c384
+  en: 8431e8d0c327d71e
+  zh: 854acaf096ee6654
 /agent-note-bundle-pstack-as-a-dsh-skill-distribution/consequences:
-  en: 88b7bd1d86303eec
-  zh: 849cc427c1b4e945
+  en: 5996dde4b2fae22c
+  zh: b963e92a2a239de9
