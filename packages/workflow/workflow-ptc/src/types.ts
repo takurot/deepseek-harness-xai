@@ -36,8 +36,6 @@ export interface WorkerInit {
   args?: unknown
   /** The guest helper limits. */
   limits: WorkerLimits
-  /** Host wall clock, in epoch milliseconds, when the guest started executing the script. */
-  startedAtMs: number
 }
 
 /** One `agent()` child request after the guest validates script options. */

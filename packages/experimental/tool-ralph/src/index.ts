@@ -12,7 +12,7 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { SubagentProvider } from '@deepseek-ai/dsh-subagent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
-import type { WorkflowResult, WorkflowRun } from '@deepseek-ai/dsh-workflow'
+import type { WorkflowResult, WorkflowRun, WorkflowUsage } from '@deepseek-ai/dsh-workflow'
 
 export const name = 'tool-ralph'
 export const inject = ['tools', 'workflowEngine', 'subagents', 'systemPrompt']
@@ -86,14 +86,6 @@ interface RalphRoundFailure {
 }
 
 type RalphTerminalResult = RalphRunResult | RalphRoundFailure
-
-/** Child usage aggregated by the engine over the run's settled children. */
-type RalphUsage = {
-  readonly uncachedInputTokens: number
-  readonly outputTokens: number
-  readonly cacheReadTokens: number
-  readonly cacheWriteTokens: number
-}
 
 interface RalphCallArgs {
   objective: string
@@ -193,10 +185,11 @@ for (let round = 1; round <= args.maxRounds; round += 1) {
       schema: reportSchema,
     })
   } catch (error) {
-    // The engine refuses a start once a configured run budget is reached. The
-    // loop keeps the completed rounds and reports the budget instead of failing,
-    // because no running round is ever cut.
-    if (error !== null && typeof error === 'object' && error.code === 'BUDGET_EXHAUSTED') {
+    // The engine refuses a start once a configured run budget is reached, or
+    // when a token budget cannot be counted. The loop keeps the completed
+    // rounds and reports the stop instead of failing, because no running round
+    // is ever cut and the parent would otherwise lose the last handoff.
+    if (error !== null && typeof error === 'object' && (error.code === 'BUDGET_EXHAUSTED' || error.code === 'BUDGET_UNENFORCEABLE')) {
       return {
         status: 'budget-limited',
         roundsStarted: round - 1,
@@ -448,7 +441,7 @@ function boundResult(text: string, maxChars: number): string {
  * Render the aggregated child usage as one model-facing line, explaining how
  * complete the figure is when children reported none.
  */
-function renderUsage(usage: RalphUsage, childrenWithoutUsage: number): string {
+function renderUsage(usage: WorkflowUsage, childrenWithoutUsage: number): string {
   const total = usage.uncachedInputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
   if (total === 0 && childrenWithoutUsage === 0) return ''
   const buckets = `${usage.uncachedInputTokens} input, ${usage.outputTokens} output, `
@@ -462,7 +455,7 @@ function renderUsage(usage: RalphUsage, childrenWithoutUsage: number): string {
 /** Render the fixed terminal envelope without presenting self-report as certification. */
 function renderResult(
   result: RalphRunResult,
-  usage: RalphUsage,
+  usage: WorkflowUsage,
   childrenWithoutUsage: number,
   maxChars: number,
 ): string {

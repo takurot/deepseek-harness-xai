@@ -141,9 +141,9 @@ export interface WorkflowAgentEndInfo extends WorkflowAgentInfo {
 
 /**
  * A settled run's outcome as event data (the `workflow/end` payload): the
- * {@link WorkflowResult} minus `value` (a listener observing outcomes must not
- * receive a mutable alias of the caller's result value; a consumer that needs
- * the value holds the run and awaits `result`).
+ * {@link WorkflowResult} minus its `value` and its child usage aggregate (a
+ * listener observing outcomes must not receive a mutable alias of the caller's
+ * result; a consumer that needs either holds the run and awaits `result`).
  */
 export interface WorkflowResultInfo {
   /** Why the run settled. */

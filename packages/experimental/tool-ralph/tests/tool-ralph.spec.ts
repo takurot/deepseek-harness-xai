@@ -393,7 +393,7 @@ describe('dsh-tool-ralph', () => {
     await settleCompleted(engine, pending, { status: 'complete', roundsStarted: 1, report: COMPLETE })
   })
 
-  it('renders a budget stop before the first round and the aggregated child usage', async () => {
+  it('renders a budget stop before the first round without a usage line', async () => {
     const { ctx, engine, parent } = await setup()
     const pending = execute(ctx, { objective: 'Work.' }, { agent: parent })
     await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
@@ -406,8 +406,6 @@ describe('dsh-tool-ralph', () => {
       },
       stopReason: 'completed',
       agentsStarted: 0,
-      usage: { uncachedInputTokens: 11, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 2 },
-      childrenWithoutUsage: 2,
     })
     const result = await pending
     expect(result.isError).toBe(false)
@@ -415,6 +413,31 @@ describe('dsh-tool-ralph', () => {
     expect(text).toContain('Ralph stopped before starting any round.')
     expect(text).toContain('Reason: this run reached its elapsed-time budget (1200 ms of 1000 ms) — no further agents will start.')
     expect(text).toContain('No round report was produced.')
+    expect(text).not.toContain('Child token usage:')
+  })
+
+  it('keeps the last handoff and the aggregated usage of a budget stop', async () => {
+    const { ctx, engine, parent } = await setup()
+    const pending = execute(ctx, { objective: 'Work.' }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+    engine.settle({
+      value: {
+        status: 'budget-limited',
+        roundsStarted: 1,
+        report: CONTINUE,
+        reason: 'this run reached its token budget (55 of 50 tokens) — no further agents will start',
+      },
+      stopReason: 'completed',
+      agentsStarted: 1,
+      usage: { uncachedInputTokens: 11, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 2 },
+      childrenWithoutUsage: 2,
+    })
+    const result = await pending
+    expect(result.isError).toBe(false)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('Ralph stopped after 1 round.')
+    expect(text).toContain('Reason: this run reached its token budget (55 of 50 tokens) — no further agents will start.')
+    expect(text).toContain('Implemented the first slice.')
     expect(text).toContain('Child token usage: 11 input, 5 output, 0 cache read, 2 cache write; 2 child agents reported no usage.')
     expect(result.value).toMatchObject({
       usage: { uncachedInputTokens: 11, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 2 },

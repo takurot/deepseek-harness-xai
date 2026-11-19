@@ -63,7 +63,7 @@ export async function runWorkflowGuest(host: WorkflowGuestHost): Promise<Workflo
       }
     },
   }
-  const execution = new WorkflowExecution(init.meta, init.body, init.args, init.startedAtMs, init.limits, observer, children)
+  const execution = new WorkflowExecution(init.meta, init.body, init.args, init.limits, observer, children)
   const result = await execution.drive()
   await drain()
   return progressError === undefined ? result : {

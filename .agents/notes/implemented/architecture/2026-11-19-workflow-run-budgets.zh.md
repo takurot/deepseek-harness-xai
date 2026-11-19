@@ -15,10 +15,10 @@ Status: implemented
 预算属于工作流 seam 的运行级参数，由 guest 在 `agent()` 即将发布子 agent 时强制执行。
 
 - `WorkflowStartRequest` 携带可选的 `maxElapsedMs` 与 `maxTotalTokens`。它们没有引擎默认值：部署策略属于拥有该次运行的消费方（Ralph 的插件配置），而不是每个工作流。
-- guest 从开始运行脚本的那一刻计量经过时间（宿主在 `begin` 绑定中写入 `WorkerInit.startedAtMs`），并累加每个已结算子 agent 的提供方用量。
-- 检查只在 `agent()` 准入时执行。达到任一预算即抛出带 `BUDGET_EXHAUSTED` 代码的致命 `WorkflowError`；由脚本决定如何结算。正在运行的子 agent 绝不会被取消。
-- 子 agent 用量来自 token meter：宿主在发布子 agent 时捕获其活动中的 `Session`，结算后读取 `ctx.tokenMeter.sessionUsage(session)`。Session 不可用、未挂载 token meter，或其日志未记录任何提供方用量的子 agent 会被排除，并计入 `WorkflowResult.childrenWithoutUsage`。
-- 当 token 预算遇到无法统计的子 agent 时，下一次准入以 `BUDGET_UNENFORCEABLE` 失败，而不是把部分总和呈现为完整成本。
+- guest 在开始运行脚本时取一次单调的 `performance.now()` 作为起点，并累加每个已结算子 agent 的提供方用量。
+- 检查只在 `agent()` 准入时执行——即在等待并发槽位之后——因此被拒绝的调用会释放槽位且不计入已启动数量；运行可能因已在执行的子 agent 而超出预算。达到任一预算即抛出带 `BUDGET_EXHAUSTED` 代码的致命 `WorkflowError`；由脚本决定如何结算。正在运行的子 agent 绝不会被取消。
+- 子 agent 用量来自 token meter：宿主在发布子 agent 时捕获其活动中的 `Session`，结算后读取 `ctx.tokenMeter.sessionUsage(session)`。被 seed 的会话以父级历史的副本开头，其总量无法归因于该子 agent：该子 agent 视为无法统计，而带 token 预算的运行会在启动前拒绝继承父级上下文的提供方。Session 不可用、未挂载 token meter，或其日志未记录任何提供方用量的子 agent 会被排除，并计入 `WorkflowResult.childrenWithoutUsage`。
+- 当 token 预算遇到无法统计的子 agent 时，下一次准入以 `BUDGET_UNENFORCEABLE` 被拒绝，而不是把部分总和呈现为完整成本。Ralph 同样捕获该代码并结算为 `budget-limited`，因为已完成的 Round 与它们的有界交接正是上文“直接失败”替代方案被否决的理由。
 - `WorkflowResult` 报告汇总 `usage` 与 `childrenWithoutUsage`；Ralph 把二者回传给父模型，其固定脚本捕获 `BUDGET_EXHAUSTED`，并以引擎给出的原因文本结算为 `budget-limited`。
 
 ## Why the engine, not the script
@@ -47,7 +47,7 @@ Status: implemented
 
 ## Consequences
 
-- Ralph 把预算暴露为配置上限加上只能收紧的调用参数，在每轮开始时检查，并返回带引擎原因的 `budget-limited`。其结果报告汇总的子 agent 用量以及无法统计的子 agent 数量。
-- token 预算要求提供方的子 agent 通过已挂载的 token meter 记录用量。默认的进程内提供方满足该条件；不上报任何内容的外部后端会以 `BUDGET_UNENFORCEABLE` 显现，而不是被静默少计的总量。
+- Ralph 把预算暴露为配置上限加上只能收紧的调用参数，并在预算耗尽或无法统计两种情况下都返回带引擎原因的 `budget-limited`。其结果报告汇总的子 agent 用量以及无法统计的子 agent 数量。
+- token 预算要求提供方的子 agent 通过已挂载的 token meter 记录用量。默认的进程内提供方满足该条件；不上报任何内容的外部后端会比预算要求更早停止运行，并以 `BUDGET_UNENFORCEABLE` 作为明确原因，而不是给出被静默少计的总量。
 - `tokenUsage` 只折叠一个子会话日志，因此再启动自身后代的子 agent 只贡献自己的轮次。[工作流引擎限制](../../../../packages/workflow/workflow-ptc/README.zh.md)记录了这一点。
 - 没有任何组件为 token 计价：支出上限仍需要每条路由的价格表，因此延期。

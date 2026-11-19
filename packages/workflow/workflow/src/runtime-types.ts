@@ -38,8 +38,10 @@ export interface WorkflowStartRequest {
    * Optional token budget: cumulative provider-reported usage of the run's
    * settled children. Once reached, `agent()` refuses to start another child
    * with a fatal `BUDGET_EXHAUSTED` error; a running child is never cancelled.
-   * A run whose children report no readable usage fails with
-   * `BUDGET_UNENFORCEABLE` instead of silently under-counting.
+   * A run whose settled children report no readable usage refuses its next
+   * child with `BUDGET_UNENFORCEABLE` instead of silently under-counting, and
+   * a provider that inherits parent context is rejected at start because a
+   * seeded child's log already contains its parent's history.
    */
   maxTotalTokens?: number
   /** The agent on whose behalf the run executes (parent of every child). */

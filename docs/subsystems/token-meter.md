@@ -110,7 +110,8 @@ Replay owner for one service-wide estimator and isolated per-session folds.
  * Read the cumulative provider-reported usage of one session's durable log,
  * including a detached session no longer in the live store.
  * @param session - session whose committed usage is summed.
- * @returns the four disjoint provider buckets; zeros before any usage is recorded.
+ * @returns a detached copy of the four disjoint provider buckets; zeros before
+ *   any usage is recorded.
  */
 sessionUsage(session: Session): TokenUsageProjection
 

@@ -4003,7 +4003,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'sessionUsage(session: Session): TokenUsageProjection',
         description: 'Read the cumulative provider-reported usage of one session\'s durable log, including a detached session no longer in the live store.',
         parameters: [{ name: 'session', description: 'session whose committed usage is summed.' }],
-        returns: 'the four disjoint provider buckets; zeros before any usage is recorded.',
+        returns: 'a detached copy of the four disjoint provider buckets; zeros before any usage is recorded.',
       },
       {
         signature: 'contextPressure(session: Session): Pick<ContextPressureProjection, \'pressureTokens\' | \'contextWindow\'>',

@@ -379,6 +379,26 @@ describe('dsh-workflow-ptc', { timeout: 120_000 }, () => {
       await handle.dispose()
     })
 
+    it('rejects a token budget with a provider that inherits parent history', async () => {
+      const { ctx, parent } = await setup()
+      ctx.subagents.registerProvider({
+        name: 'forkish',
+        capabilities: { agentOptions: true, agentPreset: false, outputSchema: true, depthLimit: false },
+        inheritsParentContext: true,
+        start: () => { throw new Error('the inheriting provider must not start') },
+      })
+      expect(() => ctx.workflowEngine.start({
+        ...scripted('return null'),
+        parent,
+        subagentProvider: 'forkish',
+        maxTotalTokens: 5,
+      })).toThrow('cannot be enforced with the inheriting provider')
+
+      const accepted = ctx.workflowEngine.start({ ...scripted('return null'), parent, subagentProvider: 'forkish' })
+      expect((await accepted.result).stopReason).toBe('completed')
+      await accepted.dispose()
+    })
+
     it('carries only the configured run budgets into the guest limits', async () => {
       const { ctx, parent } = await setup()
       const observations: { limits: Record<string, unknown> }[] = []

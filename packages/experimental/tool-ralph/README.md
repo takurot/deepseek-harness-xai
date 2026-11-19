@@ -31,7 +31,7 @@ The `ralph` tool runs a fixed foreground loop: one fresh child per round works o
 
 The model submits `{ objective, maxRounds?, maxElapsedMs?, maxTotalTokens? }` and the call blocks until the whole run settles. Each deployment config limit is both the default and a ceiling on the matching call override, so a call may only tighten a deployment budget. The terminal result is `complete`, `blocked`, or `budget-limited`, carrying the last bounded report, the number of rounds started, and the reason when a budget stopped the run; an ordinary child failure returns an error naming the failed round and retaining the last successful handoff when one exists.
 
-Budgets are checked only before a round starts: once the run's elapsed time or the provider-reported token usage of its settled children reaches a configured budget, the next round is not started and the run settles `budget-limited`. A running round is never cut, so one long round can still exceed a budget. Every terminal result also reports the aggregated child token usage and how many children the host could not measure.
+Budgets are checked only before a round starts: once the run's elapsed time or the provider-reported token usage of its settled children reaches a configured budget, the next round is not started and the run settles `budget-limited`. A running round is never cut, so one long round can still exceed a budget. The same `budget-limited` stop reports a token budget that cannot be counted at all, naming the unmeasurable child instead of presenting a partial total. Every terminal result also reports the aggregated child token usage and how many children the host could not measure.
 
 ### What each round sees
 
@@ -169,7 +169,7 @@ These limits define what the tool does not yet support. They are current constra
 - **No enforced recursive-Ralph denial** — structural denial is not implemented; prompt guidance does not enforce a recursion ban.
 - **Ordinary child failure is terminal for the run** — the fixed script reports the failed round and last successful handoff but does not retry; fatal workflow infrastructure failures can end before that state is returned.
 - **Budgets stop the next round, not a running one** — elapsed-time and token checks happen only when a round starts, so a single long round can exceed either budget before the run stops.
-- **Token usage counts only measured children** — the figure sums each settled child's own Session usage. A child whose provider reports none, or which has no local Session or token meter, is excluded and counted in the result; a token budget whose children cannot be measured fails the run instead of reporting a partial total as the whole cost. Descendants spawned by a child are not included, and no price or spend ceiling is derived from tokens.
+- **Token usage counts only measured children** — the figure sums each settled child's own Session usage; a provider that inherits parent context is rejected because a seeded child's log already contains that history. A child whose provider reports none, or which has no local Session or token meter, is excluded and counted in the result; a token budget whose children cannot be measured stops the next round with `budget-limited` instead of reporting a partial total as the whole cost. Descendants spawned by a child are not included, and no price or spend ceiling is derived from tokens.
 
 <a id="dev-note"></a>
 ### Dev Note

@@ -159,7 +159,7 @@ export class PtcWorkflowRun implements WorkflowRun {
     readonly id: WorkflowRunId,
     readonly meta: WorkflowMeta,
     private readonly parent: Agent,
-    private readonly init: Omit<WorkerInit, 'startedAtMs'>,
+    private readonly init: WorkerInit,
     private readonly provider: string,
     private readonly policy: SandboxExecutionPolicy,
     private readonly observer: ExecutionObserver,
@@ -206,11 +206,7 @@ export class PtcWorkflowRun implements WorkflowRun {
 
   private bindings(): Record<string, PtcBindingFunction> {
     return {
-      begin: () => {
-        this.requireActive()
-        // Elapsed budgets measure guest work, so the stamp is taken when the script starts.
-        return Promise.resolve(json({ ...this.init, startedAtMs: Date.now() }))
-      },
+      begin: () => { this.requireActive(); return Promise.resolve(json(this.init)) },
       startChild: value => this.track(this.startChild(childRequest(value))),
       childResult: value => this.track(this.childResult(this.child(value))),
       disposeChild: async (value) => { await this.disposeChild(this.child(value)); return null },
@@ -280,13 +276,16 @@ export class PtcWorkflowRun implements WorkflowRun {
   }
 
   /**
-   * Read one settled child's cumulative provider usage. Absent when the child
-   * has no local Session, no token meter is mounted, or the session recorded no
-   * provider usage at all — all three mean the run cannot count that child, so
-   * it reports the child instead of a misleading zero.
+   * Read one settled child's cumulative provider usage. A seeded child's log
+   * starts with a copy of its parent's history, so the figure cannot be
+   * attributed to the child and the child counts as unmeasured. Absent
+   * otherwise when the child has no local Session, no token meter is mounted,
+   * or the session recorded no provider usage at all — those mean the run
+   * cannot count that child, so it reports the child instead of a misleading
+   * zero.
    */
   private readChildUsage(session: Session | undefined): TokenUsageProjection | undefined {
-    if (session === undefined) return undefined
+    if (session === undefined || session.inheritedEventCount > 0) return undefined
     const usage = this.ctx.get('tokenMeter')?.sessionUsage(session)
     if (usage === undefined) return undefined
     const total = usage.uncachedInputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens

@@ -15,10 +15,10 @@ Two facts shaped the fix. First, a round of work is a complete child session, so
 Budgets are run-scoped parameters of the workflow seam, enforced by the guest when `agent()` would publish a child.
 
 - `WorkflowStartRequest` carries optional `maxElapsedMs` and `maxTotalTokens`. They have no engine default: a deployment policy belongs to the consumer that owns the run (Ralph's plugin config), not to every workflow.
-- The guest measures elapsed time from the moment it starts running the script (the host stamps `WorkerInit.startedAtMs` in the `begin` binding) and accumulates each settled child's provider usage.
-- The check runs only at `agent()` admission. Reaching either budget throws a fatal `WorkflowError` with code `BUDGET_EXHAUSTED`; the script decides how to settle. A running child is never cancelled.
-- Child usage comes from the token meter: the host captures the child's live `Session` when it publishes the child, then reads `ctx.tokenMeter.sessionUsage(session)` after settlement. A child whose session is unavailable, whose token meter is not mounted, or whose log recorded no provider usage is excluded and counted in `WorkflowResult.childrenWithoutUsage`.
-- A token budget with an uncountable child fails the next admission with `BUDGET_UNENFORCEABLE` instead of presenting a partial sum as the whole cost.
+- The guest measures elapsed time from a monotonic `performance.now()` taken when it starts running the script, and accumulates each settled child's provider usage.
+- The check runs only at `agent()` admission, after any wait for a concurrency slot, so a refused call releases its slot and is not counted as started; a run may overshoot by the children already in flight. Reaching either budget throws a fatal `WorkflowError` with code `BUDGET_EXHAUSTED`; the script decides how to settle. A running child is never cancelled.
+- Child usage comes from the token meter: the host captures the child's live `Session` when it publishes the child, then reads `ctx.tokenMeter.sessionUsage(session)` after settlement. A seeded session starts with a copy of its parent's history, so its total cannot be attributed to the child: the child counts as unmeasured, and a run with a token budget rejects a context-inheriting provider before it starts. A child whose session is unavailable, whose token meter is not mounted, or whose log recorded no provider usage is excluded and counted in `WorkflowResult.childrenWithoutUsage`.
+- A token budget with an uncountable child refuses the next admission with `BUDGET_UNENFORCEABLE` instead of presenting a partial sum as the whole cost. Ralph catches this code too and settles `budget-limited`, because the completed rounds and their handoff are the reason the hard-failure alternative above was rejected.
 - `WorkflowResult` reports the aggregate `usage` and `childrenWithoutUsage`; Ralph echoes both to the parent model, and its fixed script catches `BUDGET_EXHAUSTED` to settle `budget-limited` with the engine's reason text.
 
 ## Why the engine, not the script
@@ -47,7 +47,7 @@ That was rejected for three reasons. A new script hook is a model-facing contrac
 
 ## Consequences
 
-- Ralph exposes the budgets as config ceilings plus call parameters that may only tighten them, checks each round's start, and returns `budget-limited` with the engine's reason. Its result reports the aggregate child usage and how many children could not be measured.
-- A token budget requires a provider whose children record usage through the mounted token meter. The default in-process provider does; an external backend that reports nothing surfaces as `BUDGET_UNENFORCEABLE` rather than a silently under-counted total.
+- Ralph exposes the budgets as config ceilings plus call parameters that may only tighten them, and returns `budget-limited` with the engine's reason for both an exhausted and an uncountable budget. Its result reports the aggregate child usage and how many children could not be measured.
+- A token budget requires a provider whose children record usage through the mounted token meter. The default in-process provider does; an external backend that reports nothing ends the run earlier than the budget would require, with `BUDGET_UNENFORCEABLE` as the stated reason rather than a silently under-counted total.
 - `tokenUsage` folds one child session log, so a child that spawns its own descendants contributes only its own turns to the figure. The [workflow engine limitations](../../../../packages/workflow/workflow-ptc/README.md) record this.
 - Nothing prices tokens: a spend ceiling still needs a price table per route and is deferred.

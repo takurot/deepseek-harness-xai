@@ -52,7 +52,7 @@ Node PTC 提供方的 `maxPendingCalls` 也限制工作流并发：子 agent 启
 
 脚本支持顶层 `await`；`meta` 和 `args` 作为 JSON 数据传入。每次 `agent()` 调用都会在本次运行的固定父 agent 下启动受管理的 subagent Activation，并等待其文本或结构化结果。工作流记录自己的成员并收集其结果，不向父级子代理目录添加条目，也不向父模型发送子 agent 结算通知。最终的无损 JSON 返回值成为运行结果；普通子 agent 失败使 `agent()` 以 `null` 兑现。
 
-预算只在 `agent()` 即将启动子 agent 时检查。当运行的经过时间或已结算子 agent 的上报用量总和达到配置的预算后，`agent()` 抛出致命的 `BUDGET_EXHAUSTED` 错误，由脚本决定如何结算；正在运行的子 agent 绝不会被取消。用量来自已挂载的 token meter：当已结算子 agent 没有本地 Session、未挂载 token meter，或它的 Session 未记录任何提供方用量时，该子 agent 被排除并计入 `WorkflowResult.childrenWithoutUsage`。若 token 预算所需的子 agent 用量无法统计，下一次启动会以 `BUDGET_UNENFORCEABLE` 失败，而不是把部分总量当作完整成本。
+预算只在 `agent()` 真正启动子 agent 时检查——即等待并发槽位之后——因此运行最多可能超出正在执行的子 agent 数量所带来的开销。当运行的经过时间或已结算子 agent 的上报用量总和达到配置的预算后，`agent()` 抛出致命的 `BUDGET_EXHAUSTED` 错误，由脚本决定如何结算；正在运行的子 agent 绝不会被取消，被拒绝的调用也不计入已启动数量。用量来自已挂载的 token meter：当已结算子 agent 没有本地 Session、未挂载 token meter，或它的 Session 未记录任何提供方用量时，该子 agent 被排除并计入 `WorkflowResult.childrenWithoutUsage`。被 seed 的子 agent 的日志以其父级历史的副本开头，因此从不计入它自身：该子 agent 视为无法统计，而带 token 预算的运行在启动时会拒绝继承父级上下文的提供方。若 token 预算所需的子 agent 用量无法统计，下一次启动会以 `BUDGET_UNENFORCEABLE` 被拒绝，而不是把部分总量当作完整成本。
 
 无效元数据、无法解析的正文、不可用的提供方路由或高于上限的单次运行上限，在运行发布前被拒绝。执行期间，钩子误用与超出协作式上限会使工作流失败。进程失败、所需约束不可用，以及超出 PTC 输出或控制限制也会使运行失败。
 
@@ -155,7 +155,7 @@ Host 分别跟踪待完成的启动与已接受的 Activation。取消会中止�
 
 - **文件约束与清理继承提供方限制**——Node PTC 与子进程提供方定义强制能力完整度和受管进程范围。
 - **工作流上限是协作式的**——辅助函数计数器限制普通脚本；它们不是 Host 强制的安全配额，也不是任意后代的 token 预算。
-- **没有整体经过时间截止**——运行可以持续到完成、失败或取消。调用方截止仍然适用。按次预算只拒绝新的子 agent，因此一个长时间运行的子 agent 仍可能超出预算。
+- **没有整体经过时间截止**——运行可以持续到完成、失败或取消。调用方截止仍然适用。按次预算只拒绝新的子 agent，因此一个长时间运行的子 agent——或已在执行的子 agent——仍可能超出预算。
 - **子 agent 用量只统计一个 Session 日志**——`tokenUsage` 折叠子 agent 自身的 Session，因此该子 agent 再启动的后代所消耗的 token 不计入。
 - **子 agent 清理遵循提供方约定**——适配器等待资源释放与待完成启动，不另设放弃等待的定时器。
 - **VM 不是安全边界**——不提供的全局变量用于指导脚本作者；OS 策略约束触达 Node 的代码。

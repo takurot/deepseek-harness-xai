@@ -55,7 +55,9 @@ function defaultLabel(prompt: string): string {
  * cancellation and cleanup of any dropped child work.
  */
 export class WorkflowExecution {
-  /** 1-based count of `agent()` calls started (the `agentsStarted` result field). */
+  /** `agent()` calls admitted to the concurrency queue (the runaway-backstop count). */
+  private accepted = 0
+  /** 1-based count of children actually started (the `agentsStarted` result field). */
   private started = 0
   /** Cumulative usage of settled children that reported it; absent until one does. */
   private usage: WorkflowUsage | undefined
@@ -66,12 +68,13 @@ export class WorkflowExecution {
   private currentPhase: string | undefined
   private readonly context: vm.Context
   private readonly compiled: vm.Script
+  /** Monotonic start of the script's execution, for the elapsed-time budget. */
+  private readonly startedAt = performance.now()
 
   constructor(
     meta: WorkflowMeta,
     body: string,
     args: unknown,
-    private readonly startedAtMs: number,
     private readonly limits: WorkerLimits,
     private readonly observer: ExecutionObserver,
     private readonly children: ChildPort,
@@ -181,7 +184,7 @@ export class WorkflowExecution {
   private assertBudget(): void {
     const { maxElapsedMs, maxTotalTokens } = this.limits
     if (maxElapsedMs !== undefined) {
-      const elapsedMs = Date.now() - this.startedAtMs
+      const elapsedMs = performance.now() - this.startedAt
       if (elapsedMs >= maxElapsedMs) {
         throw new WorkflowError(
           `this run reached its elapsed-time budget (${elapsedMs} ms of ${maxElapsedMs} ms) — no further agents will start`,
@@ -234,20 +237,24 @@ export class WorkflowExecution {
       throw new WorkflowError('agent() requires a non-empty prompt string', 'INVALID_ARGUMENT')
     }
     const opts = this.readAgentOptions(rawOpts)
-    if (this.started >= this.limits.maxTotalAgents) {
+    if (this.accepted >= this.limits.maxTotalAgents) {
       throw new WorkflowError(
         `this run reached its total agent cap (${this.limits.maxTotalAgents}) — a runaway-loop backstop; raise the applicable maxTotalAgents limit if the scale is intentional`,
         'AGENT_CAP',
       )
     }
-    this.assertBudget()
-    this.started += 1
-    const seq = this.started
+    this.accepted += 1
     const label = opts.label ?? defaultLabel(rawPrompt)
     const phase = opts.phase ?? this.currentPhase
 
     await this.acquireSlot()
     try {
+      // Admitted calls wait for a slot, so the budget is re-checked at the
+      // point a child would actually start; a refused call releases the slot
+      // and does not count as started.
+      this.assertBudget()
+      this.started += 1
+      const seq = this.started
       let run: ChildHandle
       try {
         run = await this.children.startAgent({

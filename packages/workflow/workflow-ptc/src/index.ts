@@ -65,7 +65,12 @@ function assertBodyParses(body: string, name: string): void {
 }
 
 /** Resolve one run's provider route before publishing work. */
-function resolveSubagentProvider(ctx: Context, configured: string, override: string | undefined): string {
+function resolveSubagentProvider(
+  ctx: Context,
+  configured: string,
+  override: string | undefined,
+  inheritsParent: boolean,
+): string {
   const provider = override ?? configured
   if (provider.length === 0 || provider !== provider.trim()) {
     throw new WorkflowError(
@@ -73,8 +78,15 @@ function resolveSubagentProvider(ctx: Context, configured: string, override: str
       'INVALID_ARGUMENT',
     )
   }
-  if (ctx.subagents.getProvider(provider) === undefined) {
+  const registered = ctx.subagents.getProvider(provider)
+  if (registered === undefined) {
     throw new WorkflowError(`no subagent provider registered for "${provider}"`, 'AGENT_START')
+  }
+  if (inheritsParent && registered.inheritsParentContext) {
+    throw new WorkflowError(
+      `workflow maxTotalTokens cannot be enforced with the inheriting provider "${provider}": a seeded child's usage includes its parent's history`,
+      'INVALID_ARGUMENT',
+    )
   }
   return provider
 }
@@ -143,10 +155,15 @@ class PtcWorkflowEngine extends WorkflowEngine {
   start(request: WorkflowStartRequest): WorkflowRun {
     const meta = validateMeta(request.meta)
     assertBodyParses(request.script, meta.name)
-    const subagentProvider = resolveSubagentProvider(this.ctx, this.config.provider, request.subagentProvider)
-    const maxTotalAgents = resolveMaxTotalAgents(request.maxTotalAgents, this.config.maxTotalAgents)
     const maxElapsedMs = resolveBudget(request.maxElapsedMs, 'maxElapsedMs')
     const maxTotalTokens = resolveBudget(request.maxTotalTokens, 'maxTotalTokens')
+    const subagentProvider = resolveSubagentProvider(
+      this.ctx,
+      this.config.provider,
+      request.subagentProvider,
+      maxTotalTokens !== undefined,
+    )
+    const maxTotalAgents = resolveMaxTotalAgents(request.maxTotalAgents, this.config.maxTotalAgents)
     const id = WorkflowRunId(randomUUID())
     const info: WorkflowRunInfo = { id, meta }
     const limits: WorkerLimits = {
@@ -159,7 +176,7 @@ class PtcWorkflowEngine extends WorkflowEngine {
       ...maxElapsedMs === undefined ? {} : { maxElapsedMs },
       ...maxTotalTokens === undefined ? {} : { maxTotalTokens },
     }
-    const init: Omit<WorkerInit, 'startedAtMs'> = {
+    const init: WorkerInit = {
       meta,
       body: request.script,
       ...request.args !== undefined ? { args: structuredClone(request.args) } : {},

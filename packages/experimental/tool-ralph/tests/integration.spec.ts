@@ -183,7 +183,7 @@ describe('dsh-tool-ralph over the real spawn and sandboxed PTC stack', () => {
     await parentHandle.dispose()
   })
 
-  it('fails loudly when a token budget cannot be enforced', { timeout: 90_000 }, async () => {
+  it('settles budget-limited when a token budget cannot be counted', { timeout: 90_000 }, async () => {
     const firstReport = {
       status: 'continue',
       summary: 'UNMEASURED_ROUND_ONE',
@@ -210,9 +210,11 @@ describe('dsh-tool-ralph over the real spawn and sandboxed PTC stack', () => {
       agent: parent,
     })
 
-    expect(result.isError).toBe(true)
-    expect((result.content[0] as { text: string }).text)
-      .toContain('cannot enforce its token budget')
+    expect(result.isError).toBe(false)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('Ralph stopped after 1 round.')
+    expect(text).toContain('cannot enforce its token budget')
+    expect(text).toContain('UNMEASURED_ROUND_ONE')
     await parentHandle.dispose()
   })
 

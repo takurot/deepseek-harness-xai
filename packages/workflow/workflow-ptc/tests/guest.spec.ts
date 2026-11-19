@@ -16,7 +16,6 @@ function fixture(body: string, overrides: Partial<WorkflowGuestHost> = {}, limit
     body,
     args: { prompt: 'answer this' },
     limits: { maxConcurrentAgents: 4, maxTotalAgents: 8, maxItemsPerCall: 8, syncTimeoutMs: 5000, ...limits },
-    startedAtMs: Date.now(),
   }
   const host: WorkflowGuestHost = {
     begin: async () => init,
@@ -362,7 +361,6 @@ describe('workflow run budgets', () => {
   const USAGE = { uncachedInputTokens: 40, outputTokens: 10, cacheReadTokens: 2, cacheWriteTokens: 3 }
 
   it('refuses the next agent after the elapsed-time budget without cutting the running round', async () => {
-    const startedAtMs = Date.now()
     const test = fixture(`
       const first = await agent('slow')
       let second
@@ -374,7 +372,6 @@ describe('workflow run budgets', () => {
         return { output: [{ type: 'text', text: 'finished' }], stopReason: 'completed' }
       },
     }, { maxElapsedMs: 10 })
-    test.init.startedAtMs = startedAtMs
     await expect(runWorkflowGuest(test.host)).resolves.toMatchObject({
       value: { first: 'finished', second: 'BUDGET_EXHAUSTED' },
       stopReason: 'completed',
@@ -440,6 +437,37 @@ describe('workflow run budgets', () => {
     const result = await runWorkflowGuest(readable.host)
     expect(result).toMatchObject({ stopReason: 'completed', agentsStarted: 1, childrenWithoutUsage: 1 })
     expect(result.usage).toBeUndefined()
+  })
+
+  it('refuses a queued child whose token budget was reached while it waited', async () => {
+    const test = fixture(
+      "return await parallel([() => agent('one'), () => agent('two')])",
+      { childResult: async () => ({ output: [], stopReason: 'completed', usage: USAGE }) },
+      { maxConcurrentAgents: 1, maxTotalTokens: 50 },
+    )
+    const result = await runWorkflowGuest(test.host)
+    expect(result.stopReason).toBe('error')
+    expect(result.error).toContain('reached its token budget')
+    expect(result.agentsStarted).toBe(1)
+    expect(test.requests).toHaveLength(1)
+  })
+
+  it('refuses a queued child whose elapsed-time budget ran out while it waited', async () => {
+    const test = fixture(
+      "return await parallel([() => agent('one'), () => agent('two')])",
+      {
+        async childResult() {
+          await new Promise(resolve => setTimeout(resolve, 25))
+          return { output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }
+        },
+      },
+      { maxConcurrentAgents: 1, maxElapsedMs: 10 },
+    )
+    const result = await runWorkflowGuest(test.host)
+    expect(result.stopReason).toBe('error')
+    expect(result.error).toContain('reached its elapsed-time budget')
+    expect(result.agentsStarted).toBe(1)
+    expect(test.requests).toHaveLength(1)
   })
 
   it('reports no usage fields until a child settles', async () => {

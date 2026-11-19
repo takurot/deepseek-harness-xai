@@ -31,7 +31,7 @@ kind: "package-reference"
 
 模型提交 `{ objective, maxRounds?, maxElapsedMs?, maxTotalTokens? }`，调用会阻塞到整个运行结算。部署配置中的每一项限制既是默认值，也是对应调用覆盖值的上限，因此调用只能收紧部署预算。终态结果为 `complete`、`blocked` 或 `budget-limited`，携带最后一份有界报告、已启动的 Round 数量，以及预算停止运行时的原因；普通子 agent 失败会返回错误，其中标明失败的 Round，并在存在时保留上一次成功交接。
 
-预算只在 Round 开始前检查：当运行的经过时间或已结算子 agent 的提供方上报 token 用量达到配置的预算后，不会启动下一个 Round，运行以 `budget-limited` 结算。正在运行的 Round 绝不会被切断，因此一个很长的 Round 仍可能超出预算。每个终态结果还会报告汇总的子 agent token 用量，以及宿主无法统计的子 agent 数量。
+预算只在 Round 开始前检查：当运行的经过时间或已结算子 agent 的提供方上报 token 用量达到配置的预算后，不会启动下一个 Round，运行以 `budget-limited` 结算。正在运行的 Round 绝不会被切断，因此一个很长的 Round 仍可能超出预算。完全无法统计的 token 预算也以同样的 `budget-limited` 停止结算，并指明无法统计的子 agent，而不是把部分总量当作完整成本。每个终态结果还会报告汇总的子 agent token 用量，以及宿主无法统计的子 agent 数量。
 
 ### 每个 Round 看到什么
 
@@ -169,7 +169,7 @@ Use the ralph tool ONLY when the direct human explicitly asks for a Ralph loop o
 - **没有强制拒绝递归 Ralph**——结构性拒绝尚未实现；提示词引导不能强制禁止递归。
 - **普通子 agent 失败会终止运行**——固定脚本报告失败的 Round 与上一次成功交接，但不会重试；致命的工作流基础设施失败可能在该状态返回前结束。
 - **预算只阻止下一个 Round，不中断正在运行的 Round**——经过时间与 token 检查只在 Round 开始时进行，因此单个很长的 Round 可能在运行停止前就超出任一预算。
-- **token 用量只统计可测量的子 agent**——该数值汇总每个已结算子 agent 自身的 Session 用量。提供方未上报用量、没有本地 Session 或未挂载 token meter 的子 agent 会被排除并计入结果；当 token 预算所需的子 agent 用量无法统计时，运行会失败，而不是把部分总量当作完整成本。子 agent 再启动的后代不计入，也不从 token 推导任何价格或支出上限。
+- **token 用量只统计可测量的子 agent**——该数值汇总每个已结算子 agent 自身的 Session 用量；继承父级上下文的提供方会被拒绝，因为被 seed 子 agent 的日志已包含该历史。提供方未上报用量、没有本地 Session 或未挂载 token meter 的子 agent 会被排除并计入结果；当 token 预算所需的子 agent 用量无法统计时，下一个 Round 以 `budget-limited` 停止，而不是把部分总量当作完整成本。子 agent 再启动的后代不计入，也不从 token 推导任何价格或支出上限。
 
 <a id="dev-note"></a>
 ### 开发备注

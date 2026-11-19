@@ -14,7 +14,6 @@ import type {
   Session,
   SessionEvent,
   SessionSeq as SessionSeqType,
-  SessionLogOffset as SessionLogOffsetType,
 } from '@deepseek-ai/dsh-session'
 import {
   canonicalHeader,
@@ -45,7 +44,7 @@ export type * from './types.ts'
 
 /** Rebuildable positional prices, excluded from projection checkpoints. */
 interface ReplayState {
-  consumedEvents: SessionLogOffsetType
+  consumedEvents: SessionLogOffset
   surface: MeterSurfaceNode[]
   header: { seq: SessionSeqType | null; value: EpochHeader } | undefined
   anchorHeader: { seq: SessionSeqType | null; value: EpochHeader } | undefined
@@ -120,10 +119,11 @@ export class TokenMeter extends Service {
    * Read the cumulative provider-reported usage of one session's durable log,
    * including a detached session no longer in the live store.
    * @param session - session whose committed usage is summed.
-   * @returns the four disjoint provider buckets; zeros before any usage is recorded.
+   * @returns a detached copy of the four disjoint provider buckets; zeros before
+   *   any usage is recorded.
    */
   sessionUsage(session: Session): TokenUsageProjection {
-    return this.tokenUsageProjectionHandle.stateOf(session).totals
+    return { ...this.tokenUsageProjectionHandle.stateOf(session).totals }
   }
 
   /**

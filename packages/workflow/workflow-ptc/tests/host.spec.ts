@@ -4,7 +4,7 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import { PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime'
 import type { PtcBindingFunction, PtcRunRequest, PtcRunResult, PtcRunSpec } from '@deepseek-ai/dsh-ptc-runtime'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { AssistantStreamAccumulator, createMessage } from '@deepseek-ai/dsh-llm'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
@@ -370,6 +370,50 @@ describe('workflow runtime outcomes', () => {
         stopReason: 'completed',
         childrenWithoutUsage: 1,
       })
+    } finally { await handle.dispose() }
+  })
+
+  it('counts a seeded child as unmeasured instead of charging its inherited history', async () => {
+    const { ctx, start } = await setup(async (bindings) => {
+      const child = await bindings.startChild!({ prompt: 'answer' })
+      expect(await bindings.childResult!(child)).toEqual({ output: [], stopReason: 'completed' })
+      return completed
+    })
+    await ctx.plugin(TokenMeter)
+    const source = ctx.sessions.create()
+    const accumulator = new AssistantStreamAccumulator()
+    for (const [index, chunk] of [
+      { type: 'block-start' as const, index: 0, blockType: 'text' as const },
+      { type: 'text-delta' as const, index: 0, text: 'inherited' },
+      { type: 'block-end' as const, index: 0, block: { type: 'text' as const, text: 'inherited' } },
+      { type: 'usage' as const, usage: { inputTokens: 100, outputTokens: 20 } },
+      { type: 'finish' as const, reason: { kind: 'stop' as const } },
+    ].entries()) accumulator.push({ time: index, chunk })
+    source.append('assistant/message', {
+      stream: [...accumulator.snapshot()],
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'inherited' }],
+        source: { kind: 'model', provider: 'stub', model: 'stub' },
+      }),
+      usage: { inputTokens: 100, outputTokens: 20 },
+    }, { surfaceOp: 'append' })
+    const seed = source.snapshotEvents()
+    const childSession = ctx.sessions.create(SessionId('seeded-child'), {
+      seed: [...seed],
+      inheritedEventCount: SessionLogOffset(seed.length),
+      meta: { isSeeded: true },
+    })
+    vi.spyOn(ctx.subagents, 'startActivation').mockResolvedValue({
+      childId: childSession.id,
+      result: Promise.resolve({ output: [], stopReason: 'completed' }),
+      dispose: () => Promise.resolve(),
+    })
+    const handle = start()
+    try {
+      await expect(handle.result).resolves.toMatchObject({ stopReason: 'completed' })
     } finally { await handle.dispose() }
   })
 
