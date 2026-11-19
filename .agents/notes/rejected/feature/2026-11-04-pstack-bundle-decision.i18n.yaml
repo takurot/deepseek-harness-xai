@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for 2026-11-04-pstack-bundle-decision.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/rejected/feature/2026-11-04-pstack-bundle-decision.md
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution:
+  en: d6bba74dbd0c7831
+  zh: e6157b7e0a2fc19a
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution/problem:
+  en: 5f2a035cc4bfb020
+  zh: 75259f6d0afd712c
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution/proposal:
+  en: 0159ea617f8b203f
+  zh: 018aa5f4fd5fc9f2
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution/verification:
+  en: e490638724f155ec
+  zh: 9dfbf2a2fef8f2cd
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution/alternatives-considered:
+  en: 6119e2aff3b6be5a
+  zh: 6119e2aff3b6be5a
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution/alternatives-considered/bundle-it-as-an-experimental-package:
+  en: 12166299856ea31b
+  zh: 493808e44b5c18c1
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution/alternatives-considered/bundle-a-compatibility-shim-instead-translate-task-read-claude-rules:
+  en: a8b7723880a8c069
+  zh: a3a800b65e56af7a
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution/alternatives-considered/ship-nothing-and-let-users-set-customskilldirs-chosen:
+  en: 8431e8d0c327d71e
+  zh: 854acaf096ee6654
+/agent-note-bundle-pstack-as-a-dsh-skill-distribution/consequences:
+  en: 019b1c1fc0b2832c
+  zh: ac0b4b7bcb74d323
