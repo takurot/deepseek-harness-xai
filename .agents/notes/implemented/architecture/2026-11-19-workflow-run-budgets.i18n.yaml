@@ -1,0 +1,34 @@
+# Bilingual-pair consistency record for 2026-11-19-workflow-run-budgets.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-11-19-workflow-run-budgets.md
+/agent-note-run-budgets-on-the-workflow-engine:
+  en: 25b1615f462e2a61
+  zh: 261fc5c1f3517799
+/agent-note-run-budgets-on-the-workflow-engine/problem:
+  en: 64bc27537ae3dbd1
+  zh: b7056a98f2933e96
+/agent-note-run-budgets-on-the-workflow-engine/decision:
+  en: b117d54c1cfab1ff
+  zh: 34657b2a16770961
+/agent-note-run-budgets-on-the-workflow-engine/why-the-engine-not-the-script:
+  en: 291997f83e67e087
+  zh: fc148be3c56beeb9
+/agent-note-run-budgets-on-the-workflow-engine/alternatives-considered:
+  en: 6119e2aff3b6be5a
+  zh: 6119e2aff3b6be5a
+/agent-note-run-budgets-on-the-workflow-engine/alternatives-considered/script-visible-stats-hook:
+  en: 199c7fd88eed3fe6
+  zh: 3d858e70d2e51dbe
+/agent-note-run-budgets-on-the-workflow-engine/alternatives-considered/host-side-cancellation-when-the-budget-is-reached:
+  en: 77a985849e6bc2e1
+  zh: e90f5edc73e289c2
+/agent-note-run-budgets-on-the-workflow-engine/alternatives-considered/subagentresult-usage-on-the-subagent-seam:
+  en: a5b1d24a950f9319
+  zh: c8511de80335fd98
+/agent-note-run-budgets-on-the-workflow-engine/alternatives-considered/hard-failure-on-budget-exhaustion:
+  en: 3c19455b638a696f
+  zh: ba10118be3fc1502
+/agent-note-run-budgets-on-the-workflow-engine/consequences:
+  en: 7b4daf82c80151cb
+  zh: 58694a2e9ec45bbb

@@ -27,6 +27,10 @@ export interface Config {
   maxHandoffChars?: number
   /** Maximum characters in a successful parent-facing terminal text (default 16384). */
   maxResultChars?: number
+  /** Deployment ceiling and default for one run's elapsed-time budget in milliseconds (unset: no budget). */
+  maxElapsedMs?: number
+  /** Deployment ceiling and default for one run's total child-token budget (unset: no budget). */
+  maxTotalTokens?: number
 }
 
 /** Schemastery configuration for the Ralph tool. */
@@ -35,6 +39,8 @@ export const Config: z<Config> = z.object({
   maxRounds: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(256),
   maxHandoffChars: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(16_384),
   maxResultChars: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(16_384),
+  maxElapsedMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
+  maxTotalTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
 })
 
 interface ResolvedConfig {
@@ -42,6 +48,8 @@ interface ResolvedConfig {
   readonly maxRounds: number
   readonly maxHandoffChars: number
   readonly maxResultChars: number
+  readonly maxElapsedMs: number | undefined
+  readonly maxTotalTokens: number | undefined
 }
 
 type RalphRoundStatus = 'continue' | 'complete' | 'blocked'
@@ -56,11 +64,20 @@ interface RalphRoundReport {
 
 type RalphRunStatus = 'complete' | 'blocked' | 'budget-limited'
 
-interface RalphRunResult {
-  readonly status: RalphRunStatus
-  readonly roundsStarted: number
-  readonly report: RalphRoundReport
-}
+type RalphRunResult =
+  | {
+    readonly status: Exclude<RalphRunStatus, 'budget-limited'>
+    readonly roundsStarted: number
+    readonly report: RalphRoundReport
+  }
+  | {
+    readonly status: 'budget-limited'
+    readonly roundsStarted: number
+    /** Null only when the budget ended the run before its first round produced a report. */
+    readonly report: RalphRoundReport | null
+    /** Why the run stopped, in the engine's own words. */
+    readonly reason: string
+  }
 
 interface RalphRoundFailure {
   readonly status: 'round-failed'
@@ -70,9 +87,19 @@ interface RalphRoundFailure {
 
 type RalphTerminalResult = RalphRunResult | RalphRoundFailure
 
+/** Child usage aggregated by the engine over the run's settled children. */
+type RalphUsage = {
+  readonly uncachedInputTokens: number
+  readonly outputTokens: number
+  readonly cacheReadTokens: number
+  readonly cacheWriteTokens: number
+}
+
 interface RalphCallArgs {
   objective: string
   maxRounds?: number
+  maxElapsedMs?: number
+  maxTotalTokens?: number
 }
 
 const RALPH_META = {
@@ -158,11 +185,27 @@ for (let round = 1; round <= args.maxRounds; round += 1) {
     'Previous structured handoff:\n' + prior,
     'Return one report with exact normalized strings. Use status continue with at least one nextSteps entry while useful work remains; complete only with concrete evidence and no nextSteps; blocked only when no meaningful progress is possible without human input or an external-state change. blocker must be empty unless blocked.',
   ].join('\n\n')
-  const rawReport = await agent(prompt, {
-    label: 'Ralph round ' + round,
-    phase: 'Fresh-agent rounds',
-    schema: reportSchema,
-  })
+  let rawReport
+  try {
+    rawReport = await agent(prompt, {
+      label: 'Ralph round ' + round,
+      phase: 'Fresh-agent rounds',
+      schema: reportSchema,
+    })
+  } catch (error) {
+    // The engine refuses a start once a configured run budget is reached. The
+    // loop keeps the completed rounds and reports the budget instead of failing,
+    // because no running round is ever cut.
+    if (error !== null && typeof error === 'object' && error.code === 'BUDGET_EXHAUSTED') {
+      return {
+        status: 'budget-limited',
+        roundsStarted: round - 1,
+        report: previous === undefined ? null : previous,
+        reason: typeof error.message === 'string' && error.message.length > 0 ? error.message : 'a configured run budget was reached',
+      }
+    }
+    throw error
+  }
   if (rawReport === null) {
     return { status: 'round-failed', roundsStarted: round, lastReport: previous ?? null }
   }
@@ -171,15 +214,20 @@ for (let round = 1; round <= args.maxRounds; round += 1) {
   if (report.status === 'blocked') return { status: 'blocked', roundsStarted: round, report }
   previous = report
 }
-return { status: 'budget-limited', roundsStarted: args.maxRounds, report: previous }
+return {
+  status: 'budget-limited',
+  roundsStarted: args.maxRounds,
+  report: previous,
+  reason: 'this run reached its ' + args.maxRounds + '-round limit',
+}
 `
 
 const DESCRIPTION = 'Run a foreground fresh-agent Ralph loop toward one immutable objective. '
   + 'Use only when the direct human explicitly asks for Ralph or fresh-agent iteration. Each round '
   + 'opens a new child with no parent conversation or prior child session; the shared workspace is '
   + 'long-term memory, and only a bounded structured report crosses rounds. The call returns when '
-  + 'a worker reports completion or a concrete blocker, or at the round limit. Ordinary long-running same-session work '
-  + 'belongs to goal tools.'
+  + 'a worker reports completion or a concrete blocker, or at the round, elapsed-time, or token budget. '
+  + 'Ordinary long-running same-session work belongs to goal tools.'
 
 /** Validate defaults even when a caller invokes apply() without Loader normalization. */
 function resolveConfig(config: Config): ResolvedConfig {
@@ -199,7 +247,15 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (!Number.isSafeInteger(maxResultChars) || maxResultChars < 1) {
     throw new TypeError('maxResultChars must be a positive safe integer')
   }
-  return { subagentProvider, maxRounds, maxHandoffChars, maxResultChars }
+  const maxElapsedMs = config.maxElapsedMs ?? undefined
+  if (maxElapsedMs !== undefined && (!Number.isSafeInteger(maxElapsedMs) || maxElapsedMs < 1)) {
+    throw new TypeError('maxElapsedMs must be a positive safe integer when set')
+  }
+  const maxTotalTokens = config.maxTotalTokens ?? undefined
+  if (maxTotalTokens !== undefined && (!Number.isSafeInteger(maxTotalTokens) || maxTotalTokens < 1)) {
+    throw new TypeError('maxTotalTokens must be a positive safe integer when set')
+  }
+  return { subagentProvider, maxRounds, maxHandoffChars, maxResultChars, maxElapsedMs, maxTotalTokens }
 }
 
 /** Resolve one model-selected cap against the deployment ceiling. */
@@ -212,6 +268,22 @@ function resolveMaxRounds(requested: number | undefined, ceiling: number): numbe
     throw new TypeError(`Ralph maxRounds ${value} exceeds the deployment ceiling ${ceiling}`)
   }
   return value
+}
+
+/** Resolve one model-selected budget against the optional deployment ceiling. */
+function resolveBudget(
+  requested: number | undefined,
+  ceiling: number | undefined,
+  name: 'maxElapsedMs' | 'maxTotalTokens',
+): number | undefined {
+  if (requested === undefined) return ceiling
+  if (!Number.isSafeInteger(requested) || requested < 1) {
+    throw new TypeError(`Ralph ${name} must be a positive safe integer`)
+  }
+  if (ceiling !== undefined && requested > ceiling) {
+    throw new TypeError(`Ralph ${name} ${requested} exceeds the deployment ceiling ${ceiling}`)
+  }
+  return requested
 }
 
 /** Require the configured route to mean a genuinely fresh structured child. */
@@ -239,6 +311,12 @@ function normalizedText(value: unknown): value is string {
 
 function normalizedList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(normalizedText)
+}
+
+/** Decode the engine-supplied budget reason; the engine messages are the only source. */
+function readBudgetReason(value: unknown): string {
+  if (!normalizedText(value)) throw new Error('Ralph workflow returned a malformed budget reason')
+  return value
 }
 
 /** Defensively decode the fixed script's report across a provider boundary. */
@@ -282,8 +360,11 @@ function readRunResult(value: unknown, maxRounds: number, maxHandoffChars: numbe
   if (!isRecord(value)
     || typeof value['roundsStarted'] !== 'number'
     || !Number.isSafeInteger(value['roundsStarted'])
-    || value['roundsStarted'] < 1
+    || value['roundsStarted'] < 0
     || value['roundsStarted'] > maxRounds) {
+    throw new Error('Ralph workflow returned a malformed terminal result')
+  }
+  if (value['status'] !== 'budget-limited' && value['roundsStarted'] < 1) {
     throw new Error('Ralph workflow returned a malformed terminal result')
   }
   const roundsStarted = value['roundsStarted']
@@ -298,14 +379,22 @@ function readRunResult(value: unknown, maxRounds: number, maxHandoffChars: numbe
         throw new Error('Ralph workflow returned a malformed terminal result')
       }
       return { status: 'blocked', roundsStarted, report: readReport(value['report'], 'blocked', maxHandoffChars) }
-    case 'budget-limited':
-      if (Object.keys(value).sort().join(',') !== 'report,roundsStarted,status') {
+    case 'budget-limited': {
+      if (Object.keys(value).sort().join(',') !== 'reason,report,roundsStarted,status') {
         throw new Error('Ralph workflow returned a malformed terminal result')
       }
-      if (roundsStarted !== maxRounds) {
-        throw new Error('Ralph workflow returned budget-limited before the round limit')
+      const reason = readBudgetReason(value['reason'])
+      if (roundsStarted === 0) {
+        if (value['report'] !== null) throw new Error('Ralph workflow returned a budget stop before its first round with a report')
+        return { status: 'budget-limited', roundsStarted, report: null, reason }
       }
-      return { status: 'budget-limited', roundsStarted, report: readReport(value['report'], 'continue', maxHandoffChars) }
+      return {
+        status: 'budget-limited',
+        roundsStarted,
+        report: readReport(value['report'], 'continue', maxHandoffChars),
+        reason,
+      }
+    }
     case 'round-failed': {
       if (Object.keys(value).sort().join(',') !== 'lastReport,roundsStarted,status') {
         throw new Error('Ralph workflow returned a malformed terminal result')
@@ -355,29 +444,64 @@ function boundResult(text: string, maxChars: number): string {
   return `${text.slice(0, maxChars - TRUNCATION_NOTICE.length)}${TRUNCATION_NOTICE}`
 }
 
+/**
+ * Render the aggregated child usage as one model-facing line, explaining how
+ * complete the figure is when children reported none.
+ */
+function renderUsage(usage: RalphUsage, childrenWithoutUsage: number): string {
+  const total = usage.uncachedInputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
+  if (total === 0 && childrenWithoutUsage === 0) return ''
+  const buckets = `${usage.uncachedInputTokens} input, ${usage.outputTokens} output, `
+    + `${usage.cacheReadTokens} cache read, ${usage.cacheWriteTokens} cache write`
+  const uncounted = childrenWithoutUsage === 0
+    ? ''
+    : `; ${childrenWithoutUsage} child agent${childrenWithoutUsage === 1 ? '' : 's'} reported no usage`
+  return `\nChild token usage: ${buckets}${uncounted}.`
+}
+
 /** Render the fixed terminal envelope without presenting self-report as certification. */
-function renderResult(result: RalphRunResult, maxChars: number): string {
+function renderResult(
+  result: RalphRunResult,
+  usage: RalphUsage,
+  childrenWithoutUsage: number,
+  maxChars: number,
+): string {
   const rounds = `${result.roundsStarted} round${result.roundsStarted === 1 ? '' : 's'}`
+  const handoff = result.report === null
+    ? 'No round report was produced.'
+    : `Final report:\n${JSON.stringify(result.report, null, 2)}`
   let text: string
   switch (result.status) {
     case 'complete':
-      text = `Ralph worker reported completion after ${rounds}.\nFinal report:\n${JSON.stringify(result.report, null, 2)}`
+      text = `Ralph worker reported completion after ${rounds}.\n${handoff}`
       break
     case 'blocked':
-      text = `Ralph worker reported a blocker after ${rounds}.\nFinal report:\n${JSON.stringify(result.report, null, 2)}`
+      text = `Ralph worker reported a blocker after ${rounds}.\n${handoff}`
       break
     case 'budget-limited':
-      text = `Ralph reached its ${rounds} limit; the worker reported work remaining.\nFinal report:\n${JSON.stringify(result.report, null, 2)}`
+      text = result.roundsStarted === 0
+        ? `Ralph stopped before starting any round.\nReason: ${result.reason}.\n${handoff}`
+        : `Ralph stopped after ${rounds}.\nReason: ${result.reason}.\n${handoff}`
       break
   }
-  return boundResult(text, maxChars)
+  return boundResult(`${text}${renderUsage(usage, childrenWithoutUsage)}`, maxChars)
 }
+
+/** Canonical Ralph usage fields shared by schema inference and rendering. */
+const RALPH_USAGE_PROPERTIES = {
+  uncachedInputTokens: { type: 'integer', required: true },
+  outputTokens: { type: 'integer', required: true },
+  cacheReadTokens: { type: 'integer', required: true },
+  cacheWriteTokens: { type: 'integer', required: true },
+} as const
 
 /** Canonical Ralph result fields shared by schema inference and rendering. */
 const RALPH_OUTPUT_PROPERTIES = {
   runId: { type: 'string', required: true },
   agentsStarted: { type: 'integer', required: true },
   result: { type: 'json', required: true },
+  usage: { type: 'object', required: true, additionalProperties: false, properties: RALPH_USAGE_PROPERTIES },
+  childrenWithoutUsage: { type: 'integer', required: true },
 } as const
 
 /** Render an ordinary child failure with the most recent durable handoff. */
@@ -420,6 +544,14 @@ export function apply(ctx: Context, config: Config): void {
         type: 'number',
         description: 'Optional positive safe-integer round cap, bounded by the deployment ceiling.',
       },
+      maxElapsedMs: {
+        type: 'number',
+        description: 'Optional elapsed-time budget in milliseconds; a configured deployment ceiling bounds it and the engine refuses the next round once it is reached.',
+      },
+      maxTotalTokens: {
+        type: 'number',
+        description: 'Optional budget for the tokens the run\'s settled children consumed; a configured deployment ceiling bounds it and the engine refuses the next round once it is reached.',
+      },
     },
     output: {
       schema: {
@@ -429,7 +561,12 @@ export function apply(ctx: Context, config: Config): void {
       },
       render: (_args, value) => [{
         type: 'text',
-        text: renderResult(value.result as unknown as RalphRunResult, resolved.maxResultChars),
+        text: renderResult(
+          value.result as unknown as RalphRunResult,
+          value.usage,
+          value.childrenWithoutUsage,
+          resolved.maxResultChars,
+        ),
       }],
     },
     async execute(args, exec) {
@@ -440,6 +577,8 @@ export function apply(ctx: Context, config: Config): void {
       const objective = args.objective.trim()
       if (objective.length === 0) throw new Error('Ralph objective must be a non-empty string')
       const maxRounds = resolveMaxRounds(args.maxRounds, resolved.maxRounds)
+      const maxElapsedMs = resolveBudget(args.maxElapsedMs, resolved.maxElapsedMs, 'maxElapsedMs')
+      const maxTotalTokens = resolveBudget(args.maxTotalTokens, resolved.maxTotalTokens, 'maxTotalTokens')
       void requireFreshProvider(ctx, resolved.subagentProvider)
 
       const run: WorkflowRun = ctx.workflowEngine.start({
@@ -448,6 +587,8 @@ export function apply(ctx: Context, config: Config): void {
         args: { objective, maxRounds, maxHandoffChars: resolved.maxHandoffChars },
         subagentProvider: resolved.subagentProvider,
         maxTotalAgents: maxRounds,
+        ...maxElapsedMs === undefined ? {} : { maxElapsedMs },
+        ...maxTotalTokens === undefined ? {} : { maxTotalTokens },
         parent,
         signal: exec.signal,
       })
@@ -465,6 +606,13 @@ export function apply(ctx: Context, config: Config): void {
           runId: run.id,
           agentsStarted: settled.agentsStarted,
           result: value as unknown as JsonValue,
+          usage: {
+            uncachedInputTokens: settled.usage?.uncachedInputTokens ?? 0,
+            outputTokens: settled.usage?.outputTokens ?? 0,
+            cacheReadTokens: settled.usage?.cacheReadTokens ?? 0,
+            cacheWriteTokens: settled.usage?.cacheWriteTokens ?? 0,
+          },
+          childrenWithoutUsage: settled.childrenWithoutUsage ?? 0,
         }
       } finally {
         exec.signal.removeEventListener('abort', onAbort)

@@ -25,6 +25,7 @@ export type {
   WorkflowResultInfo,
   WorkflowRunInfo,
   WorkflowStopReason,
+  WorkflowUsage,
 } from './types.ts'
 export type { WorkflowRun, WorkflowStartRequest } from './runtime-types.ts'
 
@@ -101,9 +102,10 @@ export type WorkflowEventName =
 
 /**
  * Machine-routable fatal workflow failures: parse/meta/argument/schema errors,
- * resource caps, subagent infrastructure failures, unserializable boundary
- * values, and cancellation. An ordinary child failure resolves its item to
- * `null` and is not one of these fatal codes.
+ * resource caps (including the per-run elapsed-time and token budgets),
+ * subagent infrastructure failures, unserializable boundary values, and
+ * cancellation. An ordinary child failure resolves its item to `null` and is
+ * not one of these fatal codes.
  */
 export type WorkflowErrorCode =
   | 'SCRIPT_PARSE'
@@ -113,6 +115,8 @@ export type WorkflowErrorCode =
   | 'UNSUPPORTED_SCHEMA'
   | 'AGENT_CAP'
   | 'ITEM_CAP'
+  | 'BUDGET_EXHAUSTED'
+  | 'BUDGET_UNENFORCEABLE'
   | 'AGENT_START'
   | 'AGENT_RESULT'
   | 'RESULT_UNSERIALIZABLE'

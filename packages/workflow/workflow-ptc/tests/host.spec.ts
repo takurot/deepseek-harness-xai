@@ -5,6 +5,8 @@ import AgentRegistry from '@deepseek-ai/dsh-agent'
 import { PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime'
 import type { PtcBindingFunction, PtcRunRequest, PtcRunResult, PtcRunSpec } from '@deepseek-ai/dsh-ptc-runtime'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import { AssistantStreamAccumulator, createMessage } from '@deepseek-ai/dsh-llm'
+import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import SandboxPolicy from '@deepseek-ai/dsh-sandbox-policy'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
@@ -229,6 +231,22 @@ describe('workflow runtime outcomes', () => {
     [{ value: null, stopReason: 'cancelled', agentsStarted: -1 }, 'invalid workflow agent count'],
     [{ stopReason: 'completed', agentsStarted: 0 }, 'missing its value'],
     [{ value: null, stopReason: 'error', agentsStarted: 0, error: 5 }, 'error must be a string'],
+    [{ value: null, stopReason: 'completed', agentsStarted: 1, usage: null }, 'invalid workflow usage'],
+    [{ value: null, stopReason: 'completed', agentsStarted: 1, usage: { uncachedInputTokens: 1 } }, 'invalid workflow usage'],
+    [{
+      value: null,
+      stopReason: 'completed',
+      agentsStarted: 1,
+      usage: { uncachedInputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, extra: 0 },
+    }, 'invalid workflow usage'],
+    [{
+      value: null,
+      stopReason: 'completed',
+      agentsStarted: 1,
+      usage: { uncachedInputTokens: -1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    }, 'invalid workflow usage'],
+    [{ value: null, stopReason: 'completed', agentsStarted: 1, childrenWithoutUsage: 0 }, 'invalid workflow child count without usage'],
+    [{ value: null, stopReason: 'completed', agentsStarted: 1, childrenWithoutUsage: '1' }, 'invalid workflow child count without usage'],
   ] as const)('maps an invalid terminal result %j to a workflow error', async (value, message) => {
     const { start } = await setup(() => Promise.resolve({ logs: [], value }))
     const handle = start()
@@ -289,6 +307,70 @@ describe('workflow runtime outcomes', () => {
       publication.resolve(child)
       await handle.dispose()
     }
+  })
+
+  it('reports a settled child session usage when a token meter is mounted', async () => {
+    const { ctx, start } = await setup(async (bindings) => {
+      const child = await bindings.startChild!({ prompt: 'answer' })
+      expect(await bindings.childResult!(child)).toEqual({
+        output: [],
+        stopReason: 'completed',
+        usage: { uncachedInputTokens: 10, outputTokens: 4, cacheReadTokens: 2, cacheWriteTokens: 0 },
+      })
+      return completed
+    })
+    await ctx.plugin(TokenMeter)
+    const childSession = ctx.sessions.create()
+    const accumulator = new AssistantStreamAccumulator()
+    for (const [index, chunk] of [
+      { type: 'block-start' as const, index: 0, blockType: 'text' as const },
+      { type: 'text-delta' as const, index: 0, text: 'answer' },
+      { type: 'block-end' as const, index: 0, block: { type: 'text' as const, text: 'answer' } },
+      { type: 'usage' as const, usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2 } },
+      { type: 'finish' as const, reason: { kind: 'stop' as const } },
+    ].entries()) accumulator.push({ time: index, chunk })
+    childSession.append('assistant/message', {
+      stream: [...accumulator.snapshot()],
+      turn: 1,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'answer' }],
+        source: { kind: 'model', provider: 'stub', model: 'stub' },
+      }),
+      usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2 },
+    }, { surfaceOp: 'append' })
+    vi.spyOn(ctx.subagents, 'startActivation').mockResolvedValue({
+      childId: childSession.id,
+      result: Promise.resolve({ output: [], stopReason: 'completed' }),
+      dispose: () => Promise.resolve(),
+    })
+    const handle = start()
+    try {
+      await expect(handle.result).resolves.toMatchObject({
+        stopReason: 'completed',
+        agentsStarted: 0,
+      })
+    } finally { await handle.dispose() }
+  })
+
+  it('counts a child without a readable session as childrenWithoutUsage', async () => {
+    const { ctx, start } = await setup(async (bindings) => {
+      const child = await bindings.startChild!({ prompt: 'answer' })
+      expect(await bindings.childResult!(child)).toEqual({ output: [], stopReason: 'completed' })
+      return {
+        logs: [],
+        value: { value: null, stopReason: 'completed', agentsStarted: 1, childrenWithoutUsage: 1 },
+      }
+    })
+    await ctx.plugin(TokenMeter)
+    const handle = start()
+    try {
+      await expect(handle.result).resolves.toMatchObject({
+        stopReason: 'completed',
+        childrenWithoutUsage: 1,
+      })
+    } finally { await handle.dispose() }
   })
 
   it('stops waiting for child output after disposal releases the child resources', async () => {

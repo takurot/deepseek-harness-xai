@@ -44,7 +44,7 @@ const reviews = await parallel([
 return { reviewed: reviews.length }
 ```
 
-脚本结算时，运行的 result 以返回值、结束原因和已启动的子 agent 数量兑现。脚本不返回值时得到 `null`。
+脚本结算时，运行的 result 以返回值、结束原因和已启动的子 agent 数量兑现；一旦有子 agent 结算，还会带上按已结算子 agent 汇总的提供方上报用量，以及宿主无法统计的子 agent 数量 `childrenWithoutUsage`。脚本不返回值时得到 `null`。
 
 ### 编程方式运行
 
@@ -126,7 +126,7 @@ return { reviewed: reviews.length }
 - **seam 侧没有后台启动／轮询 API**——`ctx.workflowEngine.start()` 返回一个由持有方负责的运行；后台执行是面向模型的消费方的行为，不是 seam 操作。
 - **没有日志化或恢复**——脚本、子 agent 进度与中间值均不设检查点，因此进程重启后无法继续运行。
 - **没有已保存或嵌套工作流**——该能力只启动调用方提供的脚本，工作流脚本不会收到用于递归编排的 `workflow()` 钩子。
-- **没有 token 预算词汇**——引擎限制并发、条目与子 agent，但请求与结果都不会统计跨子 agent 的模型 token。
+- **没有价格或成本核算**——请求可携带经过时间与 token 预算，结果会报告提供方用量，但没有任何引擎为这些 token 计价或强制支出上限。
 - **运行由持有方负责，不由服务跟踪**——卸载引擎不会发现独立的活动句柄；每个消费方都必须 dispose 自己启动的运行。
 
 <a id="dev-note"></a>

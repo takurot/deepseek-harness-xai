@@ -4346,6 +4346,10 @@ export interface Config {
   maxHandoffChars?: number
   /** Maximum characters in a successful parent-facing terminal text (default 16384). */
   maxResultChars?: number
+  /** Deployment ceiling and default for one run's elapsed-time budget in milliseconds (unset: no budget). */
+  maxElapsedMs?: number
+  /** Deployment ceiling and default for one run's total child-token budget (unset: no budget). */
+  maxTotalTokens?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-ralph -->

@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`ralph` 针对一个不可变目标运行由多个全新子 agent 组成的前台序列，每个 Round 只接收上一份有界报告与共享工作区状态。它会在 worker 报告完成或具体阻塞，或达到配置的 Round 上限时返回；这些报告不会得到独立验证。父级对话与先前子 agent 会话绝不会复制到新的 Round。仅当直接用户明确要求 Ralph 式全新 agent 迭代时使用它；普通的长期工作请使用 goal 工具，有界委派请使用 subagent 或工作流。
+`ralph` 针对一个不可变目标运行由多个全新子 agent 组成的前台序列，每个 Round 只接收上一份有界报告与共享工作区状态。它会在 worker 报告完成或具体阻塞，或达到配置的 Round、经过时间或 token 预算时返回；这些报告不会得到独立验证。父级对话与先前子 agent 会话绝不会复制到新的 Round。仅当直接用户明确要求 Ralph 式全新 agent 迭代时使用它；普通的长期工作请使用 goal 工具，有界委派请使用 subagent 或工作流。
 
 ## 目录
 
@@ -29,7 +29,9 @@ kind: "package-reference"
 
 ### 调用工具
 
-模型提交 `{ objective, maxRounds? }`，调用会阻塞到整个运行结算。部署配置中的 `maxRounds` 既是默认值，也是调用覆盖值的上限。终态结果为 `complete`、`blocked` 或 `budget-limited`，携带最后一份有界报告与已启动的 Round 数量；普通子 agent 失败会返回错误，其中标明失败的 Round，并在存在时保留上一次成功交接。
+模型提交 `{ objective, maxRounds?, maxElapsedMs?, maxTotalTokens? }`，调用会阻塞到整个运行结算。部署配置中的每一项限制既是默认值，也是对应调用覆盖值的上限，因此调用只能收紧部署预算。终态结果为 `complete`、`blocked` 或 `budget-limited`，携带最后一份有界报告、已启动的 Round 数量，以及预算停止运行时的原因；普通子 agent 失败会返回错误，其中标明失败的 Round，并在存在时保留上一次成功交接。
+
+预算只在 Round 开始前检查：当运行的经过时间或已结算子 agent 的提供方上报 token 用量达到配置的预算后，不会启动下一个 Round，运行以 `budget-limited` 结算。正在运行的 Round 绝不会被切断，因此一个很长的 Round 仍可能超出预算。每个终态结果还会报告汇总的子 agent token 用量，以及宿主无法统计的子 agent 数量。
 
 ### 每个 Round 看到什么
 
@@ -43,6 +45,8 @@ kind: "package-reference"
 | `maxRounds` | `256` | 一次 Ralph 运行的默认值和部署上限。 |
 | `maxHandoffChars` | `16384` | 一份 Round 报告序列化后的最大字符数。 |
 | `maxResultChars` | `16384` | 返回给父级的完整成功结果最大字符数。 |
+| `maxElapsedMs` | 未设置 | 经过时间预算，单位为毫秒；未设置表示没有经过时间预算。 |
+| `maxTotalTokens` | 未设置 | 本次运行已结算子 agent 的 token 用量预算；未设置表示没有 token 预算。 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tool-ralph)是每个受支持字段的穷尽式真源。配置的提供方必须存在、支持结构化输出，并报告 `inheritsParentContext: false`；针对违反此要求的提供方发起调用时，会在任何 Round 开始前直接报错。
 
@@ -127,7 +131,7 @@ Use the ralph tool ONLY when the direct human explicitly asks for a Ralph loop o
 
 #### 模型看到什么
 
-已生成的 [`ralph` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-ralph) 公开一个必填 `objective` 字符串与一个可选 `maxRounds` 数字。提供方选择、交接大小、报告 schema、工作流脚本与编排行为均由部署侧控制，不在调用 schema 中。
+已生成的 [`ralph` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-ralph) 公开一个必填 `objective` 字符串，以及可选的 `maxRounds`、`maxElapsedMs` 与 `maxTotalTokens` 数字。提供方选择、交接大小、报告 schema、工作流脚本与编排行为均由部署侧控制，不在调用 schema 中。
 
 #### Token 影响
 
@@ -141,7 +145,7 @@ Use the ralph tool ONLY when the direct human explicitly asks for a Ralph loop o
 
 #### 模型看到什么
 
-每个子 agent 都会看到独立的固定 Round 提示词与结构化输出捕获约定。父级只看到原始调用与一个终态结果，其中包含 worker 报告的状态、Round 数量与美化打印的最终报告；中间子 agent 消息与报告不会进入父级对话。普通子 agent 失败时改为产生错误，其中包含对应 Round 编号；从第二个 Round 起，还会包含上一次成功交接。
+每个子 agent 都会看到独立的固定 Round 提示词与结构化输出捕获约定。父级只看到原始调用与一个终态结果，其中包含 worker 报告的状态、Round 数量、可选的预算原因、汇总的子 agent token 用量与美化打印的最终报告；中间子 agent 消息与报告不会进入父级对话。普通子 agent 失败时改为产生错误，其中包含对应 Round 编号；从第二个 Round 起，还会包含上一次成功交接。
 
 #### Token 影响
 
@@ -164,7 +168,8 @@ Use the ralph tool ONLY when the direct human explicitly asks for a Ralph loop o
 - **一个 Round 对应一个全新子 agent**——Round 内没有扇出、模型或提供方切换、fork 上下文或由模型调用选择的提供方。
 - **没有强制拒绝递归 Ralph**——结构性拒绝尚未实现；提示词引导不能强制禁止递归。
 - **普通子 agent 失败会终止运行**——固定脚本报告失败的 Round 与上一次成功交接，但不会重试；致命的工作流基础设施失败可能在该状态返回前结束。
-- **聚合工作量仅受 Round 数量限制**——token、价格与耗时预算均暂缓。
+- **预算只阻止下一个 Round，不中断正在运行的 Round**——经过时间与 token 检查只在 Round 开始时进行，因此单个很长的 Round 可能在运行停止前就超出任一预算。
+- **token 用量只统计可测量的子 agent**——该数值汇总每个已结算子 agent 自身的 Session 用量。提供方未上报用量、没有本地 Session 或未挂载 token meter 的子 agent 会被排除并计入结果；当 token 预算所需的子 agent 用量无法统计时，运行会失败，而不是把部分总量当作完整成本。子 agent 再启动的后代不计入，也不从 token 推导任何价格或支出上限。
 
 <a id="dev-note"></a>
 ### 开发备注
@@ -174,6 +179,6 @@ Use the ralph tool ONLY when the direct human explicitly asks for a Ralph loop o
 
 本开发备注是维护者的工作上下文：尚未决定的开放方向。它明确不具权威性——已交付的行为、限制与既定理由以上文、包代码与相关 Agent Note 为准。
 
-开放方向：带评估器驱动延续的独立评估器；Round 内扇出与提供方选择；以及 Round 上限之外的 token、价格与耗时预算。
+开放方向：带评估器驱动延续的独立评估器；Round 内扇出与提供方选择；以及基于上报 token 用量的价格或支出上限。
 
 </details>

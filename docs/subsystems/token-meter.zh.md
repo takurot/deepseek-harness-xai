@@ -107,6 +107,14 @@ Replay owner for one service-wide estimator and isolated per-session folds.
 
 ```ts cordis-catalog
 /**
+ * Read the cumulative provider-reported usage of one session's durable log,
+ * including a detached session no longer in the live store.
+ * @param session - session whose committed usage is summed.
+ * @returns the four disjoint provider buckets; zeros before any usage is recorded.
+ */
+sessionUsage(session: Session): TokenUsageProjection
+
+/**
  * Read the latest logged provider prompt size and route capacity.
  * @param session - Session whose committed usage and request capacity are read.
  * @returns context pressure; fields remain absent until their source events are recorded.

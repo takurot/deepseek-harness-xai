@@ -816,6 +816,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   SurfaceSnapshot: 'claude-code-mods.md',
   TokenMeasurement: 'token-meter.md',
   ContextPressureProjection: 'token-meter.md',
+  TokenUsageProjection: 'token-meter.md',
   PtcDispatchLog: 'tools.md',
   PostToolDecision: 'tools.md',
   PreToolDecision: 'tools.md',

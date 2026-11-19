@@ -11,6 +11,7 @@ import { createUserMessage, ToolCallId  } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import { STRUCTURED_OUTPUT_TOOL } from '@deepseek-ai/dsh-subagent'
+import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import PtcWorkflowEngine from '@deepseek-ai/dsh-workflow-ptc'
@@ -28,6 +29,7 @@ async function mountExecution(ctx: Context): Promise<string> {
     await rm(cwd, { recursive: true, force: true })
   })
   await mountWorkflowRuntime(ctx, { cwd })
+  await ctx.plugin(TokenMeter)
   await ctx.plugin(JsonlSessionPersistence, { root: join(cwd, '.sessions') })
   return cwd
 }
@@ -135,6 +137,85 @@ describe('dsh-tool-ralph over the real spawn and sandboxed PTC stack', () => {
     await parentHandle.dispose()
   })
 
+  it('stops before the next round when the run reaches its token budget', { timeout: 90_000 }, async () => {
+    const firstReport = {
+      status: 'continue',
+      summary: 'TOKEN_BUDGET_ROUND_ONE',
+      evidence: ['Created migration-a.ts.'],
+      nextSteps: ['Finish migration-b.ts.'],
+      blocker: '',
+    }
+    // Round one already spends more than the budget, so round two must never start.
+    const { ctx, adapter, parentHandle, parent } = await mountRalph([
+      textResponse('PARENT_HISTORY_MARKER'),
+      toolCallResponse('round-1', STRUCTURED_OUTPUT_TOOL, firstReport),
+    ], { maxRounds: 4, maxTotalTokens: 10 })
+    const children: string[] = []
+    ctx.on('subagent/start', (child) => { children.push(child.id) })
+    parent.followup(createUserMessage({ content: [{ type: 'text', text: 'PARENT_PROMPT_MARKER' }], source: { kind: 'user' } }))
+    await parent.whenIdle()
+
+    const result = await executeToolFixture(ctx, {
+      signal: testToolSignal,
+      callId: ToolCallId('ralph-token-budget'),
+      name: 'ralph',
+      arguments: { objective: 'Complete both migration slices.', maxRounds: 4 },
+      agent: parent,
+    })
+
+    expect(result.isError).toBe(false)
+    const text = (result.content[0] as { text: string }).text
+    expect(text).toContain('Ralph stopped after 1 round.')
+    expect(text).toContain('Reason: this run reached its token budget')
+    expect(text).toContain('TOKEN_BUDGET_ROUND_ONE')
+    expect(text).toContain('Child token usage:')
+    expect(children).toHaveLength(1)
+    // The parent request plus the single admitted round.
+    expect(adapter.requests).toHaveLength(2)
+    expect(result.value).toMatchObject({
+      agentsStarted: 1,
+      childrenWithoutUsage: 0,
+      usage: { cacheReadTokens: 0, cacheWriteTokens: 0 },
+    })
+    const usage = (result.value as { usage: { uncachedInputTokens: number; outputTokens: number } }).usage
+    expect(usage.uncachedInputTokens).toBeGreaterThan(0)
+    expect(usage.outputTokens).toBeGreaterThan(0)
+    await parentHandle.dispose()
+  })
+
+  it('fails loudly when a token budget cannot be enforced', { timeout: 90_000 }, async () => {
+    const firstReport = {
+      status: 'continue',
+      summary: 'UNMEASURED_ROUND_ONE',
+      evidence: ['Created migration-a.ts.'],
+      nextSteps: ['Finish migration-b.ts.'],
+      blocker: '',
+    }
+    const unmeasured = (callId: string, args: object) => {
+      const chunks = toolCallResponse(callId, STRUCTURED_OUTPUT_TOOL, args)
+      return chunks.filter(chunk => chunk.type !== 'usage')
+    }
+    const { ctx, parentHandle, parent } = await mountRalph([
+      textResponse('PARENT_HISTORY_MARKER'),
+      unmeasured('round-1', firstReport),
+    ], { maxRounds: 4, maxTotalTokens: 10 })
+    parent.followup(createUserMessage({ content: [{ type: 'text', text: 'PARENT_PROMPT_MARKER' }], source: { kind: 'user' } }))
+    await parent.whenIdle()
+
+    const result = await executeToolFixture(ctx, {
+      signal: testToolSignal,
+      callId: ToolCallId('ralph-unenforceable-budget'),
+      name: 'ralph',
+      arguments: { objective: 'Complete both migration slices.', maxRounds: 4 },
+      agent: parent,
+    })
+
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text)
+      .toContain('cannot enforce its token budget')
+    await parentHandle.dispose()
+  })
+
   it('reports the failed round and last good handoff when a child fails', { timeout: 90_000 }, async () => {
     const firstReport = {
       status: 'continue',
@@ -193,7 +274,7 @@ describe('dsh-tool-ralph over the real spawn and sandboxed PTC stack', () => {
       },
       config: { maxRounds: 1 },
       expectedError: false,
-      expectedText: 'Ralph reached its 1 round limit; the worker reported work remaining.',
+      expectedText: 'Ralph stopped after 1 round.\nReason: this run reached its 1-round limit.',
     },
     {
       name: 'unnormalized report',

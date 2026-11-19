@@ -63,6 +63,22 @@ export interface WorkflowMeta {
 export type WorkflowStopReason = 'completed' | 'cancelled' | 'error'
 
 /**
+ * Provider-reported token usage summed over one run's settled children, in the
+ * same disjoint buckets the token meter records. Reasoning tokens are already
+ * inside `outputTokens` and are never counted again.
+ */
+export interface WorkflowUsage {
+  /** Prompt-side input tokens that were neither served from nor written to cache. */
+  uncachedInputTokens: number
+  /** Completion tokens, including reasoning tokens. */
+  outputTokens: number
+  /** Prompt tokens served from the provider's cache. */
+  cacheReadTokens: number
+  /** Prompt tokens written to the provider's cache. */
+  cacheWriteTokens: number
+}
+
+/**
  * The outcome resolved by a live workflow run. `value` is
  * the script's materialized return value (plain host-realm JSON data; `null`
  * when the script returned `undefined`) — meaningful only for `completed`.
@@ -84,6 +100,14 @@ export interface WorkflowResult {
    * inside a terminated script are unknowable then.
    */
   agentsStarted: number
+  /**
+   * Cumulative usage of the settled children whose provider reported it.
+   * Absent until a child settles; on a termination path the guest never
+   * reports it, so it is absent there.
+   */
+  usage?: WorkflowUsage
+  /** Settled children excluded from {@link usage} because their usage was unreadable; present iff greater than zero. */
+  childrenWithoutUsage?: number
 }
 
 /** Identifying detail for a run, carried by every `workflow/*` event as borrowed immutable data, never the live run. */

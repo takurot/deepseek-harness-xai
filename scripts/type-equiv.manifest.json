@@ -1628,6 +1628,11 @@
     },
     {
       "doc": "docs/subsystems/workflow.md",
+      "symbol": "WorkflowUsage",
+      "source": "packages/workflow/workflow/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/workflow.md",
       "symbol": "WorkflowRun",
       "source": "packages/workflow/workflow/src/runtime-types.ts"
     },

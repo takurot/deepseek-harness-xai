@@ -5,12 +5,14 @@ import type {} from '@deepseek-ai/dsh-working-directory'
 import type { PtcBindingFunction, PtcJsonValue, PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import type { Session } from '@deepseek-ai/dsh-session'
+import type { TokenUsageProjection } from '@deepseek-ai/dsh-token-meter'
 import type SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import type { SubagentActivation } from '@deepseek-ai/dsh-subagent'
 import { assertObjectJsonSchema } from '@deepseek-ai/dsh-tools'
 import type { ObjectJsonSchema } from '@deepseek-ai/dsh-tools'
 import { assertNever, snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
-import type { WorkflowAgentEndInfo, WorkflowAgentInfo, WorkflowMeta, WorkflowResult, WorkflowRun, WorkflowRunId } from '@deepseek-ai/dsh-workflow'
+import type { WorkflowAgentEndInfo, WorkflowAgentInfo, WorkflowMeta, WorkflowResult, WorkflowRun, WorkflowRunId, WorkflowUsage } from '@deepseek-ai/dsh-workflow'
 import { WORKFLOW_GUEST_SOURCE } from './guest-source.ts'
 import type { WorkflowProgress } from './guest-types.ts'
 import { renderThrown } from './realm.ts'
@@ -20,6 +22,8 @@ import type { ChildStartRequest, WorkerInit } from './types.ts'
 interface ChildRecord {
   readonly callId: number
   readonly run: SubagentActivation
+  /** The child's live Session captured before settlement detaches it. */
+  readonly session: Session | undefined
   disposal?: Promise<void>
 }
 
@@ -92,16 +96,41 @@ function progressBatch(value: unknown): WorkflowProgress[] {
   return value.map(progress)
 }
 
+/** One settled run's aggregate usage, validated member by member. */
+function workflowUsage(value: unknown): WorkflowUsage {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid workflow usage')
+  const usage = value as Record<string, unknown>
+  const keys = Object.keys(usage).sort().join(',')
+  if (keys !== 'cacheReadTokens,cacheWriteTokens,outputTokens,uncachedInputTokens') throw new Error('invalid workflow usage')
+  for (const bucket of ['uncachedInputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens']) {
+    if (!Number.isSafeInteger(usage[bucket]) || (usage[bucket] as number) < 0) throw new Error('invalid workflow usage')
+  }
+  return {
+    uncachedInputTokens: usage.uncachedInputTokens as number,
+    outputTokens: usage.outputTokens as number,
+    cacheReadTokens: usage.cacheReadTokens as number,
+    cacheWriteTokens: usage.cacheWriteTokens as number,
+  }
+}
+
 function workflowResult(value: unknown): WorkflowResult {
   const result = object(value)
   if (result.stopReason !== 'completed' && result.stopReason !== 'error' && result.stopReason !== 'cancelled') throw new Error('invalid workflow stop reason')
   if (!Number.isSafeInteger(result.agentsStarted) || (result.agentsStarted as number) < 0) throw new Error('invalid workflow agent count')
   if (!Object.hasOwn(result, 'value')) throw new Error('workflow result is missing its value')
+  if (result.childrenWithoutUsage !== undefined
+    && (!Number.isSafeInteger(result.childrenWithoutUsage) || (result.childrenWithoutUsage as number) < 1)) {
+    throw new Error('invalid workflow child count without usage')
+  }
   return {
     value: result.value,
     stopReason: result.stopReason,
     agentsStarted: result.agentsStarted as number,
     ...result.error === undefined ? {} : { error: text(result.error, 'error') },
+    ...result.usage === undefined ? {} : { usage: workflowUsage(result.usage) },
+    ...result.childrenWithoutUsage === undefined
+      ? {}
+      : { childrenWithoutUsage: result.childrenWithoutUsage as number },
   }
 }
 
@@ -130,7 +159,7 @@ export class PtcWorkflowRun implements WorkflowRun {
     readonly id: WorkflowRunId,
     readonly meta: WorkflowMeta,
     private readonly parent: Agent,
-    private readonly init: WorkerInit,
+    private readonly init: Omit<WorkerInit, 'startedAtMs'>,
     private readonly provider: string,
     private readonly policy: SandboxExecutionPolicy,
     private readonly observer: ExecutionObserver,
@@ -177,7 +206,11 @@ export class PtcWorkflowRun implements WorkflowRun {
 
   private bindings(): Record<string, PtcBindingFunction> {
     return {
-      begin: () => { this.requireActive(); return Promise.resolve(json(this.init)) },
+      begin: () => {
+        this.requireActive()
+        // Elapsed budgets measure guest work, so the stamp is taken when the script starts.
+        return Promise.resolve(json({ ...this.init, startedAtMs: Date.now() }))
+      },
       startChild: value => this.track(this.startChild(childRequest(value))),
       childResult: value => this.track(this.childResult(this.child(value))),
       disposeChild: async (value) => { await this.disposeChild(this.child(value)); return null },
@@ -216,7 +249,7 @@ export class PtcWorkflowRun implements WorkflowRun {
         },
       },
     })
-    const record: ChildRecord = { callId, run }
+    const record: ChildRecord = { callId, run, session: this.ctx.get('sessions')?.get(run.childId) }
     this.children.set(callId, record)
     // A provider can publish after the signal fired while startup was pending.
     if (this.controller.signal.aborted) {
@@ -234,14 +267,30 @@ export class PtcWorkflowRun implements WorkflowRun {
     signal.addEventListener('abort', onAbort, { once: true })
     try {
       const result = await Promise.race([record.run.result, aborted.promise])
+      const usage = this.readChildUsage(record.session)
       return json({
         output: result.output,
         stopReason: result.stopReason,
         ...result.structured === undefined ? {} : { structured: result.structured },
+        ...usage === undefined ? {} : { usage },
       })
     } finally {
       signal.removeEventListener('abort', onAbort)
     }
+  }
+
+  /**
+   * Read one settled child's cumulative provider usage. Absent when the child
+   * has no local Session, no token meter is mounted, or the session recorded no
+   * provider usage at all — all three mean the run cannot count that child, so
+   * it reports the child instead of a misleading zero.
+   */
+  private readChildUsage(session: Session | undefined): TokenUsageProjection | undefined {
+    if (session === undefined) return undefined
+    const usage = this.ctx.get('tokenMeter')?.sessionUsage(session)
+    if (usage === undefined) return undefined
+    const total = usage.uncachedInputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
+    return total === 0 ? undefined : usage
   }
 
   private disposeChild(record: ChildRecord): Promise<void> {

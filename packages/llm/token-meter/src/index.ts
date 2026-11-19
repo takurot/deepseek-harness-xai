@@ -24,6 +24,7 @@ import {
   SessionSeq,
 } from '@deepseek-ai/dsh-session'
 import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
+import type { TokenUsageProjection } from './projection.ts'
 import type {
   ContextPressureProjection,
   TokenMeasurement,
@@ -32,7 +33,7 @@ import type {
 } from './types.ts'
 import { contextBreakdownProjectionDefinition } from './breakdown-projection.ts'
 import { contextPressureProjectionDefinition, tokenUsageProjectionDefinition } from './usage-projection.ts'
-import type { ContextPressureState } from './usage-projection.ts'
+import type { ContextPressureState, TokenUsageState } from './usage-projection.ts'
 import { estimateMessage, estimateToolsTokens } from './estimate.ts'
 import { advanceMeasurement, measurementProjectionDefinition } from './measurement-projection.ts'
 import type { MeasurementState } from './measurement-projection.ts'
@@ -93,6 +94,7 @@ export class TokenMeter extends Service {
 
   private readonly states = new WeakMap<Session, ReplayState>()
   private measurementProjectionHandle: ProjectionHandle<MeasurementState> | undefined
+  private tokenUsageProjectionHandle!: ProjectionHandle<TokenUsageState>
   private contextPressureProjectionHandle!: ProjectionHandle<ContextPressureState>
 
   constructor(ctx: Context, config: TokenMeterConfig = {}) {
@@ -103,7 +105,7 @@ export class TokenMeter extends Service {
   protected async [Service.init](): Promise<void> {
     const ctx = this.ctx
     this.measurementProjectionHandle = await ctx.sessionProjections.register(measurementProjectionDefinition)
-    await ctx.sessionProjections.register(tokenUsageProjectionDefinition)
+    this.tokenUsageProjectionHandle = await ctx.sessionProjections.register(tokenUsageProjectionDefinition)
     this.contextPressureProjectionHandle = await ctx.sessionProjections.register(contextPressureProjectionDefinition)
     await ctx.sessionProjections.register(contextBreakdownProjectionDefinition)
 
@@ -112,6 +114,16 @@ export class TokenMeter extends Service {
     ctx.on('session/event', (session) => {
       if (this.states.has(session)) this._sync(session)
     })
+  }
+
+  /**
+   * Read the cumulative provider-reported usage of one session's durable log,
+   * including a detached session no longer in the live store.
+   * @param session - session whose committed usage is summed.
+   * @returns the four disjoint provider buckets; zeros before any usage is recorded.
+   */
+  sessionUsage(session: Session): TokenUsageProjection {
+    return this.tokenUsageProjectionHandle.stateOf(session).totals
   }
 
   /**

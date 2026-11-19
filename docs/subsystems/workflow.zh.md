@@ -10,7 +10,7 @@ Service Definition：[dsh-workflow](../../packages/workflow/workflow)（`ctx.wor
 
 ## 启动请求
 
-本节定义调用方启动一次运行时提交的请求。普通工作流工具会根据模型的 `{ script, meta, args }` 调用和发起调用的 agent 构建该请求；专用消费方还可以为本次运行选择引擎级 `subagentProvider`，并将 `maxTotalAgents` 调低，但脚本无法观察或替换这两项策略。`meta` 与 `args` 是普通 JSON 数据；引擎会用 schema 校验 `meta`，并在任何工作开始前明确报错并拒绝无效数据。引擎绝不会通过对脚本文本求值来获取它们。`parent` 是必填字段——脚本启动的每个子 agent 都归属于它，cwd、谱系与深度通过 [subagent seam](subagent.zh.md) 传递。
+本节定义调用方启动一次运行时提交的请求。普通工作流工具会根据模型的 `{ script, meta, args }` 调用和发起调用的 agent 构建该请求；专用消费方还可以为本次运行选择引擎级 `subagentProvider`、将 `maxTotalAgents` 调低，并设置单次运行的经过时间与 token 预算，但脚本无法观察或替换这些策略。`meta` 与 `args` 是普通 JSON 数据；引擎会用 schema 校验 `meta`，并在任何工作开始前明确报错并拒绝无效数据。引擎绝不会通过对脚本文本求值来获取它们。`parent` 是必填字段——脚本启动的每个子 agent 都归属于它，cwd、谱系与深度通过 [subagent seam](subagent.zh.md) 传递。
 
 ```ts type-equiv
 /**
@@ -29,6 +29,21 @@ interface WorkflowStartRequest {
   subagentProvider?: string
   /** Optional per-run total-child ceiling. */
   maxTotalAgents?: number
+  /**
+   * Optional elapsed-time budget in milliseconds, measured from the moment the
+   * guest starts running the script. Once reached, `agent()` refuses to start
+   * another child with a fatal `BUDGET_EXHAUSTED` error; a running child is
+   * never cancelled.
+   */
+  maxElapsedMs?: number
+  /**
+   * Optional token budget: cumulative provider-reported usage of the run's
+   * settled children. Once reached, `agent()` refuses to start another child
+   * with a fatal `BUDGET_EXHAUSTED` error; a running child is never cancelled.
+   * A run whose children report no readable usage fails with
+   * `BUDGET_UNENFORCEABLE` instead of silently under-counting.
+   */
+  maxTotalTokens?: number
   /** The agent on whose behalf the run executes (parent of every child). */
   parent: Agent
   /** Cancels the run when aborted. */
@@ -87,12 +102,42 @@ interface WorkflowResult {
    * inside a terminated script are unknowable then.
    */
   agentsStarted: number
+  /**
+   * Cumulative usage of the settled children whose provider reported it.
+   * Absent until a child settles; on a termination path the guest never
+   * reports it, so it is absent there.
+   */
+  usage?: WorkflowUsage
+  /** Settled children excluded from {@link usage} because their usage was unreadable; present iff greater than zero. */
+  childrenWithoutUsage?: number
+}
+```
+
+## 子 agent 用量汇总：`WorkflowUsage`
+
+`WorkflowResult.usage` 把本次运行中已结算子 agent 的提供方上报用量按四个互不重叠的桶相加。`childrenWithoutUsage` 统计宿主无法读取用量的已结算子 agent——没有本地 Session、没有 token meter，或没有任何已记录的提供方用量——因此消费方可以区分完整总量与部分总量。在终止路径上，guest 从不上报这两个字段，因此二者均缺席。
+
+```ts type-equiv
+/**
+ * Provider-reported token usage summed over one run's settled children, in the
+ * same disjoint buckets the token meter records. Reasoning tokens are already
+ * inside `outputTokens` and are never counted again.
+ */
+interface WorkflowUsage {
+  /** Prompt-side input tokens that were neither served from nor written to cache. */
+  uncachedInputTokens: number
+  /** Completion tokens, including reasoning tokens. */
+  outputTokens: number
+  /** Prompt tokens served from the provider's cache. */
+  cacheReadTokens: number
+  /** Prompt tokens written to the provider's cache. */
+  cacheWriteTokens: number
 }
 ```
 
 ## 活跃运行：`WorkflowRun`
 
-消费方等待 `result`，可以在执行期间调用 `cancel`，且必须在每条路径上调用 `dispose`（资源释放）。`result` 绝不拒绝：脚本失败以 `stopReason: 'error'` 兑现，取消以 `'cancelled'` 兑现。PTC 引擎没有整体经过时间截止；取消时立即中止受管进程。资源释放按照各提供方约定等待进程与子 agent 清理，不另设工作流清理截止。
+消费方等待 `result`，可以在执行期间调用 `cancel`，且必须在每条路径上调用 `dispose`（资源释放）。`result` 绝不拒绝：脚本失败以 `stopReason: 'error'` 兑现，取消以 `'cancelled'` 兑现。PTC 引擎不设整体经过时间截止：可选的单次运行 `maxElapsedMs` 与 `maxTotalTokens` 预算只拒绝新的子 agent，绝不取消正在运行的子 agent；取消时则立即中止受管进程。资源释放按照各提供方约定等待进程与子 agent 清理，不另设工作流清理截止。
 
 ```ts type-equiv
 /**

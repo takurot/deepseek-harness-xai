@@ -10,7 +10,7 @@ Sources: browser-safe vocabulary in [`packages/workflow/workflow/src/types.ts`](
 
 ## The start request
 
-What a caller asks for when starting a run. The ordinary workflow tool builds this from the model's `{ script, meta, args }` call plus the calling agent; specialized consumers may also select one engine-wide `subagentProvider` and lower `maxTotalAgents` for the run, but the script cannot observe or replace either policy. `meta` and `args` are plain JSON DATA (the engine validates `meta` against its schema and rejects loud BEFORE anything runs — no script text is ever evaluated to obtain it). `parent` is REQUIRED — every child the script starts is attributed to it, and cwd, lineage, and depth pass through the [subagent seam](subagent.md).
+What a caller asks for when starting a run. The ordinary workflow tool builds this from the model's `{ script, meta, args }` call plus the calling agent; specialized consumers may also select one engine-wide `subagentProvider`, lower `maxTotalAgents`, and set per-run elapsed-time and token budgets, but the script cannot observe or replace that policy. `meta` and `args` are plain JSON DATA (the engine validates `meta` against its schema and rejects loud BEFORE anything runs — no script text is ever evaluated to obtain it). `parent` is REQUIRED — every child the script starts is attributed to it, and cwd, lineage, and depth pass through the [subagent seam](subagent.md).
 
 ```ts type-equiv
 /**
@@ -29,6 +29,21 @@ interface WorkflowStartRequest {
   subagentProvider?: string
   /** Optional per-run total-child ceiling. */
   maxTotalAgents?: number
+  /**
+   * Optional elapsed-time budget in milliseconds, measured from the moment the
+   * guest starts running the script. Once reached, `agent()` refuses to start
+   * another child with a fatal `BUDGET_EXHAUSTED` error; a running child is
+   * never cancelled.
+   */
+  maxElapsedMs?: number
+  /**
+   * Optional token budget: cumulative provider-reported usage of the run's
+   * settled children. Once reached, `agent()` refuses to start another child
+   * with a fatal `BUDGET_EXHAUSTED` error; a running child is never cancelled.
+   * A run whose children report no readable usage fails with
+   * `BUDGET_UNENFORCEABLE` instead of silently under-counting.
+   */
+  maxTotalTokens?: number
   /** The agent on whose behalf the run executes (parent of every child). */
   parent: Agent
   /** Cancels the run when aborted. */
@@ -87,12 +102,42 @@ interface WorkflowResult {
    * inside a terminated script are unknowable then.
    */
   agentsStarted: number
+  /**
+   * Cumulative usage of the settled children whose provider reported it.
+   * Absent until a child settles; on a termination path the guest never
+   * reports it, so it is absent there.
+   */
+  usage?: WorkflowUsage
+  /** Settled children excluded from {@link usage} because their usage was unreadable; present iff greater than zero. */
+  childrenWithoutUsage?: number
+}
+```
+
+## Aggregate child usage: `WorkflowUsage`
+
+`WorkflowResult.usage` sums the provider-reported usage of the run's settled children in four disjoint buckets. `childrenWithoutUsage` counts the settled children whose usage the host could not read — no local Session, no token meter, or no recorded provider usage — so a consumer can tell a complete total from a partial one. Both fields are absent on a termination path, where the guest never reports them.
+
+```ts type-equiv
+/**
+ * Provider-reported token usage summed over one run's settled children, in the
+ * same disjoint buckets the token meter records. Reasoning tokens are already
+ * inside `outputTokens` and are never counted again.
+ */
+interface WorkflowUsage {
+  /** Prompt-side input tokens that were neither served from nor written to cache. */
+  uncachedInputTokens: number
+  /** Completion tokens, including reasoning tokens. */
+  outputTokens: number
+  /** Prompt tokens served from the provider's cache. */
+  cacheReadTokens: number
+  /** Prompt tokens written to the provider's cache. */
+  cacheWriteTokens: number
 }
 ```
 
 ## A live run: `WorkflowRun`
 
-The consumer awaits `result`, may `cancel` during execution, and must `dispose` on every path. `result` never rejects: script failure resolves with `stopReason: 'error'`, and cancellation with `'cancelled'`. The PTC engine has no overall elapsed deadline; it immediately aborts the managed process when cancelled. Disposal awaits process and child cleanup under their provider contracts, without an independent workflow cleanup deadline.
+The consumer awaits `result`, may `cancel` during execution, and must `dispose` on every path. `result` never rejects: script failure resolves with `stopReason: 'error'`, and cancellation with `'cancelled'`. The PTC engine sets no overall elapsed deadline: the optional per-run `maxElapsedMs` and `maxTotalTokens` budgets only refuse new children and never cancel a running one, while cancellation immediately aborts the managed process. Disposal awaits process and child cleanup under their provider contracts, without an independent workflow cleanup deadline.
 
 ```ts type-equiv
 /**

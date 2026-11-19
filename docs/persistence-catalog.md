@@ -5459,7 +5459,7 @@ Array of [`UserMessage`](#persistence-type-sha256-613660455704fb82a825b5b766e000
 
 SHA-256: `c2deb7c9183735d4e0fffddf5c623f4e34daa1c8e96b111982e957dfcbbcf896`
 
-Sources: [`packages/workflow/workflow/src/types.ts:110`](../packages/workflow/workflow/src/types.ts)
+Sources: [`packages/workflow/workflow/src/types.ts:134`](../packages/workflow/workflow/src/types.ts)
 
 One of:
 
