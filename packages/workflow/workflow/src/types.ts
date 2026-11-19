@@ -102,8 +102,9 @@ export interface WorkflowResult {
   agentsStarted: number
   /**
    * Cumulative usage of the settled children whose provider reported it.
-   * Absent until a child settles; on a termination path the guest never
-   * reports it, so it is absent there.
+   * Absent until a child settles; a termination result the host synthesizes
+   * (cancellation or process failure) omits it because the guest never
+   * reported it.
    */
   usage?: WorkflowUsage
   /**

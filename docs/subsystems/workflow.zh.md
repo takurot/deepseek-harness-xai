@@ -106,8 +106,9 @@ interface WorkflowResult {
   agentsStarted: number
   /**
    * Cumulative usage of the settled children whose provider reported it.
-   * Absent until a child settles; on a termination path the guest never
-   * reports it, so it is absent there.
+   * Absent until a child settles; a termination result the host synthesizes
+   * (cancellation or process failure) omits it because the guest never
+   * reported it.
    */
   usage?: WorkflowUsage
   /**
@@ -121,7 +122,7 @@ interface WorkflowResult {
 
 ## 子 agent 用量汇总：`WorkflowUsage`
 
-`WorkflowResult.usage` 把本次运行中已结算子 agent 的提供方上报用量按四个互不重叠的桶相加。`childrenWithoutUsage` 统计宿主无法把用量归因于其自身的已结算子 agent——没有本地 Session、没有 token meter、没有任何已记录的提供方用量，或会话是被 seed 且已包含父级历史——因此消费方可以区分完整总量与部分总量。在终止路径上，guest 从不上报这两个字段，因此二者均缺席。
+`WorkflowResult.usage` 把本次运行中已结算子 agent 的提供方上报用量按四个互不重叠的桶相加。`childrenWithoutUsage` 统计宿主无法把用量归因于其自身的已结算子 agent——没有本地 Session、没有 token meter、没有任何已记录的提供方用量，或会话是被 seed 且已包含父级历史——因此消费方可以区分完整总量与部分总量。只有在宿主合成的终止结果上（取消或进程失败）二者才缺席，因为此时 guest 从不上报它们。
 
 ```ts type-equiv
 /**

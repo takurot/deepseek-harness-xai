@@ -368,10 +368,10 @@ describe('workflow run budgets', () => {
       return { first, second }
     `, {
       async childResult() {
-        await new Promise(resolve => setTimeout(resolve, 20))
+        await new Promise(resolve => setTimeout(resolve, 400))
         return { output: [{ type: 'text', text: 'finished' }], stopReason: 'completed' }
       },
-    }, { maxElapsedMs: 10 })
+    }, { maxElapsedMs: 100 })
     await expect(runWorkflowGuest(test.host)).resolves.toMatchObject({
       value: { first: 'finished', second: 'BUDGET_EXHAUSTED' },
       stopReason: 'completed',
@@ -468,17 +468,30 @@ describe('workflow run budgets', () => {
       "return await parallel([() => agent('one'), () => agent('two')])",
       {
         async childResult() {
-          await new Promise(resolve => setTimeout(resolve, 25))
+          await new Promise(resolve => setTimeout(resolve, 400))
           return { output: [{ type: 'text', text: 'done' }], stopReason: 'completed' }
         },
       },
-      { maxConcurrentAgents: 1, maxElapsedMs: 10 },
+      { maxConcurrentAgents: 1, maxElapsedMs: 100 },
     )
     const result = await runWorkflowGuest(test.host)
     expect(result.stopReason).toBe('error')
     expect(result.error).toContain('reached its elapsed-time budget')
     expect(result.agentsStarted).toBe(1)
     expect(test.requests).toHaveLength(1)
+  })
+
+  it('keeps settled usage on a failing script', async () => {
+    const test = fixture(
+      "await agent('one'); throw new Error('after the child')",
+      { childResult: async () => ({ output: [], stopReason: 'completed', usage: USAGE }) },
+    )
+    const result = await runWorkflowGuest(test.host)
+    expect(result).toMatchObject({
+      stopReason: 'error',
+      agentsStarted: 1,
+      usage: USAGE,
+    })
   })
 
   it('reports no usage fields until a child settles', async () => {

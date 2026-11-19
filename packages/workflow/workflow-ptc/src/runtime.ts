@@ -123,7 +123,13 @@ export class WorkflowExecution {
         ...this.settledUsage(),
       }
     } catch (error: unknown) {
-      return { value: null, stopReason: 'error', error: renderThrown(error), agentsStarted: this.started }
+      return {
+        value: null,
+        stopReason: 'error',
+        error: renderThrown(error),
+        agentsStarted: this.started,
+        ...this.settledUsage(),
+      }
     }
   }
 
@@ -253,8 +259,6 @@ export class WorkflowExecution {
       // point a child would actually start; a refused call releases the slot
       // and does not count as started.
       this.assertBudget()
-      this.started += 1
-      const seq = this.started
       let run: ChildHandle
       try {
         run = await this.children.startAgent({
@@ -266,6 +270,8 @@ export class WorkflowExecution {
       } catch (error: unknown) {
         throw new WorkflowError(`agent() could not start a child: ${renderThrown(error)}`, 'AGENT_START', { cause: error })
       }
+      this.started += 1
+      const seq = this.started
       const info: WorkflowAgentInfo = { seq, label, ...phase !== undefined ? { phase } : {}, childId: brandString<SessionId>(run.id) }
       this.observer.agentStart(info)
       try {

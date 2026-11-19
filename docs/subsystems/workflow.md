@@ -106,8 +106,9 @@ interface WorkflowResult {
   agentsStarted: number
   /**
    * Cumulative usage of the settled children whose provider reported it.
-   * Absent until a child settles; on a termination path the guest never
-   * reports it, so it is absent there.
+   * Absent until a child settles; a termination result the host synthesizes
+   * (cancellation or process failure) omits it because the guest never
+   * reported it.
    */
   usage?: WorkflowUsage
   /**
@@ -121,7 +122,7 @@ interface WorkflowResult {
 
 ## Aggregate child usage: `WorkflowUsage`
 
-`WorkflowResult.usage` sums the provider-reported usage of the run's settled children in four disjoint buckets. `childrenWithoutUsage` counts the settled children whose usage the host could not attribute to them — no local Session, no token meter, no recorded provider usage, or a seeded session that already contained its parent's history — so a consumer can tell a complete total from a partial one. Both fields are absent on a termination path, where the guest never reports them.
+`WorkflowResult.usage` sums the provider-reported usage of the run's settled children in four disjoint buckets. `childrenWithoutUsage` counts the settled children whose usage the host could not attribute to them — no local Session, no token meter, no recorded provider usage, or a seeded session that already contained its parent's history — so a consumer can tell a complete total from a partial one. Both fields are absent only on a termination result the host synthesizes (cancellation or process failure), where the guest never reports them.
 
 ```ts type-equiv
 /**
