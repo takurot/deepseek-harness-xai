@@ -109,7 +109,7 @@ export class RepositoryCleaner {
     const desktop = join(this.root, 'apps', 'desktop')
     const legacy = legacyDevelopmentState(desktop)
     const legacyData: string[] = []
-    for (const path of Object.values(legacy)) {
+    for (const path of [legacy.home, legacy.userData]) {
       if (await exists(path)) legacyData.push(repositoryPath(this.root, path))
     }
     if (legacyData.length > 0) {

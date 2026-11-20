@@ -116,6 +116,51 @@ it.each([
   expect(existsSync(state)).toBe(false)
 })
 
+it('does not move legacy data reached through an explicit directory alias with a missing suffix', () => {
+  const { app, legacy, state } = fixture()
+  seedLegacy(legacy)
+  const nested = join(legacy, 'home', 'nested')
+  mkdirSync(nested)
+  const alias = join(app, 'alias')
+  symlinkSync(nested, alias, process.platform === 'win32' ? 'junction' : 'dir')
+
+  expect(() => prepareDevelopmentState(app, { DSH_DESKTOP_USER_DATA_DIR: join(alias, 'missing') }))
+    .toThrow('DSH_DESKTOP_USER_DATA_DIR')
+  expect(readFileSync(join(legacy, 'home', 'session.jsonl'), 'utf8')).toBe('legacy session')
+  expect(existsSync(alias)).toBe(true)
+  expect(existsSync(state)).toBe(false)
+})
+
+it('preserves an explicit override whose lookup passes through the legacy source', () => {
+  const { app, legacy, state } = fixture()
+  seedLegacy(legacy)
+  const source = join(legacy, 'home')
+  const external = join(app, 'external')
+  mkdirSync(external)
+  const dirLink = process.platform === 'win32' ? 'junction' : 'dir'
+  symlinkSync(external, join(source, 'outside'), dirLink)
+  const alias = join(app, 'alias')
+  symlinkSync(source, alias, dirLink)
+  const override = join(alias, 'outside')
+
+  expect(() => prepareDevelopmentState(app, { DSH_DESKTOP_USER_DATA_DIR: override }))
+    .toThrow('DSH_DESKTOP_USER_DATA_DIR')
+  expect(existsSync(override)).toBe(true)
+  expect(existsSync(state)).toBe(false)
+})
+
+it('does not move legacy data reached through a case alias on a case-insensitive volume', (context) => {
+  const { app, legacy, state } = fixture()
+  seedLegacy(legacy)
+  const alias = join(legacy, 'HOME')
+  if (!existsSync(alias)) context.skip()
+
+  expect(() => prepareDevelopmentState(app, { DSH_DESKTOP_USER_DATA_DIR: join(alias, 'missing') }))
+    .toThrow('DSH_DESKTOP_USER_DATA_DIR')
+  expect(readFileSync(join(legacy, 'home', 'session.jsonl'), 'utf8')).toBe('legacy session')
+  expect(existsSync(state)).toBe(false)
+})
+
 it('does not move either legacy directory while Electron owns the profile', () => {
   const { app, legacy, state } = fixture()
   seedLegacy(legacy)

@@ -1,7 +1,7 @@
 /** Persistent local state for unpackaged Desktop launches. */
-import { lstatSync, mkdirSync, readlinkSync, renameSync } from 'node:fs'
+import { lstatSync, mkdirSync, readlinkSync, realpathSync, renameSync, statSync } from 'node:fs'
 import { hostname } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 /** Separate locations for Harness state and the Electron browser profile. */
 export interface DevelopmentState {
@@ -36,6 +36,31 @@ function directoryExists(path: string): boolean {
 function isWithin(directory: string, path: string): boolean {
   const child = relative(directory, path)
   return child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child)
+}
+
+function overrideUsesDirectory(source: string, override: string, key: string): boolean {
+  if (isWithin(source, override)) return true
+  const identity = lstatSync(source, { bigint: true, throwIfNoEntry: false })
+  if (!identity) return false
+
+  // An override may not exist yet, or a link inside the source may resolve back out of it.
+  // Check both the written ancestors and the ancestors of their resolved locations.
+  const pending = new Set([override])
+  for (const path of pending) {
+    const parent = dirname(path)
+    if (parent !== path) pending.add(parent)
+    try {
+      const canonical = realpathSync.native(path)
+      const stat = statSync(canonical, { bigint: true })
+      if (stat.dev === identity.dev && stat.ino === identity.ino) return true
+      const canonicalParent = dirname(canonical)
+      if (canonicalParent !== canonical) pending.add(canonicalParent)
+    } catch (error) {
+      if (isCode(error, 'ENOENT') || isCode(error, 'ENOTDIR')) continue
+      throw new Error(`desktop development: cannot check ${key}=${override} before moving ${source}; inspect the override path and retry`, { cause: error })
+    }
+  }
+  return false
 }
 
 function assertProfileIdle(profile: string): void {
@@ -108,8 +133,8 @@ export function prepareDevelopmentState(appRoot: string, environment: NodeJS.Pro
   ]
   const moves = candidates.filter(({ usesDefault, destination, source, otherOverride, otherKey }) => {
     if (!usesDefault || directoryExists(destination) || !hasLegacyRoot || !directoryExists(source)) return false
-    if (otherOverride !== undefined && isWithin(source, otherOverride)) {
-      throw new Error(`desktop development: cannot move ${source} because it contains ${otherKey}; move the legacy data manually and update the override before retrying`)
+    if (otherOverride !== undefined && overrideUsesDirectory(source, otherOverride, otherKey)) {
+      throw new Error(`desktop development: cannot move ${source} because ${otherKey} refers to it; move the legacy data manually and update the override before retrying`)
     }
     return true
   })
