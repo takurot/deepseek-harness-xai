@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import base from '../../vitest.config.ts'
 
@@ -14,6 +15,19 @@ export default {
   test: {
     ...base.test,
     cache: false,
+    reporters: ['default', {
+      async onTestRunEnd(modules) {
+        await writeFile(resolve(scratch, 'results.json'), JSON.stringify({
+          runnerPid: process.pid,
+          modules: modules.map(module => ({
+            project: module.project.name,
+            pool: module.toTestSpecification().pool,
+            file: module.relativeModuleId.replaceAll('\\', '/'),
+            tests: Array.from(module.children.allTests(), test => ({ name: test.name, state: test.result().state })),
+          })),
+        }))
+      },
+    }],
     coverage: {
       ...base.test.coverage,
       include: [fixture],
@@ -24,7 +38,7 @@ export default {
       ...project,
       test: {
         ...project.test,
-        include: project.test.name === projectName ? [fixture] : [],
+        include: projectName === 'all' || project.test.name === projectName ? [fixture] : [],
         execArgv: [...project.test.execArgv, '--require', resolve(import.meta.dirname, 'coverage-fork-exit.cjs')],
       },
     })),

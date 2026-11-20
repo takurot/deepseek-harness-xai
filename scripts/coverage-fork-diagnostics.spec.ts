@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -133,12 +133,13 @@ const cancel: WorkerRequest = { __vitest_worker_request__: true, type: 'cancel' 
 const stop: WorkerRequest = { __vitest_worker_request__: true, type: 'stop' }
 
 async function configuredPool(pool: 'stock' | 'diagnostic', outcome: 'exit' | 'pass', signal: AbortSignal) {
-  return runForkFixture({
+  const { result } = await runForkFixture({
     id: `fork-${pool}`, label: 'fork fixture', displayCommand: 'Vitest pool fixture',
     command: process.execPath,
     args: [resolve('node_modules/vitest/vitest.mjs'), 'run', '--config', 'scripts/fixtures/coverage-fork.config.ts'],
     env: { DSH_TEST_FORK_POOL: pool },
   }, outcome, signal)
+  return result
 }
 
 async function runForkFixture(gate: Gate, outcome: 'exit' | 'pass', signal: AbortSignal) {
@@ -156,7 +157,7 @@ async function runForkFixture(gate: Gate, outcome: 'exit' | 'pass', signal: Abor
     await result
   })
   try {
-    return await result
+    return { result: await result, cacheDir }
   } finally {
     settled = true
   }
@@ -200,6 +201,7 @@ describe('selected CI gate fork diagnostics', () => {
     ['coverage-exempt-heavy', 'pass'],
     ['coverage-exempt-heavy', 'exit'],
     ['unit', 'exit'],
+    ['unit', 'pass'],
   ] as const)('%s with a worker that will %s', { timeout: gateFixtureTimeout }, async ([id, outcome], { signal }) => {
     const gate = selectedGate(id)
     const project = gateForkProject[id]
@@ -207,16 +209,18 @@ describe('selected CI gate fork diagnostics', () => {
     expect(gate.args.includes('--coverage')).toBe(id === 'coverage')
     expect(gate.args.filter(arg => arg.startsWith('--maxWorkers'))).toEqual(id === 'unit' ? [] : ['--maxWorkers=1'])
     const heavyFilters = new Set(coverageExemptHeavySuites.map(suite => suite.filter))
-    const result = await runForkFixture({
+    const unitSuccess = id === 'unit' && outcome === 'pass'
+    const { result, cacheDir } = await runForkFixture({
       ...gate,
       // Replace only the inventory, not the gate's coverage and pool selection.
-      args: [...gate.args.filter(arg => !heavyFilters.has(arg)), '--config', 'scripts/fixtures/coverage-gate-fork.config.mjs', '--reporter=verbose', gateForkFixture],
+      args: [...gate.args.filter(arg => !heavyFilters.has(arg)), '--config', 'scripts/fixtures/coverage-gate-fork.config.mjs', gateForkFixture],
       env: {
         [COVERAGE_EXEMPT_ENV]: undefined,
         [COVERAGE_PARTITION_MODE_ENV]: undefined,
         [COVERAGE_FORK_DIAGNOSTICS_ENV]: undefined,
         ...gate.env,
-        DSH_TEST_FORK_PROJECT: project,
+        DSH_TEST_FORK_PROJECT: unitSuccess ? 'all' : project,
+        FORCE_COLOR: '1',
       },
     }, outcome, signal)
     const output = stripVTControlCharacters(result.output.map(chunk => chunk.text).join(''))
@@ -224,16 +228,26 @@ describe('selected CI gate fork diagnostics', () => {
     expect(result.error, output).toBeUndefined()
     expect(result.signalCode, output).toBeNull()
     const pidMarkers = [...output.matchAll(/coverage-fixture-pid: (\d+)/gu)]
-    expect(pidMarkers, output).toHaveLength(1)
-    const pid = Number(pidMarkers[0]?.[1])
-    expect(pid).toBeGreaterThan(0)
-    const records = [...output.matchAll(/coverage-worker-exit: (\{[^\r\n]*\})/gu)]
+    expect(pidMarkers, output).toHaveLength(unitSuccess ? 2 : 1)
+    const pids = pidMarkers.map(marker => Number(marker[1]))
+    for (const pid of pids) expect(pid).toBeGreaterThan(0)
     if (outcome === 'pass') {
       expect(result.exitCode, output).toBe(0)
       expect(result.status, output).toBe('passed')
-      expect(output).toContain(`|${project}| ${gateForkFixture}`)
-      expect(output).toMatch(/Test Files\s+1 passed \(1\)/u)
       expect(output).not.toContain('coverage-worker-exit:')
+      const report = JSON.parse(await readFile(join(cacheDir, 'results.json'), 'utf8')) as {
+        runnerPid: number
+        modules: Array<{ project: string }>
+      }
+      expect(report.runnerPid).toBeGreaterThan(0)
+      expect(pids).not.toContain(report.runnerPid)
+      const projects = unitSuccess ? ['process-bound', 'thread-safe'] : [project]
+      expect(report.modules.sort((a, b) => a.project.localeCompare(b.project))).toEqual(projects.map(projectName => ({
+        project: projectName,
+        pool: unitSuccess ? 'forks' : 'coverage-forks',
+        file: gateForkFixture,
+        tests: [{ name: 'runs in the configured pool', state: 'passed' }],
+      })))
       return
     }
     expect(result.exitCode, output).toBe(1)
@@ -243,11 +257,12 @@ describe('selected CI gate fork diagnostics', () => {
       expect(output).not.toContain('coverage-worker-exit:')
       return
     }
+    const records = [...output.matchAll(/coverage-worker-exit: (\{[^\r\n]*\})/gu)]
     expect(records, output).toHaveLength(1)
     const record = JSON.parse(records[0]![1]!) as { files: string[] }
     const anyNumber: unknown = expect.any(Number)
     expect({ ...record, files: record.files.map(file => file.replaceAll('\\', '/')) }).toEqual({
-      pid, project, workerId: anyNumber, files: [resolve(gateForkFixture).replaceAll('\\', '/')], exitCode: 23, signalCode: null,
+      pid: pids[0], project, workerId: anyNumber, files: [resolve(gateForkFixture).replaceAll('\\', '/')], exitCode: 23, signalCode: null,
     })
   })
 })
