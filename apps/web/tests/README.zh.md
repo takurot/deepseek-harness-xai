@@ -18,6 +18,10 @@ pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps 
 
 每个场景都要求整个客户端组合全部激活。产品启动只对必需名单外的未激活 entry 告警，但 `watchConsole` 绊线、[真实 Host 冒烟](smoke-real.e2e.ts)与[组装 jsdom 启动](assembled-boot.ts)把 `web boot: warning` 视为失败。没有任何场景选项放宽这一点：产品组合中出现未激活插件就是需要修复的缺陷。
 
+## 浏览器生命周期诊断
+
+上下文用量、Session 回放刷新、视图选项菜单，以及模型设置的键盘和触屏用例使用[浏览器生命周期观察器](browser-lifecycle.ts)。Vitest 分别报告场景错误和各个清理错误，包括回放消耗检查失败。可在失败用例的标准错误输出中搜索 `[web lifecycle]`：收到第一个非预期 Playwright 事件时立即输出，失败时间线则区分用例主动关闭浏览器与清理未请求的崩溃、关闭或断开连接。这些事件仅说明 Playwright 观察到了什么，并不说明底层原因；`firstUnexpected: null` 表示未观察到非预期的终止事件。时间线不记录 URL 或页面内容。即使浏览器启动在用例超时后才完成，清理仍负责关闭它，不会安装监听器，也不会把浏览器交还给已超时的用例。
+
 ## 完成状态观察
 
 依赖状态的用例使用 Workspace、接纳、附件和模型流屏障，区分可见中间状态与已完成操作。模型选择器的持久化断言等待默认设置保存完成，不以菜单关闭作为完成信号。详情关闭等待框架过渡结束；归档验证为 seed Session 设置显式标题，并跨重载跟踪该身份。[CI 测试可靠性工作流](../../../.agents/skills/dsh-ci-test-reliability/SKILL.md#synchronize-on-state)负责这些同步规则。

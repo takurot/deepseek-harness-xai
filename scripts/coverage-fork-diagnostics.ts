@@ -78,7 +78,7 @@ class DiagnosticForkWorker extends ForksPoolWorker {
   }
 }
 
-/** Fork pool with additive process-exit diagnostics for coverage partitions. */
+/** Fork pool with additive process-exit diagnostics for CI coverage gates. */
 export const coverageForkPool: PoolRunnerInitializer = {
   name: 'coverage-forks',
   createPoolWorker: options => new DiagnosticForkWorker(options),

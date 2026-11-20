@@ -193,7 +193,11 @@ macOS 和 Linux 从图形界面启动的程序只继承会话管理器提供的�
 pnpm run dev:desktop
 ```
 
-开发 Harness 状态默认写入 `apps/desktop/.desktop-build/development/home`，一次性 npm 项目位于 `apps/desktop/.desktop-build/development/project`，Electron 浏览器数据则位于 `apps/desktop/.desktop-build/development/electron-user-data`。因此，会话、设置、凭据、包链接和浏览器数据都不会进入用户正常使用的 Harness home；显式 `DSH_HOME` 只会替换开发 Harness home。Renderer DevTools 默认自动打开，Main、Renderer 和 dsh Host 调试端口依次为 9229、9222 和 9230。`DSH_DESKTOP_MAIN_INSPECT_PORT`、`DSH_DESKTOP_RENDERER_DEBUG_PORT` 与 `DSH_DESKTOP_HOST_INSPECT_PORT` 可以替换这些端口，`DSH_DESKTOP_OPEN_DEVTOOLS=0` 则保持 Renderer 调试窗口关闭。
+开发 Harness 状态默认写入 `apps/desktop/.desktop-dev/home`，Electron 浏览器数据默认写入 `apps/desktop/.desktop-dev/electron-user-data`。一次性 npm 项目仍位于 `apps/desktop/.desktop-build/development/project`。`pnpm run clean` 删除 `.desktop-build`，保留 `.desktop-dev`。`DSH_HOME` 和 `DSH_DESKTOP_USER_DATA_DIR` 分别覆盖对应的路径；请将显式指定的路径放在构建输出目录之外。
+
+启动或清理前，请退出所有正在使用旧开发目录的进程。启动器仅在目标目录不存在时迁移未被显式覆盖的旧默认目录；若无法确认旧 Electron 浏览器数据目录的锁已失效，启动器会停止。即使启动时跳过了旧默认目录，清理命令也拒绝删除这两处旧目录。迁移和恢复步骤见[开发数据升级指南](../../docs/upgrade-guide/v0.2.2-alpha.3/desktop-development-data/guide.zh.md)。
+
+Renderer DevTools 默认自动打开，Main、Renderer 和 dsh Host 调试端口依次为 9229、9222 和 9230。`DSH_DESKTOP_MAIN_INSPECT_PORT`、`DSH_DESKTOP_RENDERER_DEBUG_PORT` 与 `DSH_DESKTOP_HOST_INSPECT_PORT` 可以替换这些端口，`DSH_DESKTOP_OPEN_DEVTOOLS=0` 则保持 Renderer 调试窗口关闭。
 
 显式构建完成后，`start:desktop` 会重新生成一次性项目，并跳过构建直接启动已有产物：
 

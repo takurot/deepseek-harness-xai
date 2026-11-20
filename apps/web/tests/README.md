@@ -18,6 +18,10 @@ Same-day message goldens use the shared `WEB_FIXTURE_TIME`: seeded transcripts p
 
 Every scenario requires the whole client composition to activate. The product boot only warns about inactive entries outside its required list, but the `watchConsole` tripwire, the [real-host smoke](smoke-real.e2e.ts), and the [assembled jsdom boot](assembled-boot.ts) treat a `web boot: warning` as a failure. No scenario option relaxes this: an inactive plugin in a product composition is a defect to fix.
 
+## Browser lifecycle diagnostics
+
+The context meter, Session replay reload, View options menu, and Models settings keyboard and touch cases use the [browser lifecycle observer](browser-lifecycle.ts). Vitest reports the scenario error and each cleanup error separately, including replay-consumption failures. Search the failing test's stderr for `[web lifecycle]`: the first unexpected Playwright event is printed as it arrives, and the failure timeline distinguishes owned browser closure from a crash, close, or disconnect not requested by teardown. These events identify what Playwright observed, not the native cause; `firstUnexpected: null` means no unexpected terminal event was observed. The timeline contains no URLs or page contents. Cleanup owns a launch even if it resolves after the case times out; the late result is closed without attaching listeners or handing it to the timed-out case.
+
 ## Completion observations
 
 State-sensitive cases use Workspace, admission, attachment, and model-stream barriers to separate visible intermediate states from completed operations. Model-picker persistence assertions wait for the saved default, independently of menu closure. Details close waits for frame transitions; archive verification assigns an explicit title to the seeded Session and follows that identity across reload. The [CI test reliability workflow](../../../.agents/skills/dsh-ci-test-reliability/SKILL.md#synchronize-on-state) owns these synchronization rules.

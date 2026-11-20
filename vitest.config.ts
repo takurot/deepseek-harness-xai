@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { resolvePwshPath } from './packages/shell/pwsh-local/src/resolve.ts'
 import { defineConfig } from 'vitest/config'
+import { coverageForkPool } from './scripts/coverage-fork-diagnostics.ts'
 import { standardDecoratorPlugin, vitestExecArgv } from './vitest.shared.ts'
 import { COVERAGE_EXEMPT_ENV, coverageExemptHeavySuites } from './scripts/coverage-exempt.ts'
-import { COVERAGE_PARTITION_MODE_ENV, COVERAGE_TEST_TIMEOUT_ENV, coverageTestTimeoutOptions } from './scripts/coverage-partitions.ts'
+import { COVERAGE_FORK_DIAGNOSTICS_ENV, COVERAGE_PARTITION_MODE_ENV, COVERAGE_TEST_TIMEOUT_ENV, coverageTestTimeoutOptions } from './scripts/coverage-partitions.ts'
 import { LOCAL_TEST_PARALLELISM_CAP, defaultParallelism } from './scripts/parallelism.ts'
 
 // Prints exact `path:line:col` records for every uncovered statement, branch
@@ -156,6 +157,12 @@ const coveragePartitionRaw = process.env[COVERAGE_PARTITION_MODE_ENV]
 if (coveragePartitionRaw !== undefined && coveragePartitionRaw !== '' && coveragePartitionRaw !== '1') {
   throw new Error(`vitest config: ${COVERAGE_PARTITION_MODE_ENV} must be '1' or unset, got ${JSON.stringify(coveragePartitionRaw)}.`)
 }
+const coverageForkDiagnosticsRaw = process.env[COVERAGE_FORK_DIAGNOSTICS_ENV]
+if (coverageForkDiagnosticsRaw !== undefined && coverageForkDiagnosticsRaw !== '' && coverageForkDiagnosticsRaw !== '1') {
+  throw new Error(`vitest config: ${COVERAGE_FORK_DIAGNOSTICS_ENV} must be '1' or unset, got ${JSON.stringify(coverageForkDiagnosticsRaw)}.`)
+}
+const forkPool = coverageForkDiagnosticsRaw === '1' ? coverageForkPool : 'forks'
+
 const coveragePartitionMode = coveragePartitionRaw === '1'
 
 // Lanes on shared hosts raise the per-test, hook, and expect.poll defaults
@@ -219,7 +226,7 @@ export default defineConfig({
           // Node 24 has aborted in its CJS lexer (v8::ToLocalChecked Empty
           // MaybeLocal in cjs_lexer::Parse) from worker threads on macOS,
           // Linux, and Windows. Forked workers avoid that shared thread path.
-          pool: 'forks',
+          pool: forkPool,
           ...laneTestBudget,
           setupFiles: [
             './scripts/test-proxy-environment.ts', './scripts/test-dom-environment.ts', './scripts/test-official-listing-guard.ts',
@@ -239,7 +246,7 @@ export default defineConfig({
           name: 'process-bound',
           // Runner import tests require VM modules; the missing-flag test stays in thread-safe.
           execArgv: [...vitestExecArgv, '--experimental-vm-modules'],
-          pool: 'forks',
+          pool: forkPool,
           ...laneTestBudget,
           setupFiles: [
             './scripts/test-proxy-environment.ts', './scripts/test-dom-environment.ts', './scripts/test-official-listing-guard.ts',
