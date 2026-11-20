@@ -5,16 +5,16 @@ import { join } from 'node:path'
 import { chromium, webkit, type Locator } from 'playwright'
 import sharp from 'sharp'
 import { expect, it, onTestFinished } from 'vitest'
+import { browserLifecycle } from './browser-lifecycle.ts'
 import { captureStableAria, compareOrRefreshGolden, launchWebScaffold, seedSession, webSnapshotMode } from './scaffold.ts'
 
 const expected = fileURLToPath(new URL('./expected/menu-material', import.meta.url))
 const seed = new URL('../../../snapshots/web/seeded-history/session.v3.jsonl', import.meta.url)
 
-it('keeps the view options menu anchored and dismissible through WebKit window resizing', async () => {
-  const scaffold = await launchWebScaffold({})
-  onTestFinished(() => scaffold.close())
-  const browser = await webkit.launch()
-  onTestFinished(() => browser.close())
+it('keeps the view options menu anchored and dismissible through WebKit window resizing', async (test) => {
+  const lifecycle = browserLifecycle(test, webkit)
+  const scaffold = await lifecycle.acquire('scaffold', () => launchWebScaffold({}), scaffold => scaffold.close())
+  const browser = await lifecycle.launch()
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, locale: 'en-US' })
   await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
   const anchor = page.getByRole('button', { name: 'View options', exact: true })
