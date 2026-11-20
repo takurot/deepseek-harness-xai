@@ -1,16 +1,14 @@
 // @vitest-environment jsdom
 /**
  * Composer editor pure core: ReferenceChipNode and CommandChipNode
- * semantics, the three-view projections, and detect-span application. Headless editors drive every
- * case — no React tree, no contenteditable; the chip's visual face has its
- * own component spec.
+ * semantics, the three-view projections, and detect-span application.
+ * Editors have no mounted root; jsdom supplies the DOM for direct node tests.
  */
 import { describe, expect, it } from 'vitest'
-import { createHeadlessEditor } from '@lexical/headless'
 import type { LexicalEditor, NodeKey, ParagraphNode } from 'lexical'
 import {
   $createLineBreakNode, $createParagraphNode, $createTextNode, $getRoot, $getSelection,
-  $isTextNode, $setSelection,
+  $isTextNode, $setSelection, createEditor,
 } from 'lexical'
 import type { ReferenceInsert } from '../src/client/contract/draft-editor.ts'
 import type { CommandClaim } from '../src/client/contract/input.ts'
@@ -45,7 +43,7 @@ const SKILL_REF: ReferenceInsert = {
 }
 
 function makeEditor(): LexicalEditor {
-  return createHeadlessEditor({
+  return createEditor({
     namespace: 'core-spec',
     nodes: [ReferenceChipNode, CommandChipNode, TextRefNode],
     onError: (error) => { throw error },
@@ -143,7 +141,7 @@ describe('ReferenceChipNode', () => {
   it('mounts a non-editable inline host with the composer anchor', () => {
     const editor = makeEditor()
     seedMixed(editor)
-    // Headless editors never call createDOM; exercise it directly.
+    // An editor without a mounted root does not call createDOM.
     editor.read(() => {
       const chip = [...$getRoot().getChildren()].flatMap(block =>
         'getChildren' in block ? (block as ParagraphNode).getChildren() : []).find($isReferenceChipNode)
