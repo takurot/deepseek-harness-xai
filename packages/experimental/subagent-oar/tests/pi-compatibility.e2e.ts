@@ -8,20 +8,30 @@ import { expect, it } from 'vitest'
 import { piLoopback } from './fixtures/pi-loopback.ts'
 
 it('selects project models and skills and completes a DSH Pi delegation', async (test) => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-oar-pi-')))
-  test.onTestFinished(() => rm(root, { force: true, recursive: true }))
+  const directory = mkdtemp(join(tmpdir(), 'dsh-oar-pi-'))
+  let writes: readonly Promise<unknown>[] = []
+  test.onTestFinished(async () => {
+    const path = await directory.catch(() => undefined)
+    await Promise.allSettled(writes)
+    if (path !== undefined) await rm(path, { force: true, recursive: true })
+  })
+  const root = await realpath(await directory)
+  test.signal.throwIfAborted()
   const home = join(root, 'home')
   const agent = join(root, 'agent')
   const project = join(root, 'project')
   const pi = join(project, '.pi')
   const resources = join(root, 'resources')
-  await Promise.all([home, agent, pi, join(resources, 'skills', 'keep'), join(resources, 'skills', 'drop')]
-    .map(directory => mkdir(directory, { recursive: true })))
+  writes = [home, agent, pi, join(resources, 'skills', 'keep'), join(resources, 'skills', 'drop')]
+    .map(path => mkdir(path, { recursive: true }))
+  await Promise.all(writes)
+  test.signal.throwIfAborted()
   const { baseUrl, bodies } = await piLoopback(test, [[
     '{"choices":[{"index":0,"delta":{"role":"assistant","content":"Pi fixture answer"},"finish_reason":null}]}',
     '{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
   ]])
-  await Promise.all([
+  test.signal.throwIfAborted()
+  writes = [
     writeFile(join(agent, 'models.json'), JSON.stringify({ providers: { fixture: {
       baseUrl, api: 'openai-completions', apiKey: 'fixture-key',
       models: ['selected', 'excluded'].map(id => ({ id, name: id, input: ['text'], reasoning: false, contextWindow: 8192, maxTokens: 1024 })),
@@ -33,7 +43,8 @@ it('selects project models and skills and completes a DSH Pi delegation', async 
     writeFile(join(resources, 'package.json'), JSON.stringify({ name: 'fixture-resources', pi: { skills: ['skills'] } })),
     ...['keep', 'drop'].map(name => writeFile(join(resources, 'skills', name, 'SKILL.md'),
       `---\nname: ${name}\ndescription: Fixture ${name}\n---\nFixture content.\n`)),
-  ])
+  ]
+  await Promise.all(writes)
   const script = `
     import assert from 'node:assert/strict'
     import { piRuntime } from '@botiverse/oar'
@@ -73,15 +84,34 @@ it('selects project models and skills and completes a DSH Pi delegation', async 
       } finally { await run.dispose() }
     } finally { await ctx.fiber.dispose() }
   `
-  const result = await execa(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', script, project], {
+  test.signal.throwIfAborted()
+  const subprocess = execa(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', script, project], {
     cwd: import.meta.dirname, extendEnv: false, env: {
       HOME: home, USERPROFILE: home, OAR_PI_AGENT_DIR: agent,
       PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
     }, cancelSignal: test.signal, reject: false,
   })
-  expect(result.isCanceled, result.stderr).toBe(false)
-  expect(result.signal, result.stderr).toBeUndefined()
-  expect(result.exitCode, result.stderr).toBe(0)
+  const checked = subprocess.then((result) => {
+    if (test.signal.aborted && result.isCanceled) return
+    expect(result.isCanceled, result.stderr).toBe(false)
+    expect(result.signal, result.stderr).toBeUndefined()
+    expect(result.exitCode, result.stderr).toBe(0)
+  })
+  let reportedInBody = false
+  // Vitest runs finish hooks in reverse order; the child owns the socket and directory until it exits.
+  test.onTestFinished(async () => {
+    try {
+      await checked
+    } catch (error: unknown) {
+      if (!reportedInBody) throw error
+    }
+  })
+  try {
+    await checked
+  } finally {
+    reportedInBody = !test.signal.aborted
+  }
+  test.signal.throwIfAborted()
   expect(bodies).toHaveLength(1)
   const request = JSON.parse(bodies[0]!) as { model: string; messages: { role: string; content: string }[] }
   expect(request.model).toBe('selected')
