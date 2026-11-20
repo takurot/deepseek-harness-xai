@@ -149,6 +149,79 @@ it('preserves an explicit override whose lookup passes through the legacy source
   expect(existsSync(state)).toBe(false)
 })
 
+it.each(['', 'missing'])('refuses a hidden legacy hop in an absolute link target (suffix: %j)', (suffix) => {
+  const { app, legacy, state } = fixture()
+  seedLegacy(legacy)
+  const external = join(app, 'external')
+  mkdirSync(external)
+  const type = process.platform === 'win32' ? 'junction' : 'dir'
+  const inside = join(legacy, 'home', 'outside')
+  symlinkSync(external, inside, type)
+  const alias = join(app, 'alias')
+  symlinkSync(inside, alias, type)
+
+  expect(() => prepareDevelopmentState(app, { DSH_DESKTOP_USER_DATA_DIR: join(alias, suffix) }))
+    .toThrow('DSH_DESKTOP_USER_DATA_DIR')
+  expect(existsSync(alias)).toBe(true)
+  expect(readFileSync(join(legacy, 'home', 'session.jsonl'), 'utf8')).toBe('legacy session')
+  expect(existsSync(state)).toBe(false)
+})
+
+// Creating a relative directory link on Windows requires symlink privileges; the junction tests use absolute targets.
+it.skipIf(process.platform === 'win32')('checks a relative link target from its actual containing directory', () => {
+  const { app, legacy, state } = fixture()
+  seedLegacy(legacy)
+  const external = join(app, 'external')
+  mkdirSync(external)
+  symlinkSync(external, join(legacy, 'home', 'outside'), 'dir')
+  symlinkSync('.desktop-build/development/home/outside', join(app, 'alias'), 'dir')
+  const appAlias = join(dirname(app), 'app-alias')
+  symlinkSync(app, appAlias, 'dir')
+
+  expect(() => prepareDevelopmentState(app, { DSH_DESKTOP_USER_DATA_DIR: join(appAlias, 'alias') }))
+    .toThrow('DSH_DESKTOP_USER_DATA_DIR')
+  expect(existsSync(join(appAlias, 'alias'))).toBe(true)
+  expect(existsSync(state)).toBe(false)
+})
+
+it.skipIf(process.platform === 'win32')('refuses a raw parent component before normalizing a link target', () => {
+  const { app, legacy, state } = fixture()
+  seedLegacy(legacy)
+  const external = join(app, 'external')
+  mkdirSync(join(external, 'child'), { recursive: true })
+  symlinkSync(join(external, 'child'), join(legacy, 'home', 'outside'), 'dir')
+  const alias = join(app, 'alias')
+  symlinkSync('.desktop-build/development/home/outside/..', alias, 'dir')
+
+  expect(() => prepareDevelopmentState(app, { DSH_DESKTOP_USER_DATA_DIR: alias })).toThrow('cannot check DSH_DESKTOP_USER_DATA_DIR')
+  expect(existsSync(alias)).toBe(true)
+  expect(existsSync(state)).toBe(false)
+})
+
+it('refuses a directory alias cycle without moving legacy data', () => {
+  const { app, legacy, state } = fixture()
+  seedLegacy(legacy)
+  const alias = join(app, 'alias')
+  symlinkSync(alias, alias, process.platform === 'win32' ? 'junction' : 'dir')
+
+  expect(() => prepareDevelopmentState(app, { DSH_DESKTOP_USER_DATA_DIR: alias })).toThrow('cannot check DSH_DESKTOP_USER_DATA_DIR')
+  expect(readFileSync(join(legacy, 'home', 'session.jsonl'), 'utf8')).toBe('legacy session')
+  expect(existsSync(state)).toBe(false)
+})
+
+it('keeps an unrelated explicit directory alias and migrates the other default', () => {
+  const { app, legacy, state } = fixture()
+  seedLegacy(legacy)
+  const external = join(app, 'external')
+  mkdirSync(external)
+  const alias = join(app, 'alias')
+  symlinkSync(external, alias, process.platform === 'win32' ? 'junction' : 'dir')
+
+  expect(prepareDevelopmentState(app, { DSH_DESKTOP_USER_DATA_DIR: alias })).toEqual({ home: join(state, 'home'), userData: alias })
+  expect(readFileSync(join(state, 'home', 'session.jsonl'), 'utf8')).toBe('legacy session')
+  expect(existsSync(alias)).toBe(true)
+})
+
 it('does not move legacy data reached through a case alias on a case-insensitive volume', (context) => {
   const { app, legacy, state } = fixture()
   seedLegacy(legacy)

@@ -38,18 +38,31 @@ function isWithin(directory: string, path: string): boolean {
   return child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child)
 }
 
+function absoluteLinkTarget(path: string, parent: string): string {
+  const target = readlinkSync(path)
+  const windows = process.platform === 'win32'
+  const components = target.split(windows ? /[\\/]/ : '/')
+  // Normalizing `..` can hide an intermediate directory that the OS traverses through a link.
+  if (components.includes('..')) throw new Error(`link target contains a parent component: ${path}`)
+  if (windows && !/^[a-z]:[\\/]/i.test(target) && (/^[\\/]/.test(target) || target.includes(':'))) {
+    throw new Error(`unsupported Windows link target: ${path}`)
+  }
+  return isAbsolute(target) ? target : resolve(realpathSync.native(parent), target)
+}
+
 function overrideUsesDirectory(source: string, override: string, key: string): boolean {
   if (isWithin(source, override)) return true
   const identity = lstatSync(source, { bigint: true, throwIfNoEntry: false })
   if (!identity) return false
 
-  // An override may not exist yet, or a link inside the source may resolve back out of it.
-  // Check both the written ancestors and the ancestors of their resolved locations.
+  // A final realpath can omit a legacy directory traversed inside a link target, and a
+  // missing suffix does not prevent an existing ancestor from depending on that directory.
   const pending = new Set([override])
   for (const path of pending) {
     const parent = dirname(path)
     if (parent !== path) pending.add(parent)
     try {
+      if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) pending.add(absoluteLinkTarget(path, parent))
       const canonical = realpathSync.native(path)
       const stat = statSync(canonical, { bigint: true })
       if (stat.dev === identity.dev && stat.ino === identity.ino) return true
@@ -57,7 +70,8 @@ function overrideUsesDirectory(source: string, override: string, key: string): b
       if (canonicalParent !== canonical) pending.add(canonicalParent)
     } catch (error) {
       if (isCode(error, 'ENOENT') || isCode(error, 'ENOTDIR')) continue
-      throw new Error(`desktop development: cannot check ${key}=${override} before moving ${source}; inspect the override path and retry`, { cause: error })
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`desktop development: cannot check ${key}=${override} before moving ${source}; use a direct path and retry: ${detail}`, { cause: error })
     }
   }
   return false
