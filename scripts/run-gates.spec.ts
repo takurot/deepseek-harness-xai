@@ -725,6 +725,7 @@ describe('gate graph validation', () => {
       env: { DSH_COVERAGE_EXEMPT_HEAVY: '1' },
       streamOutput: true,
     })
+    expect(coverage?.env).not.toHaveProperty('DSH_COVERAGE_FORK_DIAGNOSTICS')
   })
 
   it('rejects an invalid coverage partition count before starting a gate', () => {
