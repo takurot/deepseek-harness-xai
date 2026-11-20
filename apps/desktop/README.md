@@ -193,7 +193,11 @@ The development application menu offers Reload Page (Cmd+R on macOS, Ctrl+R else
 pnpm run dev:desktop
 ```
 
-Development Harness state defaults to `apps/desktop/.desktop-build/development/home`, the disposable npm project lives at `apps/desktop/.desktop-build/development/project`, and Electron browser data lives at `apps/desktop/.desktop-build/development/electron-user-data`. Sessions, settings, credentials, package links, and browser data therefore stay out of the user's normal Harness home. An explicit `DSH_HOME` replaces only the development Harness home. Renderer DevTools opens automatically; Main, Renderer, and dsh Host debugging listen on ports 9229, 9222, and 9230. `DSH_DESKTOP_MAIN_INSPECT_PORT`, `DSH_DESKTOP_RENDERER_DEBUG_PORT`, and `DSH_DESKTOP_HOST_INSPECT_PORT` replace those ports, while `DSH_DESKTOP_OPEN_DEVTOOLS=0` keeps the detached Renderer tools closed.
+Development Harness state defaults to `apps/desktop/.desktop-dev/home` and Electron browser data to `apps/desktop/.desktop-dev/electron-user-data`. The disposable npm project remains in `apps/desktop/.desktop-build/development/project`. `pnpm run clean` removes `.desktop-build` and preserves `.desktop-dev`. `DSH_HOME` and `DSH_DESKTOP_USER_DATA_DIR` override only their respective paths; keep explicit paths outside build output.
+
+Quit all processes using the legacy development directories before launching or cleaning. The launcher moves an unoverridden legacy default only if its destination is absent, and stops if it cannot verify that a legacy Electron profile lock is inactive. Clean refuses to delete either legacy default, even if a launch skipped it. See the [development data upgrade guide](../../docs/upgrade-guide/v0.2.2-alpha.3/desktop-development-data/guide.md) for migration and recovery.
+
+Renderer DevTools opens automatically; Main, Renderer, and dsh Host debugging listen on ports 9229, 9222, and 9230. `DSH_DESKTOP_MAIN_INSPECT_PORT`, `DSH_DESKTOP_RENDERER_DEBUG_PORT`, and `DSH_DESKTOP_HOST_INSPECT_PORT` replace those ports, while `DSH_DESKTOP_OPEN_DEVTOOLS=0` keeps the detached Renderer tools closed.
 
 After an explicit build, `start:desktop` reconstructs the disposable project and launches the existing artifacts without building again:
 

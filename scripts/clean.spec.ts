@@ -73,6 +73,19 @@ describe('RepositoryCleaner', () => {
     expect(existsSync(join(root, 'products/shell/lib'))).toBe(true)
   })
 
+  it.each(['home/session.jsonl', 'electron-user-data/Preferences'])('protects legacy Desktop data before the first launch: %s', async (file) => {
+    const root = fixture()
+    const state = join(root, 'apps/desktop/.desktop-build/development', file)
+    const build = join(root, 'products/shell/lib/index.js')
+    addProject(root, 'products/shell')
+    write(state, 'legacy state')
+    write(build, 'disposable build')
+
+    await expect(new RepositoryCleaner(root).clean()).rejects.toThrow('legacy Desktop development data')
+    expect(existsSync(state)).toBe(true)
+    expect(existsSync(build)).toBe(true)
+  })
+
   it('removes the native Landlock entry output and solution build info', async () => {
     const root = fixture()
     const entry = 'native/system/packages/entry'
