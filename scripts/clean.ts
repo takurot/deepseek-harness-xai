@@ -3,6 +3,7 @@ import { lstat, readdir, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { legacyDevelopmentState } from '../apps/desktop/scripts/development-state.ts'
 import { repositoryConfigHost } from './ts-project.ts'
 
 const knownOrphanEntries = new Set(['node_modules', 'lib', '.typecheck'])
@@ -105,7 +106,16 @@ export class RepositoryCleaner {
     const canonicalRoot = await realpath(this.root)
 
     await this.addIfPresent(targets, join(this.root, '.dsh-build'), canonicalRoot)
-    await this.addIfPresent(targets, join(this.root, 'apps/desktop/.desktop-build'), canonicalRoot)
+    const desktop = join(this.root, 'apps', 'desktop')
+    const legacy = legacyDevelopmentState(desktop)
+    const legacyData: string[] = []
+    for (const path of Object.values(legacy)) {
+      if (await exists(path)) legacyData.push(repositoryPath(this.root, path))
+    }
+    if (legacyData.length > 0) {
+      throw new Error(`clean: refusing to delete legacy Desktop development data: ${legacyData.join(', ')}. Quit Desktop development processes and launch the current version to migrate it. If paths remain, save them outside the build tree before retrying clean.`)
+    }
+    await this.addIfPresent(targets, join(desktop, '.desktop-build'), canonicalRoot)
 
     // These checks cover legacy root-level incremental state emitted by older configs.
     await this.addIfPresent(targets, join(this.root, '.typecheck'), canonicalRoot)
