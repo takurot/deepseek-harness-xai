@@ -14,6 +14,9 @@ import { pnpmInvocation } from './pnpm-invocation.ts'
 /** Environment variable selecting the number of instrumented coverage processes. */
 export const COVERAGE_PARTITIONS_ENV = 'DSH_COVERAGE_PARTITIONS'
 
+/** Internal marker selecting fork-exit diagnostics in direct CI coverage runs. */
+export const COVERAGE_FORK_DIAGNOSTICS_ENV = 'DSH_COVERAGE_FORK_DIAGNOSTICS'
+
 /** Internal marker that suppresses reports and thresholds inside a partition process. */
 export const COVERAGE_PARTITION_MODE_ENV = 'DSH_COVERAGE_PARTITION_MODE'
 

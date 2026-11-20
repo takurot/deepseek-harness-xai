@@ -11,7 +11,7 @@ import { resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { CLIENT_BUILD_PROFILE_SELECTOR } from './client-build-environment.ts'
 import { COVERAGE_EXEMPT_ENV, coverageExemptHeavySuites } from './coverage-exempt.ts'
-import { COVERAGE_PARTITIONS_ENV, parseCoveragePartitionCount } from './coverage-partitions.ts'
+import { COVERAGE_FORK_DIAGNOSTICS_ENV, COVERAGE_PARTITIONS_ENV, parseCoveragePartitionCount } from './coverage-partitions.ts'
 import { LOCAL_TEST_PARALLELISM_CAP, defaultParallelism, describeDefaultParallelism } from './parallelism.ts'
 import { pnpmInvocation } from './pnpm-invocation.ts'
 
@@ -719,7 +719,7 @@ function coverageGates(platform: NodeJS.Platform = process.platform): Gate[] {
       ...workers.instrumented,
     ], {
       label: 'test:coverage',
-      env: { [COVERAGE_EXEMPT_ENV]: '1' },
+      env: { [COVERAGE_EXEMPT_ENV]: '1', [COVERAGE_FORK_DIAGNOSTICS_ENV]: '1' },
     })
     : pnpmScript('coverage', 'test:coverage:partitioned', {
       label: 'test:coverage',
@@ -738,6 +738,7 @@ function coverageGates(platform: NodeJS.Platform = process.platform): Gate[] {
       ...workers.exempt,
     ], {
       label: 'test:coverage-exempt-heavy',
+      env: { [COVERAGE_FORK_DIAGNOSTICS_ENV]: '1' },
       needs: ['native-system'],
     }),
   ]
