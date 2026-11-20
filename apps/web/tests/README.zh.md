@@ -20,7 +20,7 @@ pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps 
 
 ## 浏览器生命周期诊断
 
-上下文用量、Session 回放刷新、视图选项菜单，以及模型设置的键盘和触屏用例使用[浏览器生命周期观察器](browser-lifecycle.ts)。Vitest 分别报告场景错误和各个清理错误，包括回放消耗检查失败。可在失败用例的标准错误输出中搜索 `[web lifecycle]`：收到第一个非预期 Playwright 事件时立即输出，失败时间线则区分用例主动关闭浏览器与清理未请求的崩溃、关闭或断开连接。这些事件仅说明 Playwright 观察到了什么，并不说明底层原因；`firstUnexpected: null` 表示未观察到非预期的终止事件。时间线不记录 URL 或页面内容。
+上下文用量、Session 回放刷新、视图选项菜单，以及模型设置的键盘和触屏用例使用[浏览器生命周期观察器](browser-lifecycle.ts)。Vitest 分别报告场景错误和各个清理错误，包括回放消耗检查失败。可在失败用例的标准错误输出中搜索 `[web lifecycle]`：收到第一个非预期 Playwright 事件时立即输出，失败时间线则区分用例主动关闭浏览器与清理未请求的崩溃、关闭或断开连接。这些事件仅说明 Playwright 观察到了什么，并不说明底层原因；`firstUnexpected: null` 表示未观察到非预期的终止事件。时间线不记录 URL 或页面内容。即使浏览器启动在用例超时后才完成，清理仍负责关闭它，不会安装监听器，也不会把浏览器交还给已超时的用例。
 
 ## 完成状态观察
 

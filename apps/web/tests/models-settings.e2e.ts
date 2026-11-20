@@ -652,19 +652,20 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     expect(tripwire.pageErrors).toEqual([])
   })
 
-  it.each([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
-    'keeps mobile model actions, focus and keyboard order in $name', async ({ name: engineName, engine }) => {
+  it.for([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
+    'keeps mobile model actions, focus and keyboard order in $name', { timeout: 60_000 }, async ({ name: engineName, engine }, test) => {
       const provider = `review-${engineName.toLowerCase()}`
-      const lifecycle = browserLifecycle(engine)
+      const lifecycle = browserLifecycle(test, engine)
       lifecycle.defer('temporary model provider', async () => {
         await scaffold.ctx.settings.mutate('llm-pi-ai', [{ op: 'unset', path: ['providers', provider] }])
       })
-      await scaffold.ctx.settings.mutate('llm-pi-ai', [{
+      const waitForProviderWrite = lifecycle.ownWait('temporary model provider write', () => scaffold.ctx.settings.mutate('llm-pi-ai', [{
         op: 'set', path: ['providers', provider], value: {
           api: 'anthropic-messages', baseURL: 'https://layout.example',
           models: [{ id: 'layout-model', name: '完整显示名称' }, { id: 'next-model', name: '下一模型' }],
         },
-      }])
+      }]))
+      await waitForProviderWrite()
       const mobileBrowser = await lifecycle.launch()
       const mobilePage = await mobileBrowser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
       const errors = watchConsole(mobilePage)
@@ -759,12 +760,12 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
         providers: { [provider]: { models: [{ id: 'layout-model', name: '触屏保存后的名称' }, { id: 'next-model', name: '下一模型' }] } },
       })
       expect(touchErrors.pageErrors).toEqual([])
-    }, 60_000,
+    },
   )
 
-  it.each([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
-    'keeps keyboard reorder focus and visibility in $name', async ({ engine }) => {
-      const keyboardBrowser = await browserLifecycle(engine).launch()
+  it.for([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
+    'keeps keyboard reorder focus and visibility in $name', { timeout: 60_000 }, async ({ engine }, test) => {
+      const keyboardBrowser = await browserLifecycle(test, engine).launch()
       const keyboardPage = await keyboardBrowser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
       await keyboardPage.goto(scaffold.authenticatedUrl)
       await openSettings(keyboardPage, 'zh')
@@ -803,7 +804,7 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
       await expect.poll(() => source.evaluate(button => document.activeElement === button)).toBe(true)
       expect(await source.getAttribute('aria-label')).toBe('调整模型顺序 8')
       await dialog.getByRole('button', { name: '取消', exact: true }).click()
-    }, 60_000,
+    },
   )
 
   it('confirms an identified provider deletion before removing its profile and key', async () => {

@@ -14,11 +14,12 @@ const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/s
 const UI_EXPECTED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/ui-expanded.expected.md', import.meta.url))
 
 describe.skipIf(webSnapshotMode() === 'record')('web session replay', () => {
-  it.each([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
-    '$name restores an active stream, a completed turn, and a reopened session', async ({ engine }) => {
-      const lifecycle = browserLifecycle(engine)
-      const scaffold = await launchWebScaffold({ replayFixture: FIXTURE, compareReplaySession: 'read-only' })
-      lifecycle.defer('scaffold', () => scaffold.close())
+  it.for([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
+    '$name restores an active stream, a completed turn, and a reopened session', async ({ engine }, test) => {
+      const lifecycle = browserLifecycle(test, engine)
+      const scaffold = await lifecycle.acquire('scaffold',
+        () => launchWebScaffold({ replayFixture: FIXTURE, compareReplaySession: 'read-only' }),
+        scaffold => scaffold.close())
       const release = Promise.withResolvers<undefined>()
       const reached = Promise.withResolvers<string>()
       let paused = false
@@ -46,7 +47,7 @@ describe.skipIf(webSnapshotMode() === 'record')('web session replay', () => {
       await input.fill(prompts[0]!)
       await input.press('Enter')
       const partial = await reached.promise
-      const waitForTurn = lifecycle.ownWait('released turn completion', scaffold.whenTurnSettled())
+      const waitForTurn = lifecycle.ownWait('released turn completion', () => scaffold.whenTurnSettled())
       lifecycle.defer('release paused stream', () => { release.resolve(undefined) })
       const streaming = page.locator('[data-streaming="true"]').getByText(partial, { exact: true })
       await streaming.waitFor({ timeout: 15_000 })

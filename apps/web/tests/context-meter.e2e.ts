@@ -14,16 +14,15 @@ describe.skipIf(webSnapshotMode() === 'record').each([
   { name: 'Chromium', engine: chromium },
   { name: 'WebKit', engine: webkit },
 ])('web e2e: context details placement ($name)', ({ engine }) => {
-  it.each([true, false])('keeps details visible while resizing the window (Chat statistics: %s)', async (withStats) => {
-    const lifecycle = browserLifecycle(engine)
+  it.for([true, false])('keeps details visible while resizing the window (Chat statistics: %s)', async (withStats, test) => {
+    const lifecycle = browserLifecycle(test, engine)
     const fixture = await selectedSessionFixture(FIXTURE, false)
-    const scaffold = await launchWebScaffold({
+    const scaffold = await lifecycle.acquire('scaffold', () => launchWebScaffold({
       replayFixture: fixture,
       compareReplaySession: false,
       paceMs: 5,
       ...withStats ? {} : { extraOverlayPath: NO_CHAT },
-    })
-    lifecycle.defer('scaffold', () => scaffold.close())
+    }), scaffold => scaffold.close())
     const browser = await lifecycle.launch()
     const page = await newEnglishPage(browser)
     const tripwire = watchConsole(page)
@@ -37,7 +36,7 @@ describe.skipIf(webSnapshotMode() === 'record').each([
     expect(prompts).toHaveLength(1)
     const input = page.locator('[data-composer-input]').first()
     await input.fill(prompts[0]!)
-    const waitForTurn = lifecycle.ownWait('turn completion', scaffold.whenTurnSettled())
+    const waitForTurn = lifecycle.ownWait('turn completion', () => scaffold.whenTurnSettled())
     await input.press('Enter')
     await waitForTurn()
     const trigger = page.getByRole('button', { name: /% of context used$/ })
