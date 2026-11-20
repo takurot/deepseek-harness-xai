@@ -2,7 +2,8 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { chromium, webkit } from 'playwright'
-import { describe, expect, it, onTestFailed, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFailed } from 'vitest'
+import { browserLifecycle } from './browser-lifecycle.ts'
 import {
   acknowledgeReloadConnectionLoss, captureExpandedTurnProcessAria, compareOrRefreshGolden, fixtureUserPrompts,
   launchWebScaffold, selectedSessionFixture, watchConsole, webSnapshotMode,
@@ -15,8 +16,9 @@ const UI_EXPECTED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-tr
 describe.skipIf(webSnapshotMode() === 'record')('web session replay', () => {
   it.each([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
     '$name restores an active stream, a completed turn, and a reopened session', async ({ engine }) => {
+      const lifecycle = browserLifecycle(engine)
       const scaffold = await launchWebScaffold({ replayFixture: FIXTURE, compareReplaySession: 'read-only' })
-      onTestFinished(() => scaffold.close())
+      lifecycle.defer('scaffold', () => scaffold.close())
       const release = Promise.withResolvers<undefined>()
       const reached = Promise.withResolvers<string>()
       let paused = false
@@ -31,9 +33,8 @@ describe.skipIf(webSnapshotMode() === 'record')('web session replay', () => {
           }
         }
       }, { prepend: true })
-      onTestFinished(() => { release.resolve(undefined); dispose() })
-      const browser = await engine.launch()
-      onTestFinished(() => browser.close())
+      lifecycle.defer('stream listener', () => { release.resolve(undefined); dispose() })
+      const browser = await lifecycle.launch()
       const page = await newEnglishPage(browser)
       onTestFailed(() => saveFailureShot(page, `session-replay-reload-${engine.name()}`))
       const tripwire = watchConsole(page)
@@ -45,19 +46,17 @@ describe.skipIf(webSnapshotMode() === 'record')('web session replay', () => {
       await input.fill(prompts[0]!)
       await input.press('Enter')
       const partial = await reached.promise
-      const settled = scaffold.whenTurnSettled()
-      try {
-        const streaming = page.locator('[data-streaming="true"]').getByText(partial, { exact: true })
-        await streaming.waitFor({ timeout: 15_000 })
-        const warningStart = tripwire.warnings.length
-        await page.reload()
-        await streaming.waitFor({ timeout: 15_000 })
-        acknowledgeReloadConnectionLoss(tripwire, warningStart)
-        expect(tripwire.pageErrors).toEqual([])
-      } finally {
-        release.resolve(undefined)
-        await settled
-      }
+      const waitForTurn = lifecycle.ownWait('released turn completion', scaffold.whenTurnSettled())
+      lifecycle.defer('release paused stream', () => { release.resolve(undefined) })
+      const streaming = page.locator('[data-streaming="true"]').getByText(partial, { exact: true })
+      await streaming.waitFor({ timeout: 15_000 })
+      const activeWarningStart = tripwire.warnings.length
+      await page.reload()
+      await streaming.waitFor({ timeout: 15_000 })
+      acknowledgeReloadConnectionLoss(tripwire, activeWarningStart)
+      expect(tripwire.pageErrors).toEqual([])
+      release.resolve(undefined)
+      await waitForTurn()
       await page.getByText('DONE', { exact: true }).waitFor({ timeout: 15_000 })
       const warningStart = tripwire.warnings.length
       await page.reload()

@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import type { Browser, Page, Request, Route } from 'playwright'
 import { chromium, webkit } from 'playwright'
+import { browserLifecycle } from './browser-lifecycle.ts'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, vi } from 'vitest'
 import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
@@ -654,160 +655,154 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
   it.each([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
     'keeps mobile model actions, focus and keyboard order in $name', async ({ name: engineName, engine }) => {
       const provider = `review-${engineName.toLowerCase()}`
-      let mobileBrowser: Browser | undefined
-      try {
-        await scaffold.ctx.settings.mutate('llm-pi-ai', [{
-          op: 'set', path: ['providers', provider], value: {
-            api: 'anthropic-messages', baseURL: 'https://layout.example',
-            models: [{ id: 'layout-model', name: '完整显示名称' }, { id: 'next-model', name: '下一模型' }],
-          },
-        }])
-        mobileBrowser = await engine.launch()
-        const mobilePage = await mobileBrowser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
-        const errors = watchConsole(mobilePage)
-        onTestFailed(() => saveFailureShot(mobilePage, `web-e2e-models-mobile-${engineName.toLowerCase()}`))
-        await mobilePage.goto(scaffold.authenticatedUrl)
-        await openSettings(mobilePage, 'zh')
-        const dialog = mobilePage.getByRole('dialog', { name: '设置' })
-        await dialog.getByRole('button', { name: '模型', exact: true }).click()
-        const edit = dialog.getByRole('button', { name: `编辑 ${provider}`, exact: true })
-        await edit.click()
-        await dialog.getByText('自定义设置').click()
-        const id = dialog.getByRole('textbox', { name: '模型 ID 1', exact: true })
-        const name = dialog.getByRole('textbox', { name: '显示名称 1', exact: true })
-        const toggle = dialog.getByRole('button', { name: '模型选项 1', exact: true })
-        const nextToggle = dialog.getByRole('button', { name: '模型选项 2', exact: true })
-        await toggle.click()
-        await assertModelInputLayout(mobilePage, dialog)
-        await dialog.getByRole('button', { name: '调整模型顺序 1', exact: true }).hover()
-        const tooltip = mobilePage.getByRole('tooltip')
-        await tooltip.waitFor()
-        expect(await tooltip.evaluate(element => element.parentElement === element.ownerDocument.body)).toBe(true)
-        await expectTooltipOnTop(tooltip)
-        await id.hover()
-        await tooltip.waitFor({ state: 'hidden' })
-        await toggle.click()
-        await name.fill('缩窄后继续编辑')
-        const input = await name.elementHandle()
-        if (input === null) throw new Error('Model name input is missing')
-        await mobilePage.setViewportSize({ width: 390, height: 844 })
-        expect(await input.evaluate(element => element.isConnected && element.ownerDocument.activeElement === element)).toBe(true)
-        await nextToggle.click()
-        expect(await nextToggle.getAttribute('aria-expanded')).toBe('true')
-        expect(await toggle.getAttribute('aria-expanded')).toBe('true')
-        await nextToggle.click()
-        await name.fill('手机保存后的名称')
-        await dialog.getByRole('button', { name: '保存', exact: true }).click()
-        await id.waitFor({ state: 'detached' })
-        expect(scaffold.ctx.settings.describe().find(row => row.ns === 'llm-pi-ai')?.value).toMatchObject({
-          providers: { [provider]: { models: [{ id: 'layout-model', name: '手机保存后的名称' }, { id: 'next-model', name: '下一模型' }] } },
-        })
-        await dialog.getByText(`已保存 ${provider}。`, { exact: true }).waitFor()
-        await edit.click()
-        await dialog.getByText('自定义设置').click()
-        await name.waitFor({ state: 'hidden' })
-        await toggle.focus()
-        await mobilePage.keyboard.press('Enter')
-        const tab = engine === webkit ? 'Alt+Tab' : 'Tab'
-        await mobilePage.keyboard.press(tab)
-        expect(await dialog.getByRole('button', { name: '删除模型 1', exact: true })
-          .evaluate(button => button.ownerDocument.activeElement === button)).toBe(true)
-        await mobilePage.keyboard.press(tab)
-        expect(await name.evaluate(element => element.ownerDocument.activeElement === element)).toBe(true)
-        await name.fill('直接点击收起后保留')
-        await toggle.click()
-        await name.waitFor({ state: 'hidden' })
-        expect(await toggle.getAttribute('aria-expanded')).toBe('false')
-        expect(await toggle.evaluate(button => button.ownerDocument.activeElement === button)).toBe(true)
-        await toggle.click()
-        expect(await name.inputValue()).toBe('直接点击收起后保留')
-        const region = dialog.getByRole('region', { name: '模型目录', exact: true })
-        expect(await region.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-        await dialog.getByRole('button', { name: '取消', exact: true }).click()
-        expect(errors.pageErrors).toEqual([])
-
-        const touchPage = await mobileBrowser.newPage({
-          viewport: { width: 390, height: 844 }, locale: ZH_BROWSER_LOCALE, isMobile: true, hasTouch: true,
-        })
-        const touchErrors = watchConsole(touchPage)
-        await touchPage.goto(scaffold.authenticatedUrl)
-        await openSettings(touchPage, 'zh')
-        const touchDialog = touchPage.getByRole('dialog', { name: '设置' })
-        await touchDialog.getByRole('button', { name: '模型', exact: true }).tap()
-        await touchDialog.getByRole('button', { name: `编辑 ${provider}`, exact: true }).tap()
-        await touchDialog.getByText('自定义设置').tap()
-        const touchToggle = touchDialog.getByRole('button', { name: '模型选项 1', exact: true })
-        const touchName = touchDialog.getByRole('textbox', { name: '显示名称 1', exact: true })
-        await touchToggle.tap()
-        expect(await touchName.evaluate(element => element.ownerDocument.activeElement === element)).toBe(false)
-        await touchName.fill('触屏编辑后的名称')
-        await touchToggle.tap()
-        await touchName.waitFor({ state: 'hidden' })
-        expect(await touchToggle.getAttribute('aria-expanded')).toBe('false')
-        await touchToggle.tap()
-        expect(await touchName.inputValue()).toBe('触屏编辑后的名称')
-        await touchName.fill('触屏保存后的名称')
-        const touchNext = touchDialog.getByRole('button', { name: '模型选项 2', exact: true })
-        await touchNext.tap()
-        expect(await touchNext.getAttribute('aria-expanded')).toBe('true')
-        await touchDialog.getByRole('button', { name: '保存', exact: true }).tap()
-        await touchName.waitFor({ state: 'detached' })
-        expect(scaffold.ctx.settings.describe().find(row => row.ns === 'llm-pi-ai')?.value).toMatchObject({
-          providers: { [provider]: { models: [{ id: 'layout-model', name: '触屏保存后的名称' }, { id: 'next-model', name: '下一模型' }] } },
-        })
-        expect(touchErrors.pageErrors).toEqual([])
-      } finally {
-        await mobileBrowser?.close()
+      const lifecycle = browserLifecycle(engine)
+      lifecycle.defer('temporary model provider', async () => {
         await scaffold.ctx.settings.mutate('llm-pi-ai', [{ op: 'unset', path: ['providers', provider] }])
-      }
+      })
+      await scaffold.ctx.settings.mutate('llm-pi-ai', [{
+        op: 'set', path: ['providers', provider], value: {
+          api: 'anthropic-messages', baseURL: 'https://layout.example',
+          models: [{ id: 'layout-model', name: '完整显示名称' }, { id: 'next-model', name: '下一模型' }],
+        },
+      }])
+      const mobileBrowser = await lifecycle.launch()
+      const mobilePage = await mobileBrowser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
+      const errors = watchConsole(mobilePage)
+      onTestFailed(() => saveFailureShot(mobilePage, `web-e2e-models-mobile-${engineName.toLowerCase()}`))
+      await mobilePage.goto(scaffold.authenticatedUrl)
+      await openSettings(mobilePage, 'zh')
+      const dialog = mobilePage.getByRole('dialog', { name: '设置' })
+      await dialog.getByRole('button', { name: '模型', exact: true }).click()
+      const edit = dialog.getByRole('button', { name: `编辑 ${provider}`, exact: true })
+      await edit.click()
+      await dialog.getByText('自定义设置').click()
+      const id = dialog.getByRole('textbox', { name: '模型 ID 1', exact: true })
+      const name = dialog.getByRole('textbox', { name: '显示名称 1', exact: true })
+      const toggle = dialog.getByRole('button', { name: '模型选项 1', exact: true })
+      const nextToggle = dialog.getByRole('button', { name: '模型选项 2', exact: true })
+      await toggle.click()
+      await assertModelInputLayout(mobilePage, dialog)
+      await dialog.getByRole('button', { name: '调整模型顺序 1', exact: true }).hover()
+      const tooltip = mobilePage.getByRole('tooltip')
+      await tooltip.waitFor()
+      expect(await tooltip.evaluate(element => element.parentElement === element.ownerDocument.body)).toBe(true)
+      await expectTooltipOnTop(tooltip)
+      await id.hover()
+      await tooltip.waitFor({ state: 'hidden' })
+      await toggle.click()
+      await name.fill('缩窄后继续编辑')
+      const input = await name.elementHandle()
+      if (input === null) throw new Error('Model name input is missing')
+      await mobilePage.setViewportSize({ width: 390, height: 844 })
+      expect(await input.evaluate(element => element.isConnected && element.ownerDocument.activeElement === element)).toBe(true)
+      await nextToggle.click()
+      expect(await nextToggle.getAttribute('aria-expanded')).toBe('true')
+      expect(await toggle.getAttribute('aria-expanded')).toBe('true')
+      await nextToggle.click()
+      await name.fill('手机保存后的名称')
+      await dialog.getByRole('button', { name: '保存', exact: true }).click()
+      await id.waitFor({ state: 'detached' })
+      expect(scaffold.ctx.settings.describe().find(row => row.ns === 'llm-pi-ai')?.value).toMatchObject({
+        providers: { [provider]: { models: [{ id: 'layout-model', name: '手机保存后的名称' }, { id: 'next-model', name: '下一模型' }] } },
+      })
+      await dialog.getByText(`已保存 ${provider}。`, { exact: true }).waitFor()
+      await edit.click()
+      await dialog.getByText('自定义设置').click()
+      await name.waitFor({ state: 'hidden' })
+      await toggle.focus()
+      await mobilePage.keyboard.press('Enter')
+      const tab = engine === webkit ? 'Alt+Tab' : 'Tab'
+      await mobilePage.keyboard.press(tab)
+      expect(await dialog.getByRole('button', { name: '删除模型 1', exact: true })
+        .evaluate(button => button.ownerDocument.activeElement === button)).toBe(true)
+      await mobilePage.keyboard.press(tab)
+      expect(await name.evaluate(element => element.ownerDocument.activeElement === element)).toBe(true)
+      await name.fill('直接点击收起后保留')
+      await toggle.click()
+      await name.waitFor({ state: 'hidden' })
+      expect(await toggle.getAttribute('aria-expanded')).toBe('false')
+      expect(await toggle.evaluate(button => button.ownerDocument.activeElement === button)).toBe(true)
+      await toggle.click()
+      expect(await name.inputValue()).toBe('直接点击收起后保留')
+      const region = dialog.getByRole('region', { name: '模型目录', exact: true })
+      expect(await region.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await dialog.getByRole('button', { name: '取消', exact: true }).click()
+      expect(errors.pageErrors).toEqual([])
+
+      const touchPage = await mobileBrowser.newPage({
+        viewport: { width: 390, height: 844 }, locale: ZH_BROWSER_LOCALE, isMobile: true, hasTouch: true,
+      })
+      const touchErrors = watchConsole(touchPage)
+      await touchPage.goto(scaffold.authenticatedUrl)
+      await openSettings(touchPage, 'zh')
+      const touchDialog = touchPage.getByRole('dialog', { name: '设置' })
+      await touchDialog.getByRole('button', { name: '模型', exact: true }).tap()
+      await touchDialog.getByRole('button', { name: `编辑 ${provider}`, exact: true }).tap()
+      await touchDialog.getByText('自定义设置').tap()
+      const touchToggle = touchDialog.getByRole('button', { name: '模型选项 1', exact: true })
+      const touchName = touchDialog.getByRole('textbox', { name: '显示名称 1', exact: true })
+      await touchToggle.tap()
+      expect(await touchName.evaluate(element => element.ownerDocument.activeElement === element)).toBe(false)
+      await touchName.fill('触屏编辑后的名称')
+      await touchToggle.tap()
+      await touchName.waitFor({ state: 'hidden' })
+      expect(await touchToggle.getAttribute('aria-expanded')).toBe('false')
+      await touchToggle.tap()
+      expect(await touchName.inputValue()).toBe('触屏编辑后的名称')
+      await touchName.fill('触屏保存后的名称')
+      const touchNext = touchDialog.getByRole('button', { name: '模型选项 2', exact: true })
+      await touchNext.tap()
+      expect(await touchNext.getAttribute('aria-expanded')).toBe('true')
+      await touchDialog.getByRole('button', { name: '保存', exact: true }).tap()
+      await touchName.waitFor({ state: 'detached' })
+      expect(scaffold.ctx.settings.describe().find(row => row.ns === 'llm-pi-ai')?.value).toMatchObject({
+        providers: { [provider]: { models: [{ id: 'layout-model', name: '触屏保存后的名称' }, { id: 'next-model', name: '下一模型' }] } },
+      })
+      expect(touchErrors.pageErrors).toEqual([])
     }, 60_000,
   )
 
   it.each([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
     'keeps keyboard reorder focus and visibility in $name', async ({ engine }) => {
-      const keyboardBrowser = await engine.launch()
-      try {
-        const keyboardPage = await keyboardBrowser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
-        await keyboardPage.goto(scaffold.authenticatedUrl)
-        await openSettings(keyboardPage, 'zh')
-        await keyboardPage.getByRole('button', { name: '模型', exact: true }).click()
-        const dialog = keyboardPage.getByRole('dialog', { name: '设置' })
-        await dialog.getByRole('button', { name: '编辑 Acme 网关 (acme-gateway)' }).click()
-        await dialog.getByText('自定义设置').click()
-        const initialFirst = await dialog.getByLabel('模型 ID 1', { exact: true }).inputValue()
-        for (let position = 4; position <= 9; position++) {
-          await dialog.getByRole('button', { name: '添加模型', exact: true }).click()
-          await dialog.getByLabel(`模型 ID ${String(position)}`, { exact: true }).fill(`keyboard-${String(position)}`)
-        }
-        const source = await dialog.getByRole('button', { name: '调整模型顺序 1', exact: true }).elementHandle()
-        if (source === null) throw new Error('Keyboard reorder handle is missing')
-        await source.focus()
-        for (let position = 2; position <= 9; position++) {
-          await keyboardPage.keyboard.press('ArrowDown')
-          await expect.poll(() => source.evaluate(button => document.activeElement === button)).toBe(true)
-          expect(await source.getAttribute('aria-label')).toBe(`调整模型顺序 ${String(position)}`)
-          await expect.poll(() => source.evaluate(button => button.closest('[data-row-key]')!.getAnimations().length)).toBe(0)
-          expect(await source.evaluate((button) => {
-            const rect = button.getBoundingClientRect()
-            let top = 0
-            let bottom = innerHeight
-            for (let parent = button.parentElement; parent !== null; parent = parent.parentElement) {
-              if (getComputedStyle(parent).overflowY === 'visible') continue
-              const clip = parent.getBoundingClientRect()
-              top = Math.max(top, clip.top)
-              bottom = Math.min(bottom, clip.bottom)
-            }
-            return rect.top >= top && rect.bottom <= bottom
-          })).toBe(true)
-        }
-        expect(await dialog.getByLabel('模型 ID 9', { exact: true }).inputValue()).toBe(initialFirst)
-        await keyboardPage.keyboard.press('ArrowUp')
-        await expect.poll(() => source.evaluate(button => document.activeElement === button)).toBe(true)
-        expect(await source.getAttribute('aria-label')).toBe('调整模型顺序 8')
-        await dialog.getByRole('button', { name: '取消', exact: true }).click()
-      } finally {
-        await keyboardBrowser.close()
+      const keyboardBrowser = await browserLifecycle(engine).launch()
+      const keyboardPage = await keyboardBrowser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
+      await keyboardPage.goto(scaffold.authenticatedUrl)
+      await openSettings(keyboardPage, 'zh')
+      await keyboardPage.getByRole('button', { name: '模型', exact: true }).click()
+      const dialog = keyboardPage.getByRole('dialog', { name: '设置' })
+      await dialog.getByRole('button', { name: '编辑 Acme 网关 (acme-gateway)' }).click()
+      await dialog.getByText('自定义设置').click()
+      const initialFirst = await dialog.getByLabel('模型 ID 1', { exact: true }).inputValue()
+      for (let position = 4; position <= 9; position++) {
+        await dialog.getByRole('button', { name: '添加模型', exact: true }).click()
+        await dialog.getByLabel(`模型 ID ${String(position)}`, { exact: true }).fill(`keyboard-${String(position)}`)
       }
+      const source = await dialog.getByRole('button', { name: '调整模型顺序 1', exact: true }).elementHandle()
+      if (source === null) throw new Error('Keyboard reorder handle is missing')
+      await source.focus()
+      for (let position = 2; position <= 9; position++) {
+        await keyboardPage.keyboard.press('ArrowDown')
+        await expect.poll(() => source.evaluate(button => document.activeElement === button)).toBe(true)
+        expect(await source.getAttribute('aria-label')).toBe(`调整模型顺序 ${String(position)}`)
+        await expect.poll(() => source.evaluate(button => button.closest('[data-row-key]')!.getAnimations().length)).toBe(0)
+        expect(await source.evaluate((button) => {
+          const rect = button.getBoundingClientRect()
+          let top = 0
+          let bottom = innerHeight
+          for (let parent = button.parentElement; parent !== null; parent = parent.parentElement) {
+            if (getComputedStyle(parent).overflowY === 'visible') continue
+            const clip = parent.getBoundingClientRect()
+            top = Math.max(top, clip.top)
+            bottom = Math.min(bottom, clip.bottom)
+          }
+          return rect.top >= top && rect.bottom <= bottom
+        })).toBe(true)
+      }
+      expect(await dialog.getByLabel('模型 ID 9', { exact: true }).inputValue()).toBe(initialFirst)
+      await keyboardPage.keyboard.press('ArrowUp')
+      await expect.poll(() => source.evaluate(button => document.activeElement === button)).toBe(true)
+      expect(await source.getAttribute('aria-label')).toBe('调整模型顺序 8')
+      await dialog.getByRole('button', { name: '取消', exact: true }).click()
     }, 60_000,
   )
 

@@ -155,7 +155,7 @@ export async function pinBrowserClock(page: Page): Promise<void> {
  * @param height - Viewport height; width is fixed to the lane baseline.
  * @returns the initialized page.
  */
-export async function newEnglishPage(browser: Browser, height = 1000): Promise<Page> {
+export async function newEnglishPage(browser: Pick<Browser, 'newPage'>, height = 1000): Promise<Page> {
   return await browser.newPage({ viewport: { width: 1680, height }, locale: 'en-US', timezoneId: 'Asia/Shanghai' })
 }
 
