@@ -54,8 +54,9 @@ function expectProbe(
     ].join('\n'))
 
     const reportPath = join(fixture, 'vitest-report.json')
+    // Keep probe workers in the CLI process so the timeout also stops them before fixture cleanup.
     const child = spawnSync(process.execPath, [
-      vitestCli, 'run', '--config', configPath, '--no-cache', '--reporter=json', '--outputFile', reportPath,
+      vitestCli, 'run', '--config', configPath, '--pool=threads', '--no-cache', '--reporter=json', '--outputFile', reportPath,
     ], {
       cwd: fixture,
       env: {
