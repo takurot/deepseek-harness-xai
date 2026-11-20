@@ -43,22 +43,32 @@ it('classifies the current workspace and shares only runtime patch bytes', () =>
   const before = readFileSync(join(repository, 'pnpm-lock.yaml'))
   const plan = prepareRuntimePatches(project, repository)
   expect(plan.patches.map(entry => entry.spec)).toEqual(['@earendil-works/pi-ai@1.3.0', 'node-pty@1.2.0-beta.15'])
-  expect(plan.workspaceOnly).toHaveLength(10)
+  expect(plan.workspaceOnly).toHaveLength(11)
   expect(plan.workspaceOnly).toContain('@botiverse/oar')
+  expect(plan.workspaceOnly).toContain('@earendil-works/pi-ai')
   expect(plan.workspaceOnly).toContain('lexical')
   const settings = yaml.load(readFileSync(join(project, 'pnpm-workspace.yaml'), 'utf8')) as { overrides: Record<string, string> }
   expect(settings.overrides['@earendil-works/pi-ai']).toBeUndefined()
   expect(settings.overrides['@earendil-works/pi-ai@^1.3.0']).toBe('1.3.0')
   expect(readFileSync(join(repository, 'pnpm-lock.yaml'))).toEqual(before)
-  writeFileSync(join(project, 'pnpm-lock.yaml'), yaml.dump({
-    patchedDependencies: Object.fromEntries(plan.patches.map(entry => [entry.spec, entry.hash])),
-    packages: {
-      ...Object.fromEntries(plan.patches.map(entry => [entry.spec, {}])),
-      '@botiverse/oar@0.67.0': {},
-    },
-  }))
-  expect(() => { verifyRuntimePatches(project, plan) })
-    .toThrow('workspace-only dependency entered the runtime: @botiverse/oar@0.67.0')
+  const writeLock = (extra: Record<string, { version?: string }> = {}) => {
+    writeFileSync(join(project, 'pnpm-lock.yaml'), yaml.dump({
+      patchedDependencies: Object.fromEntries(plan.patches.map(entry => [entry.spec, entry.hash])),
+      packages: { ...Object.fromEntries(plan.patches.map(entry => [entry.spec, {}])), ...extra },
+    }))
+  }
+  writeLock()
+  expect(() => { verifyRuntimePatches(project, plan) }).not.toThrow()
+  for (const [spec, entry] of Object.entries({
+    '@botiverse/oar@0.67.0': {},
+    '@earendil-works/pi-ai@1.5.2': {},
+    '@earendil-works/pi-ai@1.4.0': { version: '1.3.0' },
+    '@earendil-works/pi-ai@1.3.0': { version: '1.5.2' },
+  })) {
+    writeLock({ [spec]: entry })
+    expect(() => { verifyRuntimePatches(project, plan) })
+      .toThrow(`workspace-only dependency entered the runtime: ${spec}`)
+  }
 })
 
 it('does not infer version overrides from selected patches', () => {

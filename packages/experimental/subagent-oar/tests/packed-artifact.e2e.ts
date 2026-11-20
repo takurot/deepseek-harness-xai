@@ -43,6 +43,10 @@ it.skipIf(!built || process.platform === 'win32')(
     }
     const names = new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})])
     expect(manifest.dependencies?.['@botiverse/oar']).toBeUndefined()
+    expect(manifest.dependencies?.['@earendil-works/pi-ai']).toBe('1.5.2')
+    expect(manifest.dependencies?.['@earendil-works/pi-coding-agent']).toBe('1.5.2')
+    expect(await readFile(join(consumer, 'LICENSE-OAR'), 'utf8'))
+      .toBe(await readFile(join(packageDirectory, 'LICENSE-OAR'), 'utf8'))
     for (const name of names) {
       const destination = join(consumer, 'node_modules', name)
       await mkdir(dirname(destination), { recursive: true })
