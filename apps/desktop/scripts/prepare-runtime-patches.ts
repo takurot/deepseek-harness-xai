@@ -15,7 +15,7 @@ export interface PreparedRuntimePatch {
   hash: string
 }
 
-/** Selected bytes and dependencies excluded from the Desktop runtime. */
+/** Selected patch bytes and package names excluded except at explicitly selected versions. */
 export interface PreparedRuntimePatches {
   patches: PreparedRuntimePatch[]
   workspaceOnly: string[]
@@ -101,8 +101,12 @@ export function verifyRuntimePatches(projectRoot: string, plan: PreparedRuntimeP
     patchedDependencies?: Record<string, string>
     packages?: Record<string, { version?: string }>
   }
+  const packages = lock.packages ?? {}
   for (const patch of plan.patches) {
-    if (!Object.keys(lock.packages ?? {}).some(spec => spec.startsWith(`${patch.name}@`))) {
+    const present = plan.workspaceOnly.includes(patch.name)
+      ? Object.hasOwn(packages, patch.spec)
+      : Object.keys(packages).some(spec => spec.startsWith(`${patch.name}@`))
+    if (!present) {
       throw new Error(`desktop patches: selected patch has no runtime dependency: ${patch.spec}`)
     }
     if (patchHash(readFileSync(join(projectRoot, patch.path))) !== patch.hash) {
@@ -112,8 +116,9 @@ export function verifyRuntimePatches(projectRoot: string, plan: PreparedRuntimeP
       throw new Error(`desktop patches: lockfile patch hash mismatch: ${patch.spec}`)
     }
   }
-  for (const [spec, entry] of Object.entries(lock.packages ?? {})) {
+  for (const [spec, entry] of Object.entries(packages)) {
     if (plan.workspaceOnly.some(name => spec.startsWith(`${name}@`))) {
+      if (plan.patches.some(patch => patch.spec === spec && (entry.version === undefined || entry.version === patch.version))) continue
       throw new Error(`desktop patches: workspace-only dependency entered the runtime: ${spec}; review its patch scope`)
     }
     const candidates = plan.patches.filter(patch => spec.startsWith(`${patch.name}@`))
