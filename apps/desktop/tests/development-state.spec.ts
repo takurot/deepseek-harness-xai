@@ -167,6 +167,25 @@ it.each(['', 'missing'])('refuses a hidden legacy hop in an absolute link target
   expect(existsSync(state)).toBe(false)
 })
 
+// Windows junction creation normalizes the target; POSIX symlinks retain the terminal separator.
+it.skipIf(process.platform === 'win32').each(['absolute', 'relative'])('inspects the final link in a raw %s target ending in a slash', (kind) => {
+  const { app, legacy, state } = fixture()
+  seedLegacy(legacy)
+  const external = join(app, 'external')
+  const inside = join(legacy, 'home', 'outside')
+  const route = join(app, 'route')
+  const alias = join(app, 'alias')
+  mkdirSync(external)
+  symlinkSync(external, inside, 'dir')
+  symlinkSync(inside, route, 'dir')
+  symlinkSync(kind === 'absolute' ? `${route}/` : 'route/', alias, 'dir')
+
+  expect(() => prepareDevelopmentState(app, { DSH_DESKTOP_USER_DATA_DIR: alias })).toThrow('DSH_DESKTOP_USER_DATA_DIR')
+  expect(existsSync(alias)).toBe(true)
+  expect(readFileSync(join(legacy, 'home', 'session.jsonl'), 'utf8')).toBe('legacy session')
+  expect(existsSync(state)).toBe(false)
+})
+
 // Creating a relative directory link on Windows requires symlink privileges; the junction tests use absolute targets.
 it.skipIf(process.platform === 'win32')('checks a relative link target from its actual containing directory', () => {
   const { app, legacy, state } = fixture()

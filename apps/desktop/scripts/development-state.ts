@@ -47,7 +47,8 @@ function absoluteLinkTarget(path: string, parent: string): string {
   if (windows && !/^[a-z]:[\\/]/i.test(target) && (/^[\\/]/.test(target) || target.includes(':'))) {
     throw new Error(`unsupported Windows link target: ${path}`)
   }
-  return isAbsolute(target) ? target : resolve(realpathSync.native(parent), target)
+  // A trailing separator makes lstat follow the final link instead of inspecting it.
+  return isAbsolute(target) ? resolve(target) : resolve(realpathSync.native(parent), target)
 }
 
 function overrideUsesDirectory(source: string, override: string, key: string): boolean {
