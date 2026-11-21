@@ -43,9 +43,13 @@ let server
 let closed
 let port
 let success = false
-const interrupt = () => server?.kill('SIGTERM')
-process.once('SIGINT', interrupt)
-process.once('SIGTERM', interrupt)
+let interrupted
+const exitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 }
+const interrupt = signal => {
+  interrupted ??= signal
+  server?.kill('SIGTERM')
+}
+for (const signal of Object.keys(exitCodes)) process.on(signal, interrupt)
 
 async function capture(label) {
   await page.screenshot({ path: join(evidence, label + '.png') })
@@ -71,6 +75,7 @@ try {
   const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
   const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: root, encoding: 'utf8' }).trim()
   record(JSON.stringify({ feature, revision, trackedChanges: Boolean(dirty), version, node: process.version, args, home }))
+  assert(!interrupted, 'Verification interrupted before launch')
   server = spawn(process.execPath, args, { cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'] })
   const ready = Promise.withResolvers()
   for (const stream of [server.stdout, server.stderr]) {
@@ -92,7 +97,8 @@ try {
   const owners = () => execFileSync('lsof', ['-nP', '-t', '-iTCP:' + port, '-sTCP:LISTEN'], { encoding: 'utf8' }).trim()
   assert.equal(owners(), String(server.pid), 'Listener must belong to the launched server')
   assert.equal((await fetch(url.origin, { signal: AbortSignal.timeout(5_000) })).status, 401)
-  browser = await chromium.launch()
+  browser = await chromium.launch({ handleSIGHUP: false, handleSIGINT: false, handleSIGTERM: false })
+  assert(!interrupted, 'Verification interrupted during browser launch')
   async function authenticate() {
     page = await browser.newPage({ locale: 'en-US', viewport: { width: 1680, height: 1000 }, colorScheme: 'light' })
     page.setDefaultTimeout(15_000)
@@ -177,8 +183,6 @@ try {
       await closed
       clearTimeout(escalation)
     }
-    process.removeListener('SIGINT', interrupt)
-    process.removeListener('SIGTERM', interrupt)
     await rm(scratch, { recursive: true, force: true })
     if (port) {
       try {
@@ -195,11 +199,13 @@ try {
       }
     }
     record('Cleanup: verification server exited and scratch home was removed')
+    if (interrupted) record('Interrupted by ' + interrupted)
     await writeFile(join(evidence, 'run.log'), actions.join('\n') + '\n')
     await writeFile(join(evidence, 'server.log'), redact(output))
     await writeFile(join(evidence, 'browser-errors.log'), browserErrors.join('\n'))
     await readFile(join(evidence, 'run.log'))
   }
 }
-console.log((success ? 'PASS' : 'FAIL') + ' ' + feature)
-process.exitCode = success ? 0 : 1
+for (const signal of Object.keys(exitCodes)) process.removeListener(signal, interrupt)
+console.log((success && !interrupted ? 'PASS' : 'FAIL') + ' ' + feature)
+process.exitCode = interrupted ? exitCodes[interrupted] : success ? 0 : 1

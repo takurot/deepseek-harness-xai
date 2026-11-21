@@ -41,4 +41,4 @@ When extending a journey, keep login URLs, cookies, and credentials out of scree
 
 ## Cleanup
 
-The helper closes its Chromium instance and terminates only the child process it started. It waits for exit, removes its scratch directory, checks that the verification port has no listener, and reads the surviving `run.log` from the evidence directory. Cleanup also runs on journey failure. Each command should finish with a status and leave its printed evidence directory in place.
+The helper closes its Chromium instance and terminates only the child process it started. It waits for exit, removes its scratch directory, checks that the verification port has no listener, and reads the surviving `run.log` from the evidence directory. Cleanup also runs on journey failure and on SIGHUP, SIGINT, or SIGTERM. Each command should finish with a status and leave its printed evidence directory in place.
