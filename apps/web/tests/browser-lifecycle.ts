@@ -20,18 +20,11 @@ function leafErrors(error: unknown): unknown[] {
   return error instanceof AggregateError && error.errors.length > 0 ? error.errors.flatMap(leafErrors) : [error]
 }
 
-/**
- * Observe a test's browser resources without recording navigation or page data.
- * Cleanup hooks run in reverse acquisition order and fail independently of the scenario.
- * @param test - Vitest case that owns resources and stops publishing them at timeout.
- * @param engine - Browser engine under test; one launch is owned by this test.
- * @param report - Sink for the first unexpected terminal event and the timeline on failure. Defaults to stderr.
- * @returns Operations to launch the browser, observe pages, and register cleanup on the current test.
- */
-export function browserLifecycle(
-  test: Pick<TestContext, 'signal' | 'onTestFinished' | 'onTestFailed'>,
+function createLifecycle(
   engine: BrowserType,
-  report: (line: string) => void = console.error,
+  ownerActive: () => boolean,
+  register: (owner: string, cleanup: () => Promise<void>) => void,
+  report: (line: string) => void,
 ) {
   const startedAt = performance.now()
   const identity = { engine: engine.name(), workerPid: process.pid }
@@ -54,21 +47,22 @@ export function browserLifecycle(
     }
   }
 
-  const active = (): boolean => !test.signal.aborted && phase === 'scenario'
+  const active = (): boolean => ownerActive() && phase === 'scenario'
   function requireActive(): void {
     if (!active()) throw new Error('browser lifecycle is no longer active')
   }
 
-  test.onTestFinished(() => {
+  function detachObservers(): void {
     for (const stop of detach) stop()
-  })
-  test.onTestFailed(() => {
+  }
+
+  function reportFailure(): void {
     report(`[web lifecycle] timeline ${JSON.stringify({ ...identity, version, firstUnexpected, observations })}`)
-  })
+  }
 
   function defer(owner: string, cleanup: () => void | Promise<void>): void {
     requireActive()
-    test.onTestFinished(async () => {
+    register(owner, async () => {
       phase = 'teardown'
       record('cleanup-start', owner)
       try {
@@ -155,5 +149,76 @@ export function browserLifecycle(
     } }
   }
 
-  return { acquire, defer, launch, ownWait: track }
+  return { acquire, defer, launch, ownWait: track, requireActive, detachObservers, reportFailure }
+}
+
+/**
+ * Observe a case's browser and dispose resources in reverse acquisition order.
+ * @param test - Vitest case that stops publishing resources at timeout.
+ * @param engine - Browser engine under test.
+ * @param report - Sink for the first unexpected event and the failure timeline.
+ * @returns Operations to acquire resources, launch the browser, and register case cleanup.
+ */
+export function browserLifecycle(
+  test: Pick<TestContext, 'signal' | 'onTestFinished' | 'onTestFailed'>,
+  engine: BrowserType,
+  report: (line: string) => void = console.error,
+) {
+  const { acquire, defer, launch, ownWait, detachObservers, reportFailure } = createLifecycle(
+    engine, () => !test.signal.aborted, (_, cleanup) => { test.onTestFinished(cleanup) }, report,
+  )
+  test.onTestFinished(detachObservers)
+  test.onTestFailed(reportFailure)
+  return { acquire, defer, launch, ownWait }
+}
+
+/**
+ * Observe a shared browser across suite setup and close resources even after a timed-out hook.
+ * @param engine - Browser engine under test.
+ * @param report - Sink for the first unexpected event and the failure timeline. Defaults to stderr.
+ * @returns Suite operations whose `setup` and `close` belong in `beforeAll` and a separately registered `afterAll`.
+ */
+export function suiteBrowserLifecycle(
+  engine: BrowserType,
+  report: (line: string) => void = (line) => { process.stderr.write(`${line}\n`) },
+) {
+  const cleanups: { owner: string; cleanup: () => Promise<void> }[] = []
+  let active = true
+  let setupComplete = false
+  const lifecycle = createLifecycle(engine, () => active, (owner, cleanup) => {
+    cleanups.push({ owner, cleanup })
+  }, report)
+
+  return {
+    acquire: lifecycle.acquire,
+    launch: lifecycle.launch,
+    ownWait: lifecycle.ownWait,
+    requireActive: lifecycle.requireActive,
+    async setup(run: () => Promise<void>): Promise<void> {
+      lifecycle.requireActive()
+      await run()
+      lifecycle.requireActive()
+      setupComplete = true
+    },
+    async close(): Promise<void> {
+      active = false
+      const failures: Error[] = []
+      try {
+        for (const { owner, cleanup } of cleanups.reverse()) {
+          try {
+            await cleanup()
+          } catch (error) {
+            for (const cause of leafErrors(error)) {
+              const detail = cause instanceof Error ? cause.message : String(cause)
+              failures.push(new Error(`${owner} cleanup failed: ${detail}`, { cause }))
+            }
+          }
+        }
+      } finally {
+        lifecycle.detachObservers()
+        if (!setupComplete || failures.length > 0) lifecycle.reportFailure()
+      }
+      if (failures.length > 0) throw new AggregateError(failures, 'browser suite cleanup failed')
+    },
+  }
 }
