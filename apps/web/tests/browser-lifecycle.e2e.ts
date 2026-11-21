@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stripVTControlCharacters } from 'node:util'
 import { execa } from 'execa'
 import { webkit, type Browser, type BrowserContext, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
@@ -19,13 +20,13 @@ it('reports failures and closes late resources through real Vitest suite hooks',
     const result = await execa(process.execPath, [cli, 'run', '--config', config, '--pool=threads', '--maxWorkers=1'], {
       cwd: root, timeout: 90_000, maxBuffer: 512_000, reject: false, all: true,
     })
-    const output = result.all ?? ''
+    const output = stripVTControlCharacters(result.all ?? '')
     expect(result.timedOut, output).toBe(false)
     expect(result.isTerminated, output).toBe(false)
     expect(result.exitCode, output).toBe(1)
     expect(output).toContain('suite normal page closed')
     expect(output).toContain('locator.click: Target page, context or browser has been closed')
-    expect(output).toContain('suite control scaffold failure')
+    expect(output).toMatch(/^Error: scaffold cleanup failed: suite control scaffold failure\r?$/m)
     expect(output).toContain('Hook timed out in 250ms')
     expect(output).not.toContain('suite scenario unexpectedly ran')
     expect.soft(output).toContain('suite late browser closed without publication or listeners')
