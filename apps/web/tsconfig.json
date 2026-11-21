@@ -180,6 +180,7 @@
     "tests/composer-draft-scroll.e2e.ts",
     "tests/composer-focus.e2e.ts",
     "tests/composer-placeholder.e2e.ts",
+    "tests/browser-lifecycle-suite.cases.ts",
     "tests/browser-lifecycle.e2e.ts",
     "tests/browser-lifecycle.ts",
     "tests/context-meter.e2e.ts",

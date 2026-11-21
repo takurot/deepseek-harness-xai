@@ -6,13 +6,14 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import type { Browser, Page, Request } from 'playwright'
+import type { Page, Request } from 'playwright'
 import { chromium, webkit } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished } from 'vitest'
 import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
+import { suiteBrowserLifecycle } from './browser-lifecycle.ts'
 import { ZH_BROWSER_LOCALE, connectFreshWorkspaceZh, saveFailureShot } from './support.ts'
 
 /** Starts the shipped default on this scenario's declared reasoning model. */
@@ -27,17 +28,17 @@ describe.skipIf(MODE === 'record').each([
   { name: 'WebKit', engine: webkit },
 ])('web e2e: declared reasoning efforts reach the composer ($name)', ({ engine }) => {
   let scaffold: WebScaffold
-  let browser: Browser
+  const lifecycle = suiteBrowserLifecycle(engine)
   let page: Page
   let tripwire: ReturnType<typeof watchConsole>
 
-  beforeAll(async () => {
-    scaffold = await launchWebScaffold({ extraOverlayPath: OVERLAY })
+  beforeAll(() => lifecycle.setup(async () => {
+    scaffold = await lifecycle.acquire('scaffold', () => launchWebScaffold({ extraOverlayPath: OVERLAY }), owned => owned.close())
     // The whole reasoning offer is the profile: key = selectable level, value
     // = the wire spelling dispatch would send (`max: ultra` renames; the
     // valueless `off` means "supported, send nothing"). The route sets no
     // deployment default, so the pane leads with the provider-default entry.
-    await scaffold.ctx.settings.update('llm-pi-ai', {
+    await lifecycle.ownWait('reasoning settings', () => scaffold.ctx.settings.update('llm-pi-ai', {
       providers: {
         'acme-gateway': {
           displayName: 'Acme Gateway',
@@ -53,22 +54,17 @@ describe.skipIf(MODE === 'record').each([
           })),
         },
       },
-    })
-    browser = await engine.launch()
+    }))()
+    const browser = await lifecycle.launch()
     page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    lifecycle.requireActive()
     await connectFreshWorkspaceZh(page, scaffold.workspaceCwd)
-  }, 120_000)
+  }), 120_000)
 
-  afterAll(async () => {
-    try {
-      await browser?.close()
-    } finally {
-      await scaffold?.close()
-    }
-  })
+  afterAll(() => lifecycle.close())
 
   it('offers exactly the declared levels and records the picked one', async () => {
     onTestFailed(() => saveFailureShot(page, `web-e2e-declared-reasoning-${engine.name()}`))

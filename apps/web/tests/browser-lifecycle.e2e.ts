@@ -1,7 +1,44 @@
 /** Benign WebKit controls for the test runner's failure and teardown reporting. */
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { stripVTControlCharacters } from 'node:util'
+import { execa } from 'execa'
 import { webkit, type Browser, type BrowserContext, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
 import { browserLifecycle } from './browser-lifecycle.ts'
+
+it('reports failures and closes late resources through real Vitest suite hooks', async () => {
+  const root = fileURLToPath(new URL('../../../', import.meta.url))
+  const fixture = 'apps/web/tests/browser-lifecycle-suite.cases.ts'
+  const scratch = await mkdtemp(join(tmpdir(), 'dsh-suite-lifecycle-'))
+  const config = join(scratch, 'vitest.config.mjs')
+  try {
+    await writeFile(config, `export default ${JSON.stringify({ root, test: { include: [fixture], hookTimeout: 20_000 } })}\n`)
+    const cli = fileURLToPath(new URL('./vitest.mjs', import.meta.resolve('vitest/package.json')))
+    const result = await execa(process.execPath, [cli, 'run', '--config', config, '--pool=threads', '--maxWorkers=1'], {
+      cwd: root, timeout: 90_000, maxBuffer: 512_000, reject: false, all: true,
+    })
+    const output = stripVTControlCharacters(result.all ?? '')
+    expect(result.timedOut, output).toBe(false)
+    expect(result.isTerminated, output).toBe(false)
+    expect(result.exitCode, output).toBe(1)
+    expect(output).toContain('suite normal page closed')
+    expect(output).toContain('locator.click: Target page, context or browser has been closed')
+    expect(output).toMatch(/^Error: scaffold cleanup failed: suite control scaffold failure\r?$/m)
+    expect(output).toContain('Hook timed out in 250ms')
+    expect(output).not.toContain('suite scenario unexpectedly ran')
+    expect.soft(output).toContain('suite late browser closed without publication or listeners')
+    const firstEvents = output.split('\n').filter(line => line.includes('[web lifecycle] first unexpected event'))
+    expect.soft(firstEvents).toEqual([
+      expect.stringContaining('"event":"page-close","owner":"context-1/page-1","phase":"scenario","unexpected":true'),
+    ])
+    expect.soft(output).toContain('"event":"cleanup-error","owner":"scaffold","phase":"teardown"')
+  } finally {
+    await rm(scratch, { recursive: true })
+  }
+})
 
 describe('WebKit lifecycle through a deliberate early close', () => {
   let messages: (string | undefined)[] | undefined
