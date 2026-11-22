@@ -13,6 +13,8 @@ export const zh = {
   'row.instructions': '说明',
   'row.inspect': '查看',
   'menu.userOnly': '仅用户',
+  'preview.failure': '无法打开技能预览。',
+  'preview.retry': '重试',
 } satisfies Record<string, string>
 
 /** The skill namespace key union. */
@@ -28,6 +30,8 @@ export const en = {
   'row.instructions': 'Instructions',
   'row.inspect': 'Inspect',
   'menu.userOnly': 'user-only',
+  'preview.failure': 'Could not open the skill preview.',
+  'preview.retry': 'Retry',
 } satisfies Record<SkillKey, string>
 
 /** Japanese copy, checked against the English keys. */
@@ -40,6 +44,8 @@ export const ja = {
   'row.instructions': '手順',
   'row.inspect': '詳細を確認',
   'menu.userOnly': 'ユーザー専用',
+  'preview.failure': 'スキルのプレビューを開けませんでした。',
+  'preview.retry': '再試行',
 } satisfies Record<keyof typeof en, string>
 
 /** Spanish dictionary, checked against the English keys. */
@@ -52,6 +58,8 @@ export const es = {
   'row.instructions': 'Instrucciones',
   'row.inspect': 'inspeccionar',
   'menu.userOnly': 'solo usuario',
+  'preview.failure': 'No se pudo abrir la vista previa de la habilidad.',
+  'preview.retry': 'Reintentar',
 } satisfies Record<keyof typeof en, string>
 
 /** French dictionary, checked against the English keys. */
@@ -64,6 +72,8 @@ export const fr = {
   'row.instructions': 'Instructions',
   'row.inspect': 'Inspecter',
   'menu.userOnly': 'utilisateur uniquement',
+  'preview.failure': 'Impossible d’ouvrir l’aperçu de la compétence.',
+  'preview.retry': 'Réessayer',
 } satisfies Record<keyof typeof en, string>
 
 /** German dictionary, checked against the English keys. */
@@ -76,6 +86,8 @@ export const de = {
   'row.instructions': 'Anweisungen',
   'row.inspect': 'Inspizieren',
   'menu.userOnly': 'Nur für Benutzer',
+  'preview.failure': 'Die Skill-Vorschau konnte nicht geöffnet werden.',
+  'preview.retry': 'Erneut versuchen',
 } satisfies Record<keyof typeof en, string>
 
 /** Russian dictionary, checked against the English keys. */
@@ -88,6 +100,8 @@ export const ru = {
   'row.instructions': 'Инструкции',
   'row.inspect': 'Осмотреть',
   'menu.userOnly': 'только для пользователей',
+  'preview.failure': 'Не удалось открыть предпросмотр навыка.',
+  'preview.retry': 'Повторить',
 } satisfies Record<keyof typeof en, string>
 
 /** Portuguese dictionary, checked against the English keys. */
@@ -100,4 +114,6 @@ export const pt = {
   'row.instructions': 'Instruções',
   'row.inspect': 'Inspecionar',
   'menu.userOnly': 'somente usuário',
+  'preview.failure': 'Não foi possível abrir a pré-visualização da habilidade.',
+  'preview.retry': 'Tentar novamente',
 } satisfies Record<keyof typeof en, string>

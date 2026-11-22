@@ -31,7 +31,11 @@
  * A reference preview targets the Session whose text carries the reference: a
  * delayed catalog response opens in that Session's Sidebar even when another
  * Session is on screen, and opens nothing once the Session is no longer
- * retained.
+ * retained. A preview click whose fetch fails reports through a root-scope
+ * `shell.overlay` toast with Retry: the notice outlives the Chat panel that
+ * reported it, while switching Sessions dismisses it, and Retry re-runs the
+ * same preview once the connection recovers; prewarm, candidate, cancellation,
+ * and no-path outcomes stay silent.
  *
  * This browser half also owns the `skill` keyed toolview: a replay-stable
  * accent row derived only from each logged call/result slice.
@@ -47,10 +51,14 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { InputTriggerServiceContract, InputTriggerSource } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import { fileAddressFor } from '@deepseek-ai/dsh-util-workspace-path'
 import { rankByName } from '@deepseek-ai/dsh-client-ui-primitives'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { SkillPreviewFailureHost, type PreviewFailure, type PreviewFailureInjected } from './preview-failure.tsx'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: pulls the SlotRegistry service merge (ctx.slots).
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: the frame-wide overlay slot declaration the failure notice renders into.
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { SkillRow } from './SkillRow.tsx'
 import { SkillReference, type SkillReferenceInjected } from './SkillReference.tsx'
@@ -168,6 +176,83 @@ export function apply(ctx: ClientContext): void {
   // locale service's own fallback ladder; candidate-time reads stay plain text.
   const t = ctx.locale.bind(NS)
 
+  // Root-lived failure notice: the host renders from the frame-wide
+  // `shell.overlay` slot, outside the Session panel whose click produced it.
+  const previewFailure = createSnapshotStore<PreviewFailure | null>(null)
+  let previewFailureSequence = 0
+
+  const dismissPreviewFailure = (): void => {
+    if (previewFailure.getSnapshot() !== null) previewFailure.set(null)
+  }
+
+  /**
+   * Report a failed explicit preview while its Session is still on screen.
+   * One notice stands per `(sessionId, ref)`: a repeated click on the shared
+   * failed fetch reports nothing new, and because a failed fetch drops its
+   * cache key, a later click starts a fresh fetch and reports on its own.
+   * @param sessionId - Session whose message carried the clicked reference.
+   * @param ref - the clicked `/name` reference.
+   */
+  const reportPreviewFailure = (sessionId: SessionId, ref: string): void => {
+    if (ctx.sidebarRight.mounted.getSnapshot() !== sessionId) return
+    // A closed Session loses its retained scope; there is nothing to retry.
+    if (sessions.scope(sessionId) === undefined) return
+    // Same-click dedupe only: a later click has a fresh fetch of its own.
+    const live = previewFailure.getSnapshot()
+    if (live !== null && live.sessionId === sessionId && live.ref === ref) return
+    previewFailure.set({
+      sessionId,
+      ref,
+      text: t('preview.failure'),
+      retryLabel: t('preview.retry'),
+      sequence: ++previewFailureSequence,
+    })
+  }
+
+  /**
+   * Resolve a skill reference and open its file in that Session's Sidebar.
+   * The preview belongs to the Session the reference was clicked in, not to
+   * whichever Session is on screen when a delayed catalog response settles. A
+   * closed Session loses its retained scope while its Sidebar adoption may
+   * outlive the screen, so liveness is checked before the open;
+   * `openResourceIn` then opens nothing for an unadopted store.
+   * @param sessionId - Session whose message carries the reference.
+   * @param ref - the clicked `/name` reference.
+   * @returns false when the settled catalog has no file for this skill; an
+   *   in-flight fetch reports its own failure through the notice.
+   */
+  const openPreview = (sessionId: SessionId, ref: string): boolean => {
+    const cwd = sessions.list.getSnapshot().byId[sessionId]?.cwd
+    const open = (catalog: readonly SkillEntry[]): boolean => {
+      const path = catalog.find(skill => `/${skill.name}` === ref)?.path
+      if (path === undefined || sessions.scope(sessionId) === undefined) return false
+      ctx.sidebarRight.openResourceIn(sessionId, fileAddressFor(sessionId, cwd, path))
+      // A preview that opens answers the failure it was retried from.
+      const live = previewFailure.getSnapshot()
+      if (live !== null && live.sessionId === sessionId) previewFailure.set(null)
+      return true
+    }
+    const settled = fetches.get(sessionId)?.settled
+    if (settled !== undefined) return open(settled)
+    const entry = fetchCatalog(sessionId)
+    void entry.promise.then((catalog) => {
+      if (!entry.abort.signal.aborted) open(catalog)
+    }).catch((error: unknown) => {
+      if (entry.abort.signal.aborted) return
+      console.error('[ui-skill] reference preview failed:', error)
+      reportPreviewFailure(sessionId, ref)
+    })
+    return true
+  }
+
+  /** Re-run the failed click: the failed fetch dropped its key, so this refetches. */
+  const retryPreview = (): void => {
+    const failure = previewFailure.getSnapshot()
+    if (failure === null) return
+    previewFailure.set(null)
+    openPreview(failure.sessionId, failure.ref)
+  }
+
   const source = {
     trigger: '/',
     name: 'skill',
@@ -208,28 +293,7 @@ export function apply(ctx: ClientContext): void {
     },
     openReference(session, { ref }) {
       if (sessions.subagentAddress(session.sessionId) !== undefined) return false
-      // The preview belongs to the Session the reference was clicked in, not
-      // to whichever Session is on screen when a delayed catalog response
-      // settles. A closed Session loses its retained scope while its Sidebar
-      // adoption may outlive the screen, so liveness is checked before the
-      // open; `openResourceIn` then opens nothing for an unadopted store.
-      const sessionId = session.sessionId
-      const cwd = sessions.list.getSnapshot().byId[sessionId]?.cwd
-      const open = (catalog: readonly SkillEntry[]): boolean => {
-        const path = catalog.find(skill => `/${skill.name}` === ref)?.path
-        if (path === undefined || sessions.scope(sessionId) === undefined) return false
-        ctx.sidebarRight.openResourceIn(sessionId, fileAddressFor(sessionId, cwd, path))
-        return true
-      }
-      const settled = fetches.get(sessionId)?.settled
-      if (settled !== undefined) return open(settled)
-      const entry = fetchCatalog(sessionId)
-      void entry.promise.then((catalog) => {
-        if (!entry.abort.signal.aborted) open(catalog)
-      }).catch((error: unknown) => {
-        if (!entry.abort.signal.aborted) console.error('[ui-skill] reference preview failed:', error)
-      })
-      return true
+      return openPreview(session.sessionId, ref)
     },
     onPick({ candidate }) {
       // Plain-text-reference decision (web-input-machine note): the pick
@@ -254,6 +318,28 @@ export function apply(ctx: ClientContext): void {
       },
     }),
   }, SkillReference))
+
+  // The notice speaks for the Session on screen: switching away clears it,
+  // and unloading the plugin drops the state with the host.
+  ctx.effect(() => {
+    const unsubscribe = ctx.sidebarRight.mounted.subscribe(() => {
+      const live = previewFailure.getSnapshot()
+      if (live !== null && ctx.sidebarRight.mounted.getSnapshot() !== live.sessionId) previewFailure.set(null)
+    })
+    return () => {
+      unsubscribe()
+      previewFailure.set(null)
+    }
+  }, 'ui-skill: preview failure lifetime')
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'skill.preview-failure',
+    inject: (): PreviewFailureInjected => ({
+      hooks: { failure: previewFailure },
+      dismiss: dismissPreviewFailure,
+      retry: retryPreview,
+    }),
+  }, SkillPreviewFailureHost))
 
   const inputTriggers = ctx.get('inputTriggers') as InputTriggerServiceContract
   // A preset decides which skill providers an agent reads, so a switched
