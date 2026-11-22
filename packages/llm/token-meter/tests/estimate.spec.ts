@@ -24,11 +24,15 @@ describe('estimateText', () => {
   it('prices two Extension G ideographs at two tokens', () => {
     expect(estimateText('\u{30000}\u{30001}')).toBe(2)
     expect(estimateText('\u{30000}\u{3134a}')).toBe(2)
+    expect(estimateText('\u{30000}\u{30000}')).toBe(2)
+    expect(estimateText('\u{3134a}\u{3134a}')).toBe(2)
   })
 
   it('prices two Extension H ideographs at two tokens', () => {
     expect(estimateText('\u{31350}\u{31351}')).toBe(2)
     expect(estimateText('\u{323ae}\u{323af}')).toBe(2)
+    expect(estimateText('\u{31350}\u{31350}')).toBe(2)
+    expect(estimateText('\u{323af}\u{323af}')).toBe(2)
   })
 
   it('prices a mixed Extension G and H string at one token per ideograph', () => {
