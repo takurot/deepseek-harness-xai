@@ -643,7 +643,10 @@ describe('Factory rendering', () => {
     ))
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const unknownView = unknownRuntime.renderRoot()
-    expect(unknownView.container.querySelector('[data-slot-error="root"]')).not.toBeNull()
+    // The crashed root abdicates; the dry-root branch now renders the
+    // standalone failure screen instead of an empty crash marker.
+    expect(unknownView.container.querySelector('[data-slot-error="root"]')).toBeNull()
+    expect(unknownView.container.querySelector('[data-root-failure]')).not.toBeNull()
     expect(spy.mock.calls.flat().some(value => String(value).includes("local slot 'unknown' is not declared"))).toBe(true)
     spy.mockRestore()
     await unknownRuntime.dispose()

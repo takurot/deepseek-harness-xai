@@ -10,6 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createSlotRenderer } from './scoped-slots.tsx'
 import { buildRenderApp } from './app.tsx'
 import { SlotRegistry } from './registry.ts'
+import { NS as RENDERER_NS, RENDERER_DICTIONARIES } from './locales.ts'
 
 export { SlotRegistry } from './registry.ts'
 export type { RootOwnerProps } from './registry.ts'
@@ -51,6 +52,17 @@ declare module '@deepseek-ai/cordis' {
 /** Services required before application assembly. */
 export const inject: string[] = []
 
+/**
+ * Structural face of the locale registry this package registers into. The
+ * locale plugin loads after this package (it injects `slots`), so this module
+ * cannot import its type without making the TypeScript project references
+ * circular; the service is read structurally through `ctx.get` at the one
+ * registration site instead.
+ */
+interface LocaleDictionaryRegistry {
+  register(ns: string, dictionaries: Record<string, Record<string, string>>): () => void
+}
+
 interface BootSnapshot {
   className: string
   html: string
@@ -89,6 +101,19 @@ function mountApp(container: HTMLElement, app: () => ReactNode): Root {
 export function apply(ctx: Context): void {
   const slots = new SlotRegistry(ctx)
   slots.install(createSlotRenderer())
+  // The locale plugin injects `slots`, so this plugin's `apply` runs first and
+  // a hard `inject: ['locale']` would make both fibers wait forever. Register
+  // the fallback namespace on a child fiber that waits for the service.
+  ctx.inject(['locale'], (localeCtx) => {
+    const locale = localeCtx.get('locale') as LocaleDictionaryRegistry | undefined
+    /* v8 ignore next -- ctx.inject resolved 'locale', so the guard only narrows
+     * the structural read for the compiler; the service is present here. */
+    if (locale === undefined) return
+    localeCtx.effect(
+      () => locale.register(RENDERER_NS, RENDERER_DICTIONARIES),
+      'ui-renderer: renderer dictionaries',
+    )
+  })
   ctx.reflect.provide('uiRenderer', {
     mount: (container: HTMLElement): (() => void) => {
       const root = mountApp(container, buildRenderApp({ ctx }))

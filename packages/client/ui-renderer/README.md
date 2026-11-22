@@ -15,6 +15,7 @@ English | [中文](README.zh.md)
 
 - [Use this package](#use-this-package)
 - [Understand the implementation](#understand-the-implementation)
+- [Render failures and diagnostics](#render-failures-and-diagnostics)
 - [Further Exploration](#further-exploration)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
@@ -61,6 +62,23 @@ React, React DOM, Cordis, ui-slots, and ui-primitives retain one browser identit
 
 -----
 
+<a id="render-failures-and-diagnostics"></a>
+## Render failures and diagnostics
+
+A crashed `root` registration does not leave a blank page. When every root registration has abdicated, `RootOutlet` renders a standalone failure screen: a localized heading and explanation, a Reload control, and a collapsible diagnostic view with a Copy control. The screen depends on no slot, store, app frame, or Session data, so the broken tree cannot prevent it from rendering. `RootFailureBoundary` wraps only the renderer's own root subtree, for plumbing errors thrown outside an entry boundary; a `SlotAssemblyError` still rethrows, so a miswired boot fails loud instead of degrading into the fallback. A contained child-slot crash keeps the existing per-entry isolation and never reaches this screen.
+
+The copy separates a browser render failure from a server disconnect: the local server keeps running, and Reload neither restarts it nor deletes Session data.
+
+### Diagnostic records
+
+The renderer records each top-level failure under the browser `localStorage` key `dsh.render-failure.v1`; the key holds a JSON array, newest first, and `readRenderFailures()` in `src/client/render-failure-log.ts` is the internal read path (the package's public `/client` entry does not re-export it, so a developer reads the key through the browser's developer tools). Each record is `{ at, name, message, stack, slot }`: the ISO-8601 failure time, the error name, the error message, the stack, and the slot whose render failed (`root` for the application root). The ring keeps at most three records, each bounded to about 4 KB (`message` at most 512 characters, `stack` at most 3072); older records are replaced. Token-like runs are redacted before storage (`sk-…` keys, bearer/basic credentials, `token=`/`password=`/`authorization` values, and high-entropy alphanumeric runs without path separators or hyphens), which preserves plugin paths and URLs in stack frames. The recorder's fields are only the time, error name, message, stack, and slot: prompts, conversation text, credentials, and component props are never collected as fields. Because an error message or stack is arbitrary text, token-like text inside them is redacted best-effort rather than guaranteed absent.
+
+Recording is best-effort: when `localStorage` is unavailable or throws (privacy mode, quota, sandboxed frame), the fallback still shows the in-memory record of the failure that just happened and replaces the retention note with a “shown from memory only” note; the failure is not persisted for a later reload. Diagnostics stay in the browser profile, are not uploaded, and nothing reads them at startup.
+
+The fallback's copy comes from the `renderer` locale namespace (all eight built-in locales). When the locale service is unavailable at failure time (a boot-order failure), the fallback uses the English dictionary ladder, and a missing key renders as the key itself.
+
+-----
+
 <a id="further-exploration"></a>
 ## Further Exploration
 
@@ -93,6 +111,9 @@ These limits define when the application frame appears and how far per-region re
 
 - **The first application frame waits for the whole client roster** — the boot kernel hands over the mount point only after the loader roster settles and the boot audit accepts it; per-region readiness remains deferred.
 - **Slot rendering has no Suspense integration or per-entry lazy loading** — the complete plugin roster settles before the renderer mounts the root.
+- **The fallback covers React render failures only** — a failure before the client roster mounts (for example a bundle that never loads) belongs to the boot page, and a failure outside this React tree still needs a manual reload or external diagnosis.
+- **Diagnostics are best-effort and local** — storage denial loses persistence, the ring retains only three bounded records, and redaction reduces rather than eliminates sensitive text that a thrown error may carry.
+- **The original blackout cause is unidentified** — this screen changes the failure surface and preserves evidence; it is not a fix for the unreproduced fault.
 
 <a id="dev-note"></a>
 ### Dev Note
