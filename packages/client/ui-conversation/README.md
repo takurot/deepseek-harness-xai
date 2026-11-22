@@ -202,7 +202,7 @@ None; Conversation assembly and browser input state do not alter provider-side p
 - **Only registered targets can render** — the shell deliberately has no implicit fallback target beyond the registered `chat` preference.
 - **Factory occurrences inherit their render-position Session** — `conversation.content` does not accept an independently addressed Session; that requires a separate Session-provider capability.
 - **Composer backdrop blur is verified only in Chromium** — with `will-change: transform` on the docked composer, descendant `backdrop-filter` still samples the transcript in Chromium; WebKit behavior has not been verified.
-- **A reload discards draft attachments** — only switching between Sessions keeps them; after a reload the reopened composer reports the loss and asks the user to add them again, and a crash leaves no notice. While a Session is not shown, a pasted image keeps its bytes in memory ([decision](../../../.agents/notes/implemented/bug-fix/2026-11-13-draft-attachments-across-session-switches.md)).
+- **A reload discards draft attachments** — only switching between Sessions keeps them; after a reload the reopened composer reports the loss and asks the user to add them again, and a crash leaves no notice. The unload marks live in shared browser storage rather than a tab-scoped store, so while two tabs show the same Session the tab that mounts it next consumes the mark and the tab that wrote it reloads without the notice. While a Session is not shown, a pasted image keeps its bytes in memory ([decision](../../../.agents/notes/implemented/bug-fix/2026-11-13-draft-attachments-across-session-switches.md)).
 
 
 <a id="dev-note"></a>

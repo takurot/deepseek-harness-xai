@@ -22,6 +22,6 @@ Switching to another Session and back emptied the composer's attachment rail whi
 
 ## Consequences
 
-Switching never touches the Host, so a weak network cannot lose a draft attachment there. A reload or crash still discards attachments; a crash writes no mark and so shows no notice.
+Switching never touches the Host, so a weak network cannot lose a draft attachment there. A reload or crash still discards attachments; a crash writes no mark and so shows no notice. The unload marks use shared browser storage rather than a tab-scoped store, so when two tabs show the same Session the tab that mounts it next consumes the mark and the tab that wrote it reloads without the notice; a tab-scoped store cannot report a reload it is not running in.
 
 The draft-attachment registry, the attachment ids a returning shell re-adopts, and the unload marks are pinned by [draft-attachment-retention.client.spec.ts](../../../../packages/client/ui-conversation/tests/draft-attachment-retention.client.spec.ts); the rendered attachment rail and the assembled sidebar switch are pinned by [draft-attachment-session-switch.e2e.ts](../../../../apps/web/tests/draft-attachment-session-switch.e2e.ts).

@@ -6,6 +6,10 @@
 //
 // Zero model calls: two explicitly seeded sessions must exist as real catalog
 // rows so the sidebar can switch between them, and the scenario never submits.
+// The browser lane therefore covers A->B->A visibility only; sending the
+// re-adopted attachment exactly once, its receipt, and the observed-retirement
+// release are covered by the unit spec (a submit needs a recorded replay script
+// this scenario does not own).
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'

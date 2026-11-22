@@ -2004,7 +2004,7 @@ export const de = {
   'attachment.pathUnavailable': 'Der Ordnerpfad konnte nicht abgerufen werden; Ziehen Sie es erneut hinein',
   'attachment.pathUnsupported': 'Der Pfad enthält Zeichen, die eine Referenz nicht enthalten kann; Benennen Sie es um und versuchen Sie es erneut',
   'image.pending': 'Ausstehende Bilder',
-  'attachments.unavailable': 'Einige Entwurfsanhänge sind nicht mehr verfügbar; füge sie erneut hinzu',
+  'attachments.unavailable': 'Einige Entwurfsanhänge sind nicht mehr verfügbar; fügen Sie sie erneut hinzu.',
   'image.openOriginal': 'Original ansehen',
   'image.openOriginalLabel': '{label}, klicken Sie, um das Original anzuzeigen',
   'image.remove': 'Bild {name} entfernen',

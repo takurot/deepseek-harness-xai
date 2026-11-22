@@ -202,7 +202,7 @@ selector 必须是 owner currency 的纯函数。非 null 返回值作为 `match
 - **只有已注册 target 可以渲染**——除已注册的 `chat` 偏好外，shell 刻意不提供隐式 fallback target。
 - **Factory occurrence 继承渲染位置的 Session**——`conversation.content` 不接受独立寻址的 Session；该能力需要单独的 Session provider。
 - **composer 内的毛玻璃只在 Chromium 中验证过**——docked composer 设置 `will-change: transform` 后，Chromium 中后代的 `backdrop-filter` 仍会采样背后的 transcript；WebKit 中的表现尚未验证。
-- **刷新会丢弃草稿附件**——只有在 Session 之间切换时附件才会保留；刷新后重新打开的输入框会提示丢失并请用户重新添加，崩溃时不会有提示。Session 未显示期间，粘贴的图片会把字节保留在内存中（[决策](../../../.agents/notes/implemented/bug-fix/2026-11-13-draft-attachments-across-session-switches.zh.md)）。
+- **刷新会丢弃草稿附件**——只有在 Session 之间切换时附件才会保留；刷新后重新打开的输入框会提示丢失并请用户重新添加，崩溃时不会有提示。卸载标记存放在共享的浏览器存储中，而不是标签页作用域内，因此两个标签页打开同一 Session 时，后挂载的标签页会消费该标记，写下标记的标签页刷新后看不到提示。Session 未显示期间，粘贴的图片会把字节保留在内存中（[决策](../../../.agents/notes/implemented/bug-fix/2026-11-13-draft-attachments-across-session-switches.zh.md)）。
 
 
 <a id="dev-note"></a>

@@ -22,6 +22,6 @@ Status: implemented
 
 ## 影响
 
-切换会话从不访问 Host，因此弱网不会让草稿附件在切换中丢失。刷新或崩溃仍会丢弃附件；崩溃时不会写标记，因此没有提示。
+切换会话从不访问 Host，因此弱网不会让草稿附件在切换中丢失。刷新或崩溃仍会丢弃附件；崩溃时不会写标记，因此没有提示。卸载标记存放在共享的浏览器存储中，而不是标签页作用域内，因此两个标签页打开同一 Session 时，后挂载的标签页会消费该标记，写下标记的标签页刷新后看不到提示；标签页作用域的存储无法报告它并未参与的那次刷新。
 
 草稿附件注册表、切回输入框接回的附件 id 和卸载标记由 [draft-attachment-retention.client.spec.ts](../../../../packages/client/ui-conversation/tests/draft-attachment-retention.client.spec.ts) 固定；渲染出的附件栏与组装后的侧栏切换由 [draft-attachment-session-switch.e2e.ts](../../../../apps/web/tests/draft-attachment-session-switch.e2e.ts) 固定。
