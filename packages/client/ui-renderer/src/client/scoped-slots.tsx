@@ -19,6 +19,9 @@ import {
   useScopeBinding,
 } from './bindings.tsx'
 import { SlotAssemblyError } from './errors.ts'
+import { RootFailure } from './RootFailure.tsx'
+import { renderFailureTranslate } from './locales.ts'
+import { collectRenderFailures, recordRenderFailure, type RenderFailureRecord } from './render-failure-log.ts'
 
 type InjectedProps = Record<string, unknown>
 type SlotAnchorTag = 'div' | 'span'
@@ -418,6 +421,36 @@ class SlotErrorBoundary extends Component<
     const Anchor = this.props.anchor ?? 'div'
     if (this.state.failed) return <Anchor data-slot-error={this.props.slotKey} />
     return this.props.children
+  }
+}
+
+/**
+ * Last-resort containment for renderer plumbing errors thrown outside an
+ * entry boundary. Entry crashes stay in `SlotErrorBoundary`; assembly errors
+ * (a miswired boot composition) rethrow so they fail loud instead of
+ * degrading into the fallback.
+ */
+export class RootFailureBoundary extends Component<
+  { locale?: LocaleFace | undefined; children: ReactNode },
+  { failed: boolean; record?: RenderFailureRecord | undefined }
+> {
+  override state: { failed: boolean; record?: RenderFailureRecord | undefined } = { failed: false }
+  static getDerivedStateFromError(error: unknown): { failed: boolean } {
+    if (error instanceof SlotAssemblyError) throw error
+    return { failed: true }
+  }
+  override componentDidCatch(error: unknown): void {
+    console.error('root renderer crashed outside an entry boundary:', error)
+    this.setState({ record: recordRenderFailure(error, 'root') })
+  }
+  override render(): ReactNode {
+    if (!this.state.failed) return this.props.children
+    return (
+      <RootFailure
+        t={renderFailureTranslate(this.props.locale)}
+        records={collectRenderFailures(this.state.record)}
+      />
+    )
   }
 }
 
@@ -1274,6 +1307,10 @@ function renderChainResult(
 /** Root outlet: the shell's single ctx-level render entry — an unregistered 'root' is a boot-order failure, never a silent blank. */
 function RootOutlet({ ownerProps }: { ownerProps: object }) {
   const host = useHost()
+  // The crash face the entry boundary reported most recently. A dry root has
+  // no live entry to re-read the error from, so the fallback uses this value
+  // (or the stored ring when the outlet itself remounted).
+  const lastFailure = useRef<RenderFailureRecord | undefined>(undefined)
   useSyncExternalStore(
     fn => host.subscribe('root', fn),
     () => host.getVersion('root'),
@@ -1282,9 +1319,16 @@ function RootOutlet({ ownerProps }: { ownerProps: object }) {
   const entry = host.entriesOfSlot('root')[0]
   if (!entry) {
     // Registrations exist but every one abdicated: the shadowing collapse ran
-    // dry, so the crash face replaces the tree (registered-but-broken is a
-    // crash, not the boot-order assembly failure below).
-    if (host.entriesOf('root').length > 0) return <div data-slot-error="root" />
+    // dry, so the standalone failure screen replaces the tree (a crash, not
+    // the boot-order assembly failure below).
+    if (host.entriesOf('root').length > 0) {
+      return (
+        <RootFailure
+          t={renderFailureTranslate(host.locale)}
+          records={collectRenderFailures(lastFailure.current)}
+        />
+      )
+    }
     throw new SlotAssemblyError("renderSlot('root') before any 'root' registration (boot order)")
   }
   // Same anchor contract as SlotOutlet: 'root' is a slot like any other, and
@@ -1294,7 +1338,10 @@ function RootOutlet({ ownerProps }: { ownerProps: object }) {
       <SlotErrorBoundary
         slotKey="root"
         key={entryKeyOf(entry)}
-        onEntryError={(error) => { host.reportEntryError('root', entry, error, { abdicate: true }) }}
+        onEntryError={(error) => {
+          lastFailure.current = recordRenderFailure(error, 'root')
+          host.reportEntryError('root', entry, error, { abdicate: true })
+        }}
       >
         <RootEntry
           entry={entry}
@@ -1321,9 +1368,11 @@ export function createSlotRenderer(): SlotRenderer {
       return (
         <HostContext.Provider value={host}>
           <RootStandardProvider>
-            <ScopeProvider scope="session-maybe">
-              <RootOutlet ownerProps={ownerProps} />
-            </ScopeProvider>
+            <RootFailureBoundary locale={host.locale}>
+              <ScopeProvider scope="session-maybe">
+                <RootOutlet ownerProps={ownerProps} />
+              </ScopeProvider>
+            </RootFailureBoundary>
           </RootStandardProvider>
         </HostContext.Provider>
       )

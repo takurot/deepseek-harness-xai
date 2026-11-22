@@ -15,6 +15,7 @@ kind: "package-reference"
 
 - [使用本包](#use-this-package)
 - [理解实现](#understand-the-implementation)
+- [渲染失败与诊断](#render-failures-and-diagnostics)
 - [进一步探索](#further-exploration)
 - [模型体验](#model-experience)
 - [已知限制与延期工作](#known-limitations-and-deferred-work)
@@ -61,6 +62,23 @@ React、React DOM、Cordis、ui-slots 与 ui-primitives 通过 Web 外壳的静�
 
 -----
 
+<a id="render-failures-and-diagnostics"></a>
+## 渲染失败与诊断
+
+`root` 注册在渲染时崩溃不会再留下空白页面。当所有根注册都已 abdicate 时，`RootOutlet` 会渲染一个独立的失败界面：本地化的标题与说明、重新加载控件，以及带复制控件的可折叠诊断视图。该界面不依赖任何 slot、store、应用框架或 Session 数据，因此损坏的树无法阻止它渲染。`RootFailureBoundary` 只包裹渲染器自身的根子树，用于捕获在 entry 边界之外抛出的管线错误；`SlotAssemblyError` 仍会重新抛出，使装配错误的启动直接失败，而不是退化为该界面。被包含的子 slot 崩溃保持现有的逐 entry 隔离，永远不会到达该界面。
+
+文案区分浏览器渲染失败与服务器断开：本地服务器仍在运行，重新加载既不会重启服务器，也不会删除 Session 数据。
+
+### 诊断记录
+
+渲染器在浏览器 `localStorage` 的 `dsh.render-failure.v1` 键下记录每次顶层失败；该键保存从新到旧的 JSON 数组，`src/client/render-failure-log.ts` 中的 `readRenderFailures()` 是内部读取路径（包的公开 `/client` 入口不会重新导出它，开发者通过浏览器开发者工具读取该键）。每条记录为 `{ at, name, message, stack, slot }`：ISO-8601 失败时间、错误名称、错误消息、堆栈，以及渲染失败的 slot（应用根为 `root`）。环形缓冲最多保留三条记录，每条约 4 KB（`message` 最多 512 字符，`stack` 最多 3072 字符）；更旧的记录会被替换。写入前会脱敏类令牌片段（`sk-…` 密钥、bearer/basic 凭据、`token=`/`password=`/`authorization` 值，以及较长的类密钥串）。渲染器绝不记录提示词、会话正文、凭据或组件属性。
+
+记录是尽力而为的：当 `localStorage` 不可用或抛出异常（隐私模式、配额、沙箱 iframe）时，失败界面仍会显示刚发生失败的内存记录，但该记录不会为后续重新加载持久化，诊断视图只显示没有已保存的历史记录。诊断信息仅存在于浏览器配置文件中，不会被上传，也不会在启动时被读取。
+
+失败界面的文案来自 `renderer` locale 命名空间（全部八种内置语言）。失败时若 locale 服务不可用（启动顺序失败），界面使用英语字典阶梯，缺失的键按原键名渲染。
+
+-----
+
 <a id="further-exploration"></a>
 ## 进一步探索
 
@@ -93,6 +111,9 @@ React、React DOM、Cordis、ui-slots 与 ui-primitives 通过 Web 外壳的静�
 
 - **应用首帧会等待整个客户端名册**：启动内核只在 loader 名册稳定且启动审计通过后交出挂载点；按区域就绪仍属暂缓事项。
 - **slot 渲染没有 Suspense 集成或逐 entry 惰性加载**：完整插件名册稳定后，渲染器才挂载根节点。
+- **失败界面只覆盖 React 渲染失败**：客户端名册挂载完成前的失败（例如 bundle 未能加载）由启动页负责，此 React 树之外的失败仍需手动重新加载或外部诊断。
+- **诊断是尽力而为且仅限本地**：拒绝存储会失去持久化，环形缓冲只保留三条有界记录，脱敏只能减少而无法消除抛出的错误可能携带的敏感文本。
+- **原始黑屏原因尚未查明**：该界面改变失败表现并保留证据，并非对未复现故障本身的修复。
 
 <a id="dev-note"></a>
 ### 开发备注

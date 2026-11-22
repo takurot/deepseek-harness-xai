@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for 2026-11-22-root-render-failure-fallback.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-11-22-root-render-failure-fallback.md
+/agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page:
+  en: dd35518729b470c1
+  zh: 6915541a046a10a3
+/agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page/problem:
+  en: ea3839c52eeb0131
+  zh: 4205e6be12d91abd
+/agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page/decision:
+  en: 694585650c55627c
+  zh: f26dc3655968554f
+/agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page/alternatives-considered:
+  en: 48b4358bdb8662ef
+  zh: 8b0adefc57bc76bf
+/agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page/consequences:
+  en: 346a3d3485b30895
+  zh: 2b1ac2e587f8db3b
+/agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page/related:
+  en: 092c0799509e7803
+  zh: c0f6b40e6de25491
+/agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page/testing:
+  en: d2f35e1717426cd3
+  zh: 8809390ed62c87b4
