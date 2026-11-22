@@ -46,6 +46,7 @@ describe('web e2e: strong emphasis opening after CJK text', () => {
   it('renders each punctuation-led span after CJK text as strong and leaves no bare markers', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-markdown-cjk-strong-open'))
     const reply = page.locator('[class*="markdown"]', { has: page.locator('p', { hasText: '本身。' }) }).first()
+    await expect.poll(() => reply.locator('strong').count()).toBe(STRONG_TEXTS.length)
     expect(await reply.locator('strong').allTextContents()).toEqual(STRONG_TEXTS)
     expect(await reply.textContent()).not.toContain('**')
     const prose = await reply.ariaSnapshot()
