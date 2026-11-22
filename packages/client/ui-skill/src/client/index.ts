@@ -28,6 +28,10 @@
  * caller with an aborted signal just returns early.
  * Catalog RPCs retain an existing Client Session through completion and
  * wait for its initial history open to succeed before contacting the Host.
+ * A reference preview targets the Session whose text carries the reference: a
+ * delayed catalog response opens in that Session's Sidebar even when another
+ * Session is on screen, and opens nothing once the Session is no longer
+ * retained.
  *
  * This browser half also owns the `skill` keyed toolview: a replay-stable
  * accent row derived only from each logged call/result slice.
@@ -204,16 +208,22 @@ export function apply(ctx: ClientContext): void {
     },
     openReference(session, { ref }) {
       if (sessions.subagentAddress(session.sessionId) !== undefined) return false
-      const cwd = sessions.list.getSnapshot().byId[session.sessionId]?.cwd
+      // The preview belongs to the Session the reference was clicked in, not
+      // to whichever Session is on screen when a delayed catalog response
+      // settles. A closed Session loses its retained scope while its Sidebar
+      // adoption may outlive the screen, so liveness is checked before the
+      // open; `openResourceIn` then opens nothing for an unadopted store.
+      const sessionId = session.sessionId
+      const cwd = sessions.list.getSnapshot().byId[sessionId]?.cwd
       const open = (catalog: readonly SkillEntry[]): boolean => {
         const path = catalog.find(skill => `/${skill.name}` === ref)?.path
-        if (path === undefined) return false
-        ctx.sidebarRight.openResource(fileAddressFor(session.sessionId, cwd, path))
+        if (path === undefined || sessions.scope(sessionId) === undefined) return false
+        ctx.sidebarRight.openResourceIn(sessionId, fileAddressFor(sessionId, cwd, path))
         return true
       }
-      const settled = fetches.get(session.sessionId)?.settled
+      const settled = fetches.get(sessionId)?.settled
       if (settled !== undefined) return open(settled)
-      const entry = fetchCatalog(session.sessionId)
+      const entry = fetchCatalog(sessionId)
       void entry.promise.then((catalog) => {
         if (!entry.abort.signal.aborted) open(catalog)
       }).catch((error: unknown) => {

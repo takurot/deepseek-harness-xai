@@ -12,8 +12,9 @@ import { es, fr, de, ru, pt } from '../src/client/locales.ts'
  * .agents/notes/archived/architecture/2026-07-25-web-input-machine-and-slash-pipeline.md),
  * the synchronous
  * lexicon reads over the settled cache, and the reference codec's two
- * projections. Direct driving is deliberate: this spec owns only the
- * source's own contract.
+ * projections. Most cases drive the source directly. The delayed-preview
+ * block composes the plugin with the production Sidebar controller and stores
+ * to prove which Session's store receives an open.
  */
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
@@ -29,6 +30,9 @@ import { apply, inject } from '../src/client/index.ts'
 import { SkillRow as SkillToolRow } from '../src/client/SkillRow.tsx'
 import { SkillReference, type SkillReferenceInjected } from '../src/client/SkillReference.tsx'
 import { UserTextRegistry } from '../../ui-conversation/src/client/conversation/user-text-registry.ts'
+import { createSidebarRightController } from '@deepseek-ai/dsh-client-ui-sidebar-right/src/client/service.ts'
+import { SidebarRightTabRegistry } from '@deepseek-ai/dsh-client-ui-sidebar-right/src/client/tab-registry.ts'
+import { createSidebarRightStore } from '@deepseek-ai/dsh-client-ui-sidebar-right/src/client/stores.ts'
 
 type SkillRow = { name: string; description: string; whenToUse?: string; path?: string; modelInvocable?: boolean }
 type ListResult =
@@ -70,11 +74,21 @@ function providePresentation(ctx: Context): PresentationCapture {
   return capture
 }
 
+interface BenchOptions {
+  /** Supply the sidebar face; defaults to a recording navigation mock. */
+  readonly sidebarRight?: (ctx: Context) => object
+}
+
 /** Boot the plugin over fake slash/connection faces; returns the captured source and its ctx. */
-async function bench(list: ListFn, addressed?: SessionId, opening: Pick<SessionFixture, 'initialOpen' | 'snapshot'> = {}) {
+async function bench(
+  list: ListFn,
+  addressed?: SessionId,
+  opening: Pick<SessionFixture, 'initialOpen' | 'snapshot'> = {},
+  options: BenchOptions = {},
+) {
   const ctx = new Context()
-  const openResource = vi.fn()
-  ctx.provide('sidebarRight', { openResource })
+  const openResourceIn = vi.fn()
+  ctx.provide('sidebarRight', options.sidebarRight?.(ctx) ?? { openResourceIn })
   let captured: InputTriggerSource | undefined
   ctx.provide('inputTriggers', { registerSource: (src: InputTriggerSource) => { captured = src; return () => {} } })
   const sessions = new TestSessions(async (action) => { await action() }, ctx)
@@ -83,18 +97,67 @@ async function bench(list: ListFn, addressed?: SessionId, opening: Pick<SessionF
     await sessions.disposeScopes()
     await ctx.fiber.dispose()
   })
+  const references = new Map<SessionId, ReturnType<TestSessions['retainFor']>>()
   for (const id of ['s1', 's2', 'preview', 'first', 'second', 'child']) {
     await sessions.add({ id, ...opening })
-    sessions.retainFor(ctx, id === addressed
+    references.set(sid(id), sessions.retainFor(ctx, id === addressed
       ? { parentSessionId: sid('parent'), childSessionId: addressed, mode: 'continuable' }
-      : sid(id))
+      : sid(id)))
+  }
+  /** Release the fixture's long-lived reference, as the runtime does when a Session closes. */
+  const releaseScope = (id: SessionId): void => {
+    const reference = references.get(id)
+    if (reference === undefined) throw new Error(`expected a retained Session scope for "${id}"`)
+    references.delete(id)
+    reference.release()
   }
   const remote = new TestRemote(ctx, { skills: { list } })
   const presentation = providePresentation(ctx)
   const fiber = ctx.plugin({ inject: [...inject], apply })
   onTestFinished(async () => { await fiber.dispose() })
   await fiber.await()
-  return { ctx, source: captured!, remote, fiber, openResource, sessions, presentation }
+  return { ctx, source: captured!, remote, fiber, openResourceIn, sessions, presentation, releaseScope }
+}
+
+/** The real right Sidebar: one tab registry, its controller, and one adopted store per Session. */
+function realSidebar(ctx: Context) {
+  const tabs = new SidebarRightTabRegistry(ctx)
+  tabs.register({
+    id: 'test/text',
+    kind: 'text',
+    patterns: ['dsh-resource://file/**'],
+    priority: 'fallback',
+    title: address => address.slice(address.lastIndexOf('/') + 1),
+  })
+  const { controller, adopt, show } = createSidebarRightController(tabs, vi.fn(), {
+    autoFullscreen: () => false,
+    openWithFocus: (_sessionId, open) => { open() },
+    closeWithFocus: (_sessionId, _paneId, close) => { close() },
+  })
+  const stores = new Map<SessionId, ReturnType<ReturnType<typeof createSidebarRightStore>['create']>>()
+  const store = (sessionId: SessionId) => {
+    const held = stores.get(sessionId)
+    if (held === undefined) throw new Error(`expected an adopted store for Session "${sessionId}"`)
+    return held
+  }
+  const surface = (sessionId: SessionId) => store(sessionId).getSnapshot().bySession[sessionId]
+  const adoptStore = (sessionId: SessionId): (() => void) => {
+    const instance = createSidebarRightStore(() => ({ kind: 'guide', title: 'Guide' })).create()
+    stores.set(sessionId, instance)
+    return adopt(sessionId, instance)
+  }
+  const openResource = vi.fn(controller.openResource.bind(controller))
+  const openResourceIn = vi.fn(controller.openResourceIn.bind(controller))
+  return {
+    controller,
+    show,
+    adoptStore,
+    store,
+    surface,
+    openResource,
+    openResourceIn,
+    sidebarRight: { openResource, openResourceIn },
+  }
 }
 
 const CATALOG: SkillRow[] = [
@@ -130,7 +193,7 @@ describe('apply', () => {
   it('registers the dedicated skill row and its locale dictionaries', async () => {
     const ctx = new Context()
     onTestFinished(async () => { await ctx.fiber.dispose() })
-    ctx.provide('sidebarRight', { openResource: vi.fn() })
+    ctx.provide('sidebarRight', { openResourceIn: vi.fn() })
     ctx.provide('inputTriggers', { registerSource: () => () => {} })
     ctx.provide('sessions', { subagentAddress: () => undefined })
     new TestRemote(ctx, { skills: { list: listOk(CATALOG) } })
@@ -180,7 +243,7 @@ describe('apply', () => {
   it('registers the "/" skill source; disposal frees the name (HMR safety)', async () => {
     const ctx = new Context()
     onTestFinished(async () => { await ctx.fiber.dispose() })
-    ctx.provide('sidebarRight', { openResource: vi.fn() })
+    ctx.provide('sidebarRight', { openResourceIn: vi.fn() })
     // InputTriggerService itself injects 'sessions'; the stub unblocks its fiber.
     ctx.provide('sessions', {})
     await ctx.plugin(InputTriggerService).await()
@@ -510,30 +573,30 @@ describe('reference preview', () => {
     first.openSkill('review')
     await b.source.candidates(proj('first'), req(''))
     expect(openReference).toHaveBeenLastCalledWith(proj('first'), { ref: '/review' })
-    expect(b.openResource).toHaveBeenLastCalledWith('dsh-resource://file/session/first//skills/review/SKILL.md')
+    expect(b.openResourceIn).toHaveBeenLastCalledWith(sid('first'), 'dsh-resource://file/session/first//skills/review/SKILL.md')
     second.openSkill('review')
     await b.source.candidates(proj('second'), req(''))
     expect(openReference).toHaveBeenLastCalledWith(proj('second'), { ref: '/review' })
-    expect(b.openResource).toHaveBeenLastCalledWith('dsh-resource://file/session/second//skills/review/SKILL.md')
+    expect(b.openResourceIn).toHaveBeenLastCalledWith(sid('second'), 'dsh-resource://file/session/second//skills/review/SKILL.md')
     vi.spyOn(b.sessions, 'scope').mockReturnValueOnce(undefined)
     first.openSkill('review')
     expect(openReference).toHaveBeenCalledTimes(2)
-    expect(b.openResource).toHaveBeenCalledTimes(2)
+    expect(b.openResourceIn).toHaveBeenCalledTimes(2)
   })
 
   it('finishes the first click after a shared warm fetch and reloads after reconnect', async () => {
     const gate = Promise.withResolvers<ListResult>()
     const list = vi.fn<ListFn>().mockReturnValueOnce(gate.promise).mockImplementation(listOk(rows))
-    const { ctx, source, openResource } = await bench(list)
+    const { ctx, source, openResourceIn } = await bench(list)
     const session = proj('preview')
     source.warm!(session)
     expect(source.openReference!(session, { ref: '/review' })).toBe(true)
     const candidates = source.candidates(session, req(''))
-    expect(openResource).not.toHaveBeenCalled()
+    expect(openResourceIn).not.toHaveBeenCalled()
     await vi.waitFor(() => { expect(list).toHaveBeenCalledTimes(1) })
     gate.resolve({ ok: true, value: { skills: rows } })
     await candidates
-    expect(openResource).toHaveBeenCalledExactlyOnceWith('dsh-resource://file/session/preview//skills/review/SKILL.md')
+    expect(openResourceIn).toHaveBeenCalledExactlyOnceWith(sid('preview'), 'dsh-resource://file/session/preview//skills/review/SKILL.md')
     expect(source.openReference!(session, { ref: '/virtual' })).toBe(false)
     expect(source.openReference!(session, { ref: '/missing' })).toBe(false)
     expect(source.openReference!(session, { ref: '/review' })).toBe(true)
@@ -541,30 +604,30 @@ describe('reference preview', () => {
     expect(source.openReference!(session, { ref: '/review' })).toBe(true)
     await source.candidates(session, req(''))
     expect(list).toHaveBeenCalledTimes(2)
-    expect(openResource).toHaveBeenCalledTimes(3)
+    expect(openResourceIn).toHaveBeenCalledTimes(3)
   })
 
   it('keeps pending clicks bound to their own Session when another Session opens', async () => {
     const first = Promise.withResolvers<ListResult>()
     const second = Promise.withResolvers<ListResult>()
     const list = vi.fn<ListFn>().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
-    const { source, openResource } = await bench(list)
+    const { source, openResourceIn } = await bench(list)
     source.openReference!(proj('first'), { ref: '/review' })
     const firstDone = source.candidates(proj('first'), req(''))
     source.openReference!(proj('second'), { ref: '/review' })
     const secondDone = source.candidates(proj('second'), req(''))
     second.resolve({ ok: true, value: { skills: [{ ...rows[0]!, path: '/second/SKILL.md' }] } })
     await secondDone
-    expect(openResource).toHaveBeenLastCalledWith('dsh-resource://file/session/second//second/SKILL.md')
+    expect(openResourceIn).toHaveBeenLastCalledWith(sid('second'), 'dsh-resource://file/session/second//second/SKILL.md')
     first.resolve({ ok: true, value: { skills: rows } })
     await firstDone
-    expect(openResource).toHaveBeenLastCalledWith('dsh-resource://file/session/first//skills/review/SKILL.md')
+    expect(openResourceIn).toHaveBeenLastCalledWith(sid('first'), 'dsh-resource://file/session/first//skills/review/SKILL.md')
     expect(list.mock.calls.map(([payload]) => payload)).toEqual([{ sessionId: 'first' }, { sessionId: 'second' }])
   })
 
   it.each(['reset', 'preset', 'plugin', 'dispose'] as const)('cancels a pending preview on %s even if the RPC completes late', async (reason) => {
     const gate = Promise.withResolvers<ListResult>()
-    const { ctx, source, remote, fiber, openResource } = await bench(() => gate.promise)
+    const { ctx, source, remote, fiber, openResourceIn } = await bench(() => gate.promise)
     const session = proj('preview')
     const listener = vi.fn()
     source.subscribeLexicon!(session, listener)
@@ -579,28 +642,159 @@ describe('reference preview', () => {
     await completion
     expect(source.lexicon!(session)).toBeUndefined()
     expect(listener).toHaveBeenCalledTimes(1)
-    expect(openResource).not.toHaveBeenCalled()
+    expect(openResourceIn).not.toHaveBeenCalled()
   })
 
   it('reports a failed preview fetch and allows the next click to retry', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     onTestFinished(() => { error.mockRestore() })
     const list = vi.fn<ListFn>().mockRejectedValueOnce(new Error('offline')).mockImplementation(listOk(rows))
-    const { source, openResource } = await bench(list)
+    const { source, openResourceIn } = await bench(list)
     const session = proj('preview')
     source.openReference!(session, { ref: '/review' })
     await vi.waitFor(() => { expect(error).toHaveBeenCalledWith('[ui-skill] reference preview failed:', expect.any(Error)) })
-    expect(openResource).not.toHaveBeenCalled()
+    expect(openResourceIn).not.toHaveBeenCalled()
     source.openReference!(session, { ref: '/review' })
     await source.candidates(session, req(''))
-    expect(openResource).toHaveBeenCalledOnce()
+    expect(openResourceIn).toHaveBeenCalledOnce()
   })
 
   it('does not fetch or preview a skill from addressed subagent history', async () => {
     const list = vi.fn(listOk(rows))
-    const { source, openResource } = await bench(list, sid('child'))
+    const { source, openResourceIn } = await bench(list, sid('child'))
     expect(source.openReference!(proj('child'), { ref: '/review' })).toBe(false)
     expect(list).not.toHaveBeenCalled()
-    expect(openResource).not.toHaveBeenCalled()
+    expect(openResourceIn).not.toHaveBeenCalled()
+  })
+})
+
+describe('a delayed preview opens in its own Session', () => {
+  const rows: SkillRow[] = [{ name: 'review', description: 'Review', path: '/skills/review/SKILL.md' }]
+  const ADDRESS = 'dsh-resource://file/session/first//skills/review/SKILL.md'
+  const OTHER_ADDRESS = 'dsh-resource://file/session/second/notes.md'
+
+  /** Boot the plugin with the real controller, one adopted store per Session, and B on screen. */
+  async function benchWithSidebar(list: ListFn) {
+    let real: ReturnType<typeof realSidebar> | undefined
+    const b = await bench(list, undefined, {}, {
+      sidebarRight: (ctx) => {
+        real = realSidebar(ctx)
+        return real.sidebarRight
+      },
+    })
+    if (real === undefined) throw new Error('expected the real Sidebar face')
+    const a = sid('first')
+    const other = sid('second')
+    real.adoptStore(a)
+    real.adoptStore(other)
+    real.show(other)
+    real.controller.openResource(OTHER_ADDRESS)
+    return { ...b, real, a, other }
+  }
+
+  it('opens exactly once in the originating Session and leaves the on-screen Session untouched', async () => {
+    const response = Promise.withResolvers<ListResult>()
+    const { real, source, a, other } = await benchWithSidebar(() => response.promise)
+    const before = real.store(other).getSnapshot()
+    const otherTabs = Object.values(real.surface(other)!.layout.tabs).map(tab => tab.title)
+    const otherEntries = real.surface(other)!.history.entries.length
+
+    // A is on screen when the user clicks, then the user switches to B.
+    real.show(a)
+    expect(source.openReference!(proj('first'), { ref: '/review' })).toBe(true)
+    real.show(other)
+    response.resolve({ ok: true, value: { skills: rows } })
+    await vi.waitFor(() => {
+      expect(real.openResource.mock.calls.length + real.openResourceIn.mock.calls.length).toBe(1)
+    })
+
+    // B keeps the same committed state: no tab, expansion, or history change.
+    expect(Object.values(real.surface(other)!.layout.tabs).map(tab => tab.title)).toEqual(otherTabs)
+    expect(real.surface(other)!.layout.expanded).toBe(true)
+    expect(real.surface(other)!.history.entries).toHaveLength(otherEntries)
+    expect(real.store(other).getSnapshot()).toBe(before)
+    expect(real.openResourceIn).toHaveBeenCalledExactlyOnceWith(a, ADDRESS)
+    expect(real.openResource).not.toHaveBeenCalled()
+    const opened = real.surface(a)
+    if (opened === undefined) throw new Error('expected the originating Session to receive the preview')
+    expect(Object.values(opened.layout.tabs).map(tab => tab.contentId)).toEqual([ADDRESS])
+    expect(opened.layout.expanded).toBe(true)
+    expect(opened.history.entries).toHaveLength(1)
+  })
+
+  it('opens nothing when the originating Session scope was released before the response', async () => {
+    const response = Promise.withResolvers<ListResult>()
+    const list = vi.fn<ListFn>().mockReturnValueOnce(response.promise)
+    const { real, source, a, other, releaseScope } = await benchWithSidebar(list)
+    // A renders once, then the user closes it and the runtime releases its retained scope.
+    real.show(a)
+    real.controller.openResource('dsh-resource://file/session/first/a.md')
+    const aBefore = real.store(a).getSnapshot()
+    real.show(other)
+
+    expect(source.openReference!(proj('first'), { ref: '/review' })).toBe(true)
+    const pending = source.candidates(proj('first'), req(''))
+    await vi.waitFor(() => { expect(list).toHaveBeenCalledTimes(1) })
+    // The Session closes while its catalog RPC is still in flight.
+    releaseScope(a)
+    response.resolve({ ok: true, value: { skills: rows } })
+    await pending
+
+    expect(real.openResourceIn).not.toHaveBeenCalled()
+    expect(real.openResource).not.toHaveBeenCalled()
+    // The Sidebar adoption outlives the Session: the liveness guard, not the
+    // controller's missing adoption, is what stopped the open.
+    expect(real.surface(a)).toBeDefined()
+    expect(real.store(a).getSnapshot()).toBe(aBefore)
+    expect(Object.values(real.surface(a)!.layout.tabs).map(tab => tab.title)).toEqual(['a.md'])
+  })
+
+  it('opens once when the originating Session is still on screen at settlement', async () => {
+    const response = Promise.withResolvers<ListResult>()
+    const { real, source, a, other } = await benchWithSidebar(() => response.promise)
+    const before = real.store(other).getSnapshot()
+
+    // A stays on screen from the click to the settlement.
+    real.show(a)
+    source.openReference!(proj('first'), { ref: '/review' })
+    response.resolve({ ok: true, value: { skills: rows } })
+    await vi.waitFor(() => {
+      expect(real.openResource.mock.calls.length + real.openResourceIn.mock.calls.length).toBe(1)
+    })
+
+    expect(real.store(other).getSnapshot()).toBe(before)
+    expect(real.openResourceIn).toHaveBeenCalledExactlyOnceWith(a, ADDRESS)
+    expect(real.openResource).not.toHaveBeenCalled()
+    expect(Object.values(real.surface(a)!.layout.tabs)).toHaveLength(1)
+  })
+
+  it('cancels with the other pending previews, then a user retry opens once in the same Session', async () => {
+    const response = Promise.withResolvers<ListResult>()
+    const list = vi.fn<ListFn>().mockImplementationOnce(() => response.promise).mockImplementation(listOk(rows))
+    const { ctx, real, source, a, other } = await benchWithSidebar(list)
+    const before = real.store(other).getSnapshot()
+
+    real.show(a)
+    expect(source.openReference!(proj('first'), { ref: '/review' })).toBe(true)
+    const pending = source.candidates(proj('first'), req(''))
+    // Cancel only once the shared fetch has reached the RPC.
+    await vi.waitFor(() => { expect(list).toHaveBeenCalledTimes(1) })
+    real.show(other)
+    ctx.emit('connection/reset')
+    response.resolve({ ok: true, value: { skills: rows } })
+    await expect(pending).rejects.toThrow()
+    expect(real.openResourceIn).not.toHaveBeenCalled()
+    expect(real.surface(a)).toBeUndefined()
+
+    expect(source.openReference!(proj('first'), { ref: '/review' })).toBe(true)
+    await vi.waitFor(() => {
+      expect(real.openResource.mock.calls.length + real.openResourceIn.mock.calls.length).toBe(1)
+    })
+
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(real.openResourceIn).toHaveBeenCalledExactlyOnceWith(a, ADDRESS)
+    expect(real.openResource).not.toHaveBeenCalled()
+    expect(Object.values(real.surface(a)!.layout.tabs).map(tab => tab.contentId)).toEqual([ADDRESS])
+    expect(real.store(other).getSnapshot()).toBe(before)
   })
 })

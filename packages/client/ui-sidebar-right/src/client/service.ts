@@ -393,10 +393,15 @@ export class SidebarRightController implements ISidebarRight {
   }
 
   /**
-   * Open a resource in one session, for a tab's own action; nothing happens
-   * for a session whose store was never adopted or whose adoption was released.
-   * Not part of `ISidebarRight`: the Tab domain's path.
-   * @param sessionId - the session the acting tab is in.
+   * Open a resource in one session, whichever Session is on screen: that
+   * Session's adopted store receives the tab; a docked open expands its column
+   * in the same step, while a floating open leaves the expansion as it is.
+   * Nothing happens for a session whose store was never adopted or whose
+   * adoption was released.
+   * Cross-plugin callers use it when the content belongs to a Session that is
+   * not necessarily the on-screen one (a context menu, a delayed preview); it
+   * is on the concrete `ctx.sidebarRight` face but not on `ISidebarRight`.
+   * @param sessionId - the Session that owns the content.
    * @param address - a `dsh-resource://<type>/…` address.
    * @param options - placement, the opening type, and navigation parameters.
    */
@@ -406,10 +411,15 @@ export class SidebarRightController implements ISidebarRight {
   }
 
   /**
-   * Open a page type in one session, for a tab's own action; nothing happens
-   * for a session whose store was never adopted or whose adoption was released.
-   * Not part of `ISidebarRight`: the Tab domain's path.
-   * @param sessionId - the session the acting tab is in.
+   * Open a page type in one session, whichever Session is on screen: that
+   * Session's adopted store receives the tab; a docked open expands its column
+   * in the same step, while a floating open leaves the expansion as it is.
+   * Nothing happens for a session whose store was never adopted or whose
+   * adoption was released.
+   * Cross-plugin callers use it when the content belongs to a Session that is
+   * not necessarily the on-screen one; it is on the concrete `ctx.sidebarRight`
+   * face but not on `ISidebarRight`.
+   * @param sessionId - the Session that owns the content.
    * @param kind - the page type's kind.
    * @param options - placement and that kind's navigation parameters.
    */
