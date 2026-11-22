@@ -255,7 +255,9 @@ export interface ISidebarRight {
    * Nothing happens for a session whose store was never adopted or whose
    * adoption was released. A caller whose content belongs to a Session that is
    * not necessarily the on-screen one (a context menu, a delayed preview) uses
-   * this form instead of {@link openResource}.
+   * this form instead of {@link openResource}. An address outside
+   * `dsh-resource://`, or one no type will open, throws when the Session's
+   * store is adopted.
    * @param sessionId - the Session that owns the content.
    * @param address - a `dsh-resource://<type>/…` address.
    * @param options - placement or an explicit host, the opening type, and navigation parameters.
@@ -266,7 +268,9 @@ export interface ISidebarRight {
    * that Session's adopted store receives the tab; a docked open expands its
    * column in the same step, while a floating open leaves the expansion as it
    * is. Nothing happens for a session whose store was never adopted or whose
-   * adoption was released.
+   * adoption was released. A kind nothing registered throws when the Session's
+   * store is adopted. A caller whose page belongs to a Session that is not
+   * necessarily the on-screen one uses this form instead of {@link openTab}.
    * @param sessionId - the Session that owns the content.
    * @param kind - the page type's kind.
    * @param options - placement and that kind's navigation parameters.
