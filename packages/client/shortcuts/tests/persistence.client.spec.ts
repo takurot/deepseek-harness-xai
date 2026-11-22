@@ -84,6 +84,16 @@ describe('serialized preference persistence', () => {
 
   })
 
+  it('reports an unreadable external replacement when the draft revision is stale', async () => {
+    const f = fixture(true)
+    const accepted = await f.store.readCurrent()
+    f.external('{')
+    const result = await f.store.edit(edit, accepted.revision)
+    expect(result.status).toBe('unreadable')
+    expect(result.snapshot).toMatchObject({ status: 'unreadable', error: 'invalid', document: accepted.document })
+    expect(f.storage.write).not.toHaveBeenCalled()
+  })
+
   it('uses defaults on the first bad read and prevents writes until the source becomes readable', async () => {
     const f = fixture(); f.storage.read.mockRejectedValueOnce(new Error('denied'))
     expect((await f.store.readCurrent()).usingDefaults).toBe(true)
