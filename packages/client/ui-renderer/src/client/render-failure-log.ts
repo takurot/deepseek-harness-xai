@@ -26,6 +26,14 @@ const MAX_STACK_LENGTH = 3072
 const MAX_NAME_LENGTH = 80
 const MAX_SLOT_LENGTH = 64
 
+/** Outcome of recording one failure: the in-memory record plus whether it persisted. */
+export interface RecordedRenderFailure {
+  /** The bounded, redacted record (always available). */
+  readonly record: RenderFailureRecord
+  /** Whether the record was written to the stored ring. */
+  readonly persisted: boolean
+}
+
 /** One sanitized, bounded render-failure record. */
 export interface RenderFailureRecord {
   /** ISO-8601 time the failure was recorded. */
@@ -57,7 +65,7 @@ const TOKEN_PATTERNS: readonly (readonly [RegExp, string])[] = [
     /\b((?:secret|password|passwd|authorization|credential)s?)\b\s*[:=]\s*["']?[^\s"',;]+/gi,
     '$1=[redacted]',
   ],
-  [/[A-Za-z0-9+/=_-]{32,}/g, '[redacted]'],
+  [/(?<![A-Za-z0-9+/=_.:@-])(?=[A-Za-z0-9+=_]*\d)[A-Za-z0-9+=_]{32,}(?![A-Za-z0-9+/=_.:@-])/g, '[redacted]'],
 ]
 
 /**
@@ -202,30 +210,31 @@ export function readRenderFailures(storage: Storage | undefined = defaultStorage
 }
 
 /**
- * Record one top-level render failure and return its in-memory form even when
- * storage is unavailable or throws.
+ * Record one top-level render failure. The bounded, redacted in-memory record
+ * is always returned; `persisted` states whether it reached the stored ring.
  * @param error - thrown value.
  * @param slot - slot whose render failed.
  * @param storage - storage to write (defaults to the browser's localStorage).
  * @param now - recording clock (tests pin it).
- * @returns the recorded (bounded, redacted) record.
+ * @returns the record and whether storage accepted it.
  */
 export function recordRenderFailure(
   error: unknown,
   slot: string,
   storage: Storage | undefined = defaultStorage(),
   now: Date = new Date(),
-): RenderFailureRecord {
+): RecordedRenderFailure {
   const record = createRenderFailureRecord(error, slot, now)
-  if (storage === undefined) return record
+  if (storage === undefined) return { record, persisted: false }
   try {
     const next = [record, ...readRenderFailures(storage)].slice(0, RENDER_FAILURE_RETENTION)
     storage.setItem(RENDER_FAILURE_STORAGE_KEY, JSON.stringify(next))
+    return { record, persisted: true }
   } catch {
     // Quota, privacy mode, or a hostile override: the returned record still
     // drives the fallback, and diagnostics are documented as best-effort.
+    return { record, persisted: false }
   }
-  return record
 }
 
 /** Identity of a record for de-duplication against the stored ring. */

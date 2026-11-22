@@ -21,7 +21,7 @@ import {
 import { SlotAssemblyError } from './errors.ts'
 import { RootFailure } from './RootFailure.tsx'
 import { renderFailureTranslate } from './locales.ts'
-import { collectRenderFailures, recordRenderFailure, type RenderFailureRecord } from './render-failure-log.ts'
+import { collectRenderFailures, recordRenderFailure, type RecordedRenderFailure } from './render-failure-log.ts'
 
 type InjectedProps = Record<string, unknown>
 type SlotAnchorTag = 'div' | 'span'
@@ -432,23 +432,26 @@ class SlotErrorBoundary extends Component<
  */
 export class RootFailureBoundary extends Component<
   { locale?: LocaleFace | undefined; children: ReactNode },
-  { failed: boolean; record?: RenderFailureRecord | undefined }
+  { failed: boolean; recorded?: RecordedRenderFailure | undefined }
 > {
-  override state: { failed: boolean; record?: RenderFailureRecord | undefined } = { failed: false }
+  override state: { failed: boolean; recorded?: RecordedRenderFailure | undefined } = { failed: false }
   static getDerivedStateFromError(error: unknown): { failed: boolean } {
     if (error instanceof SlotAssemblyError) throw error
     return { failed: true }
   }
   override componentDidCatch(error: unknown): void {
     console.error('root renderer crashed outside an entry boundary:', error)
-    this.setState({ record: recordRenderFailure(error, 'root') })
+    this.setState({ recorded: recordRenderFailure(error, 'root') })
   }
   override render(): ReactNode {
     if (!this.state.failed) return this.props.children
+    const recorded = this.state.recorded
+    const records = collectRenderFailures(recorded?.record)
     return (
       <RootFailure
         t={renderFailureTranslate(this.props.locale)}
-        records={collectRenderFailures(this.state.record)}
+        records={records}
+        persisted={recorded?.persisted ?? records.length > 0}
       />
     )
   }
@@ -1310,7 +1313,7 @@ function RootOutlet({ ownerProps }: { ownerProps: object }) {
   // The crash face the entry boundary reported most recently. A dry root has
   // no live entry to re-read the error from, so the fallback uses this value
   // (or the stored ring when the outlet itself remounted).
-  const lastFailure = useRef<RenderFailureRecord | undefined>(undefined)
+  const lastFailure = useRef<RecordedRenderFailure | undefined>(undefined)
   useSyncExternalStore(
     fn => host.subscribe('root', fn),
     () => host.getVersion('root'),
@@ -1322,10 +1325,13 @@ function RootOutlet({ ownerProps }: { ownerProps: object }) {
     // dry, so the standalone failure screen replaces the tree (a crash, not
     // the boot-order assembly failure below).
     if (host.entriesOf('root').length > 0) {
+      const recorded = lastFailure.current
+      const records = collectRenderFailures(recorded?.record)
       return (
         <RootFailure
           t={renderFailureTranslate(host.locale)}
-          records={collectRenderFailures(lastFailure.current)}
+          records={records}
+          persisted={recorded?.persisted ?? records.length > 0}
         />
       )
     }

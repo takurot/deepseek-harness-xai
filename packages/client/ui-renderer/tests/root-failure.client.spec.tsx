@@ -11,7 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
 import type { LocaleFace } from '@deepseek-ai/dsh-client-ui-slots'
 
-import { RootFailure } from '../src/client/RootFailure.tsx'
+import { reloadPage, RootFailure } from '../src/client/RootFailure.tsx'
 import { RootFailureBoundary } from '../src/client/scoped-slots.tsx'
 import { SlotAssemblyError } from '../src/client/errors.ts'
 import {
@@ -73,13 +73,14 @@ describe('root render failure fallback', () => {
 
     expect(view.container.querySelector('[data-slot-error="root"]')).toBeNull()
     expect(view.container.querySelector('[data-root-failure]')).not.toBeNull()
-    expect(view.getByRole('alert')).toBeTruthy()
+    expect(view.getByRole('alertdialog')).toBeTruthy()
     expect(view.getByRole('heading').textContent).toContain('stopped rendering')
     expect(view.getByRole('heading')).toBe(document.activeElement)
     expect(view.getByRole('button', { name: 'Reload' })).toBeTruthy()
     // The copy separates a browser render failure from a server disconnect.
     expect(view.container.textContent).toContain('not a server disconnect')
     expect(view.container.textContent).toContain('keeps running')
+    expect(view.container.textContent).toContain('last three failures stay')
   })
 
   it('persists a bounded diagnostic that stays retrievable after the page reloads', async () => {
@@ -95,6 +96,20 @@ describe('root render failure fallback', () => {
     expect(stored[0]?.message).toBe('root render boom')
     expect(stored[0]?.at).toBeTypeOf('string')
     expect(window.localStorage.getItem(RENDER_FAILURE_STORAGE_KEY)).not.toBeNull()
+  })
+
+  it('recovers the stored failures when a fresh root mount finds the dry path', async () => {
+    runtime = await SlotTestRuntime.create()
+    await runtime.root.declare({}, () => { throw new Error('remount boom') })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const first = runtime.renderRoot()
+    first.unmount()
+
+    // A fresh RootOutlet has no in-hand error; the stored ring supplies it.
+    const second = runtime.renderRoot()
+    expect(second.container.querySelector('[data-root-failure]')).not.toBeNull()
+    expect(second.container.textContent).toContain('remount boom')
+    expect(second.container.textContent).toContain('last three failures stay')
   })
 
   it('renders the fallback in the installed locale and keeps English as the ladder', async () => {
@@ -145,6 +160,8 @@ describe('root render failure fallback', () => {
     expect(getter).toHaveBeenCalled()
     expect(view.container.querySelector('[data-root-failure]')).not.toBeNull()
     expect(view.container.textContent).toContain('captured root boom')
+    expect(view.container.textContent).toContain('shown from memory only')
+    expect(view.container.textContent).not.toContain('last three failures stay')
     expect(readRenderFailures()).toHaveLength(0)
   })
 })
@@ -153,6 +170,15 @@ describe('RootFailure controls', () => {
   it('moves focus to the recovery heading on mount', () => {
     const view = render(<RootFailure t={renderFailureTranslate(undefined)} records={[sampleRecord()]} />)
     expect(view.getByRole('heading')).toBe(document.activeElement)
+  })
+
+  it('replaces the retention note when the failure was not persisted', () => {
+    const view = render(
+      <RootFailure t={renderFailureTranslate(undefined)} records={[sampleRecord()]} persisted={false} />,
+    )
+    expect(view.getByText(/shown from memory only/)).toBeTruthy()
+    expect(view.queryByText(/last three failures stay/)).toBeNull()
+    expect(view.getByText(/root render boom/)).toBeTruthy()
   })
 
   it('invokes the injected reload action', () => {
@@ -184,11 +210,10 @@ describe('RootFailure controls', () => {
     expect(await view.findByText(/Copy failed\. Select the text above/)).toBeTruthy()
   })
 
-  it('reloads through the browser default when no callback is injected', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-    const view = render(<RootFailure t={renderFailureTranslate(undefined)} records={[sampleRecord()]} />)
-    // jsdom's navigation stub logs instead of navigating; the control must call it.
-    expect(() => { fireEvent.click(view.getByRole('button', { name: 'Reload' })) }).not.toThrow()
+  it('reloads the browser location through the default action', () => {
+    const reload = vi.fn()
+    reloadPage({ reload })
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 
   it('tolerates clipboard denial and points at the selectable text', async () => {
@@ -285,6 +310,16 @@ describe('render-failure diagnostics', () => {
     expect(serialized).toContain('[redacted]')
   })
 
+  it('preserves plugin paths and URLs while redacting a secret-like run', () => {
+    const url = 'http://127.0.0.1:3097/plugins/??@deepseek-ai/dsh-client-ui-layout/client.js:1:2'
+    const secret = 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0'
+    recordRenderFailure(new Error(`failed at ${url} with ${secret}`), 'root')
+    const stored = readRenderFailures()[0]
+    expect(stored?.message).toContain(url)
+    expect(stored?.message).toContain('[redacted]')
+    expect(stored?.message).not.toContain(secret)
+  })
+
   it('bounds each record to about four kilobytes', () => {
     const error = new Error('message '.repeat(2000))
     error.stack = Array.from({ length: 4000 }, (_, index) => `    at frame${index} (file.ts:1:1)`).join('\n')
@@ -318,26 +353,27 @@ describe('render-failure diagnostics', () => {
     expect(readRenderFailures()).toEqual([])
 
     const stored = recordRenderFailure(new Error('dedupe me'), 'root')
-    expect(collectRenderFailures(stored)).toHaveLength(1)
+    expect(collectRenderFailures(stored.record)).toHaveLength(1)
     expect(collectRenderFailures(undefined)).toEqual(readRenderFailures())
     const inHand = createRenderFailureRecord(new Error('not stored'), 'root', new Date('2026-11-22T00:00:09.000Z'))
     expect(collectRenderFailures(inHand).map(record => record.message)).toEqual(['not stored', 'dedupe me'])
   })
 
   it('records non-Error and hostile thrown values without crashing', () => {
-    expect(recordRenderFailure('plain failure', 'root').message).toBe('plain failure')
-    expect(recordRenderFailure({ some: 'object' }, 'root').message).toBe('[object Object]')
+    expect(recordRenderFailure('plain failure', 'root').record.message).toBe('plain failure')
+    expect(recordRenderFailure({ some: 'object' }, 'root').record.message).toBe('[object Object]')
     const hostile = new Proxy({}, {
       getPrototypeOf: () => { throw new Error('proxy trap') },
     })
-    expect(recordRenderFailure(hostile, 'root').message).toBe('unreadable thrown value')
+    expect(recordRenderFailure(hostile, 'root').record.message).toBe('unreadable thrown value')
   })
 
   it('tolerates storage methods that throw', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
-    const record = recordRenderFailure(new Error('storage boom'), 'root')
-    expect(record.message).toBe('storage boom')
+    const recorded = recordRenderFailure(new Error('storage boom'), 'root')
+    expect(recorded.record.message).toBe('storage boom')
+    expect(recorded.persisted).toBe(false)
     expect(readRenderFailures()).toEqual([])
   })
 })

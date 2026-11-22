@@ -1,4 +1,4 @@
-# Agent Note: Top-level render failures show a recovery screen, not a blank page
+# Agent Note: 顶层渲染失败时显示恢复界面，而不是空白页
 
 Status: implemented
 
@@ -16,7 +16,7 @@ Status: implemented
 
 **独立的 `RootFailureBoundary` 只捕获渲染器管线错误。** 它包裹 `RootOutlet`（连同 scope provider），用于在 entry 边界之外抛出的错误。`SlotAssemblyError` 会从 `getDerivedStateFromError` 重新抛出，因此装配错误的启动仍直接失败；被包含的子 slot 崩溃保持现有的逐 entry 隔离，永远不会到达失败界面。界面文案说明这是浏览器的渲染失败，而不是服务器断开：本地服务器仍在运行，重新加载既不会重启服务器，也不会删除 Session 数据。
 
-**诊断有界、已脱敏且仅限本地。** 渲染器把每次顶层失败记录在浏览器 `localStorage` 的 `dsh.render-failure.v1` 键下，并从诊断模块导出 `readRenderFailures()`。记录为 `{ at, name, message, stack, slot }`：ISO-8601 时间、错误名称、错误消息、堆栈，以及渲染失败的 slot（应用根为 `root`）。环形缓冲最多保留三条记录，每条约 4 KB（`message` 最多 512 字符，`stack` 最多 3072 字符）。写入前会脱敏类令牌片段：`sk-…` 密钥、bearer/basic 凭据、`token=`/`password=`/`authorization` 值，以及较长的类密钥串。记录器只接收抛出的值和 slot 标签；它绝不读取提示词、会话正文、凭据或组件属性。存储是尽力而为的：`localStorage` 缺失或抛出异常时，内存记录仍会驱动失败界面，且不会持久化。启动时没有任何代码读取这些记录。
+**诊断有界、已脱敏且仅限本地。** 渲染器把每次顶层失败记录在浏览器 `localStorage` 的 `dsh.render-failure.v1` 键下，并从诊断模块导出 `readRenderFailures()`。记录为 `{ at, name, message, stack, slot }`：ISO-8601 时间、错误名称、错误消息、堆栈，以及渲染失败的 slot（应用根为 `root`）。环形缓冲最多保留三条记录，每条约 4 KB（`message` 最多 512 字符，`stack` 最多 3072 字符）。写入前会脱敏类令牌片段：`sk-…` 密钥、bearer/basic 凭据、`token=`/`password=`/`authorization` 值，以及不含路径分隔符或连字符的高熵字母数字串，因此堆栈帧中的插件路径与 URL 得以保留。记录器的字段仅为抛出错误的名称、消息、堆栈加上 slot 标签；提示词、会话正文、凭据与组件属性绝不作为字段收集，而任意消息或堆栈中的类令牌文本只会尽力脱敏。存储是尽力而为的：`localStorage` 缺失或抛出异常时，内存记录仍会驱动失败界面，保留说明会变为“仅从内存显示”的提示，且不会持久化。启动时没有任何代码读取这些记录。
 
 **失败界面文案接入类型化 locale 系统。** 新增的 `renderer` 命名空间携带全部八种内置语言字典。`apply` 通过 `ctx.inject(['locale'])` 创建的子 fiber 注册它们，而不是硬写 `inject: ['locale']`：locale 插件 inject 了 `slots`，而 `slots` 正是本包在自身 `apply` 中提供的服务，所以直接依赖 locale 服务会让两个 fiber 永久等待。失败时先查询已安装的 locale face；没有 face、查询未命中，或绑定/查询抛出异常时，由英语字典阶梯回答，未知键按原键名渲染。
 

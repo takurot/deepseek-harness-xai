@@ -6,7 +6,7 @@
  *
  * @module @deepseek-ai/dsh-client-ui-renderer/src/client/RootFailure
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RenderFailureRecord } from './render-failure-log.ts'
 import s from './RootFailure.module.css'
@@ -17,15 +17,22 @@ export interface RootFailureProps {
   readonly t: Translate
   /** Records shown in the diagnostic view, newest first. */
   readonly records: readonly RenderFailureRecord[]
+  /** Whether the shown failure reached the stored ring; false renders the in-memory-only note. */
+  readonly persisted?: boolean | undefined
   /** Reload action; defaults to `location.reload`. */
   readonly onReload?: (() => void) | undefined
   /** Clipboard action; defaults to `navigator.clipboard.writeText`. */
   readonly onCopy?: ((text: string) => Promise<void>) | undefined
 }
 
-/** Reload the page from this origin; the last-resort recovery action. */
-function reloadPage(): void {
-  globalThis.location.reload()
+/**
+ * Reload the page from this origin; the last-resort recovery action. The
+ * location is parameterized so the default action's call is directly testable.
+ * @param location - browser location to reload (defaults to the current one).
+ * @returns nothing; the browser navigates.
+ */
+export function reloadPage(location: Pick<Location, 'reload'> = globalThis.location): void {
+  location.reload()
 }
 
 /**
@@ -58,8 +65,11 @@ function formatDiagnosticText(records: readonly RenderFailureRecord[], t: Transl
  * @returns the standalone failure screen.
  */
 export function RootFailure(props: RootFailureProps) {
-  const { t, records, onReload, onCopy } = props
+  const { t, records, persisted = true, onReload, onCopy } = props
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const titleId = useId()
+  const bodyId = useId()
+  const distinctionId = useId()
   const heading = useRef<HTMLHeadingElement | null>(null)
   const diagnosticText = formatDiagnosticText(records, t)
   const reload = onReload ?? reloadPage
@@ -82,13 +92,19 @@ export function RootFailure(props: RootFailureProps) {
   }
 
   return (
-    <div className={s.root} role="alert" data-root-failure="">
+    <div
+      className={s.root}
+      role="alertdialog"
+      aria-labelledby={titleId}
+      aria-describedby={`${bodyId} ${distinctionId}`}
+      data-root-failure=""
+    >
       <section className={s.panel}>
-        <h1 ref={heading} tabIndex={-1} className={s.title}>{t('title')}</h1>
-        <p className={s.body}>{t('body')}</p>
-        <p className={s.distinction}>{t('distinction')}</p>
+        <h1 ref={heading} id={titleId} tabIndex={-1} className={s.title}>{t('title')}</h1>
+        <p className={s.body} id={bodyId}>{t('body')}</p>
+        <p className={s.distinction} id={distinctionId}>{t('distinction')}</p>
         <div className={s.actions}>
-          <button type="button" className={s.reload} onClick={reload}>{t('reload')}</button>
+          <button type="button" className={s.reload} onClick={() => { reload() }}>{t('reload')}</button>
         </div>
         <details className={s.details}>
           <summary className={s.summary}>{t('diagnostics.summary')}</summary>
@@ -109,7 +125,7 @@ export function RootFailure(props: RootFailureProps) {
                 </div>
               </>
             )}
-          <p className={s.note}>{t('diagnostics.retention')}</p>
+          <p className={s.note}>{persisted ? t('diagnostics.retention') : t('diagnostics.notPersisted')}</p>
           <p className={s.note}>{t('diagnostics.privacy')}</p>
         </details>
       </section>

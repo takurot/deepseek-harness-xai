@@ -71,9 +71,9 @@ React、React DOM、Cordis、ui-slots 与 ui-primitives 通过 Web 外壳的静�
 
 ### 诊断记录
 
-渲染器在浏览器 `localStorage` 的 `dsh.render-failure.v1` 键下记录每次顶层失败；该键保存从新到旧的 JSON 数组，`src/client/render-failure-log.ts` 中的 `readRenderFailures()` 是内部读取路径（包的公开 `/client` 入口不会重新导出它，开发者通过浏览器开发者工具读取该键）。每条记录为 `{ at, name, message, stack, slot }`：ISO-8601 失败时间、错误名称、错误消息、堆栈，以及渲染失败的 slot（应用根为 `root`）。环形缓冲最多保留三条记录，每条约 4 KB（`message` 最多 512 字符，`stack` 最多 3072 字符）；更旧的记录会被替换。写入前会脱敏类令牌片段（`sk-…` 密钥、bearer/basic 凭据、`token=`/`password=`/`authorization` 值，以及较长的类密钥串）。渲染器绝不记录提示词、会话正文、凭据或组件属性。
+渲染器在浏览器 `localStorage` 的 `dsh.render-failure.v1` 键下记录每次顶层失败；该键保存从新到旧的 JSON 数组，`src/client/render-failure-log.ts` 中的 `readRenderFailures()` 是内部读取路径（包的公开 `/client` 入口不会重新导出它，开发者通过浏览器开发者工具读取该键）。每条记录为 `{ at, name, message, stack, slot }`：ISO-8601 失败时间、错误名称、错误消息、堆栈，以及渲染失败的 slot（应用根为 `root`）。环形缓冲最多保留三条记录，每条约 4 KB（`message` 最多 512 字符，`stack` 最多 3072 字符）；更旧的记录会被替换。写入前会脱敏类令牌片段（`sk-…` 密钥、bearer/basic 凭据、`token=`/`password=`/`authorization` 值，以及不含路径分隔符或连字符的高熵字母数字串），因此堆栈帧中的插件路径与 URL 得以保留。记录器的字段仅为时间、错误名称、消息、堆栈和插槽：提示词、会话正文、凭据与组件属性绝不作为字段收集。由于错误消息或堆栈是任意文本，其中的类令牌文本只会尽力脱敏，无法保证完全不存在。
 
-记录是尽力而为的：当 `localStorage` 不可用或抛出异常（隐私模式、配额、沙箱 iframe）时，失败界面仍会显示刚发生失败的内存记录，但该记录不会为后续重新加载持久化，诊断视图只显示没有已保存的历史记录。诊断信息仅存在于浏览器配置文件中，不会被上传，也不会在启动时被读取。
+记录是尽力而为的：当 `localStorage` 不可用或抛出异常（隐私模式、配额、沙箱 iframe）时，失败界面仍会显示刚发生失败的内存记录，并把保留说明替换为“仅从内存显示”的提示；该失败不会为后续重新加载持久化。诊断信息仅存在于浏览器配置文件中，不会被上传，也不会在启动时被读取。
 
 失败界面的文案来自 `renderer` locale 命名空间（全部八种内置语言）。失败时若 locale 服务不可用（启动顺序失败），界面使用英语字典阶梯，缺失的键按原键名渲染。
 

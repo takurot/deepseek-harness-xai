@@ -4,13 +4,13 @@
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-11-22-root-render-failure-fallback.md
 /agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page:
   en: dd35518729b470c1
-  zh: 6915541a046a10a3
+  zh: 6f9143506764e67e
 /agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page/problem:
   en: ea3839c52eeb0131
   zh: 4205e6be12d91abd
 /agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page/decision:
-  en: 694585650c55627c
-  zh: f26dc3655968554f
+  en: 67d879eefe683961
+  zh: 03e1a195533e2d74
 /agent-note-top-level-render-failures-show-a-recovery-screen-not-a-blank-page/alternatives-considered:
   en: 48b4358bdb8662ef
   zh: 8b0adefc57bc76bf
