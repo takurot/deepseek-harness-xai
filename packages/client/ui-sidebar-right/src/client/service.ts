@@ -249,6 +249,30 @@ export interface ISidebarRight {
    */
   openTab<K extends string>(kind: K, options?: SidebarRightOpenTabOptions<K>): void
   /**
+   * Open a resource in one Session, whichever Session is on screen: that
+   * Session's adopted store receives the tab; a docked open expands its column
+   * in the same step, while a floating open leaves the expansion as it is.
+   * Nothing happens for a session whose store was never adopted or whose
+   * adoption was released. A caller whose content belongs to a Session that is
+   * not necessarily the on-screen one (a context menu, a delayed preview) uses
+   * this form instead of {@link openResource}.
+   * @param sessionId - the Session that owns the content.
+   * @param address - a `dsh-resource://<type>/…` address.
+   * @param options - placement or an explicit host, the opening type, and navigation parameters.
+   */
+  openResourceIn(sessionId: SessionId, address: string, options?: SidebarRightOpenResourceOptions): void
+  /**
+   * Open a page type by kind in one Session, whichever Session is on screen:
+   * that Session's adopted store receives the tab; a docked open expands its
+   * column in the same step, while a floating open leaves the expansion as it
+   * is. Nothing happens for a session whose store was never adopted or whose
+   * adoption was released.
+   * @param sessionId - the Session that owns the content.
+   * @param kind - the page type's kind.
+   * @param options - placement and that kind's navigation parameters.
+   */
+  openTabIn<K extends string>(sessionId: SessionId, kind: K, options?: SidebarRightOpenTabOptions<K>): void
+  /**
    * Close one tab of the on-screen Session; the sole docked guide remains open.
    * @param tabId - the tab to close.
    */
@@ -399,8 +423,7 @@ export class SidebarRightController implements ISidebarRight {
    * Nothing happens for a session whose store was never adopted or whose
    * adoption was released.
    * Cross-plugin callers use it when the content belongs to a Session that is
-   * not necessarily the on-screen one (a context menu, a delayed preview); it
-   * is on the concrete `ctx.sidebarRight` face but not on `ISidebarRight`.
+   * not necessarily the on-screen one (a context menu, a delayed preview).
    * @param sessionId - the Session that owns the content.
    * @param address - a `dsh-resource://<type>/…` address.
    * @param options - placement, the opening type, and navigation parameters.
@@ -417,8 +440,7 @@ export class SidebarRightController implements ISidebarRight {
    * Nothing happens for a session whose store was never adopted or whose
    * adoption was released.
    * Cross-plugin callers use it when the content belongs to a Session that is
-   * not necessarily the on-screen one; it is on the concrete `ctx.sidebarRight`
-   * face but not on `ISidebarRight`.
+   * not necessarily the on-screen one.
    * @param sessionId - the Session that owns the content.
    * @param kind - the page type's kind.
    * @param options - placement and that kind's navigation parameters.
