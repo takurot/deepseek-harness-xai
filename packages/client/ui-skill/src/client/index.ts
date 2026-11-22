@@ -32,9 +32,10 @@
  * delayed catalog response opens in that Session's Sidebar even when another
  * Session is on screen, and opens nothing once the Session is no longer
  * retained. A preview click whose fetch fails reports through a root-scope
- * `shell.overlay` toast with Retry, so the notice survives Session panel
- * changes and can re-run the same preview once the connection recovers;
- * prewarm, candidate, cancellation, and no-path outcomes stay silent.
+ * `shell.overlay` toast with Retry: the notice outlives the Chat panel that
+ * reported it, while switching Sessions dismisses it, and Retry re-runs the
+ * same preview once the connection recovers; prewarm, candidate, cancellation,
+ * and no-path outcomes stay silent.
  *
  * This browser half also owns the `skill` keyed toolview: a replay-stable
  * accent row derived only from each logged call/result slice.
@@ -56,6 +57,8 @@ import { SkillPreviewFailureHost, type PreviewFailure, type PreviewFailureInject
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: pulls the SlotRegistry service merge (ctx.slots).
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: the frame-wide overlay slot declaration the failure notice renders into.
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { SkillRow } from './SkillRow.tsx'
 import { SkillReference, type SkillReferenceInjected } from './SkillReference.tsx'
@@ -184,7 +187,9 @@ export function apply(ctx: ClientContext): void {
 
   /**
    * Report a failed explicit preview while its Session is still on screen.
-   * Repeated clicks share one failed fetch, so they report one notice.
+   * One notice stands per `(sessionId, ref)`: a repeated click on the shared
+   * failed fetch reports nothing new, and because a failed fetch drops its
+   * cache key, a later click starts a fresh fetch and reports on its own.
    * @param sessionId - Session whose message carried the clicked reference.
    * @param ref - the clicked `/name` reference.
    */
@@ -192,6 +197,7 @@ export function apply(ctx: ClientContext): void {
     if (ctx.sidebarRight.mounted.getSnapshot() !== sessionId) return
     // A closed Session loses its retained scope; there is nothing to retry.
     if (sessions.scope(sessionId) === undefined) return
+    // Same-click dedupe only: a later click has a fresh fetch of its own.
     const live = previewFailure.getSnapshot()
     if (live !== null && live.sessionId === sessionId && live.ref === ref) return
     previewFailure.set({

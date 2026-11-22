@@ -1,18 +1,19 @@
 // @vitest-environment jsdom
 /**
  * Explicit skill-preview failures reach the user: the frame-wide
- * `shell.overlay` host outlives the Session panel, offers Retry, and retries
- * the same preview for the same Session after the connection recovers.
- * Prewarm, candidate discovery, cancellation, a Session switch, and a skill
- * without a file path raise no notice.
+ * `shell.overlay` host outlives the Chat panel, offers Retry, and retries the
+ * same preview for the same Session after the connection recovers.
+ * Prewarm, candidate discovery, cancellation, a Session switch, a skill
+ * without a file path, and a failed retry all keep their documented outcomes.
  */
 import { act, cleanup, fireEvent, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi, type MockInstance } from 'vitest'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { RemoteError, SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ClientSessionContext, InputTriggerSource } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+import { PREVIEW_FAILURE_HOLD_MS } from '../src/client/preview-failure.tsx'
 import * as plugin from '../src/client/index.ts'
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
@@ -38,9 +39,14 @@ const listFails = (): ListFn => () => Promise.resolve({
   ok: false as const, error: new RemoteError('gateway/internal', 'offline', {}),
 })
 
-/** Flush the microtask chain a settled catalog fetch walks (no timers). */
-async function flushMicrotasks(turns = 8): Promise<void> {
-  for (let i = 0; i < turns; i += 1) await act(async () => { await Promise.resolve() })
+/** Wait for a toast to mount: fake timers rule out a timer-driven `vi.waitFor`. */
+async function waitForAlert(): Promise<HTMLElement> {
+  for (let turn = 0; turn < 100; turn += 1) {
+    const alert = screen.queryByRole('alert')
+    if (alert !== null) return alert
+    await act(async () => { await Promise.resolve() })
+  }
+  throw new Error('the preview failure notice never appeared')
 }
 
 interface Bench {
@@ -93,14 +99,14 @@ async function bench(list: ListFn, language: 'en' | 'ja' = 'en'): Promise<Bench>
   }
 }
 
-/** Let an explicit click's fetch settle and surface its diagnostics notice. */
-async function failExplicitClick(b: Bench): Promise<void> {
+/** Click once, fail the fetch, and wait until the plugin logged the failure. */
+async function failExplicitClick(b: Bench): Promise<MockInstance> {
   const log = vi.spyOn(console, 'error').mockImplementation(() => {})
   expect(b.source.openReference!(b.session, { ref: '/review' })).toBe(true)
   await vi.waitFor(() => {
     expect(log).toHaveBeenCalledWith('[ui-skill] reference preview failed:', expect.any(Error))
   })
-  await flushMicrotasks()
+  return log
 }
 
 describe('explicit preview failure notice', () => {
@@ -111,7 +117,9 @@ describe('explicit preview failure notice', () => {
       : listOk()(payload))
     const b = await bench(list)
     await failExplicitClick(b)
-    expect(screen.getByRole('alert').textContent).toContain('Could not open the skill preview.')
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('Could not open the skill preview.')
+    })
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(b.openResourceIn).not.toHaveBeenCalled()
 
@@ -128,19 +136,21 @@ describe('explicit preview failure notice', () => {
     const b = await bench(listFails())
     vi.useFakeTimers()
     b.source.openReference!(b.session, { ref: '/review' })
-    await flushMicrotasks()
-    const alert = screen.getByRole('alert')
-    expect(alert.style.getPropertyValue('--dsh-toast-hold')).toBe('8000ms')
-    await act(async () => { await vi.advanceTimersByTimeAsync(8999) })
+    const alert = await waitForAlert()
+    expect(alert.style.getPropertyValue('--dsh-toast-hold')).toBe(`${PREVIEW_FAILURE_HOLD_MS}ms`)
+    // Still visible after the full hold; gone once both hold and fade elapse.
+    await act(async () => { await vi.advanceTimersByTimeAsync(PREVIEW_FAILURE_HOLD_MS) })
     expect(screen.queryByRole('alert')).not.toBeNull()
-    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('localizes the failure copy in Japanese', async () => {
     const b = await bench(listFails(), 'ja')
     await failExplicitClick(b)
-    expect(screen.getByRole('alert').textContent).toContain('スキルのプレビューを開けませんでした。')
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('スキルのプレビューを開けませんでした。')
+    })
     expect(screen.getByRole('button', { name: '再試行' })).toBeTruthy()
   })
 
@@ -154,8 +164,38 @@ describe('explicit preview failure notice', () => {
     await vi.waitFor(() => { expect(list).toHaveBeenCalledOnce() })
     gate.reject(new Error('offline'))
     await vi.waitFor(() => { expect(log).toHaveBeenCalledTimes(2) })
-    await flushMicrotasks()
-    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    await vi.waitFor(() => { expect(screen.getAllByRole('alert')).toHaveLength(1) })
+  })
+
+  it('reports again when the retry also fails', async () => {
+    const b = await bench(listFails())
+    const log = await failExplicitClick(b)
+    await vi.waitFor(() => { expect(screen.getByRole('alert')).toBeTruthy() })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(screen.queryByRole('alert')).toBeNull()
+    await vi.waitFor(() => { expect(log).toHaveBeenCalledTimes(2) })
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('Could not open the skill preview.')
+    })
+  })
+
+  it('closes the notice when the retry finds no file path', async () => {
+    let fail = true
+    const list = vi.fn<ListFn>(payload => fail
+      ? listFails()(payload)
+      : listOk([{ name: 'review', description: 'Review' }])(payload))
+    const b = await bench(list)
+    await failExplicitClick(b)
+    await vi.waitFor(() => { expect(screen.getByRole('alert')).toBeTruthy() })
+
+    fail = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    // Joining the retried fetch proves it settled without opening or reporting.
+    await vi.waitFor(() => { expect(list).toHaveBeenCalledTimes(2) })
+    await expect(b.source.candidates(b.session, req(''))).resolves.toHaveLength(1)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(b.openResourceIn).not.toHaveBeenCalled()
   })
 
   it('dismisses the notice when a later click opens the preview', async () => {
@@ -163,19 +203,18 @@ describe('explicit preview failure notice', () => {
     const list = vi.fn<ListFn>(payload => fail ? listFails()(payload) : listOk()(payload))
     const b = await bench(list)
     await failExplicitClick(b)
-    expect(screen.getByRole('alert')).toBeTruthy()
+    await vi.waitFor(() => { expect(screen.getByRole('alert')).toBeTruthy() })
 
     fail = false
     expect(b.source.openReference!(b.session, { ref: '/review' })).toBe(true)
     await vi.waitFor(() => { expect(b.openResourceIn).toHaveBeenCalledExactlyOnceWith(b.first, ADDRESS) })
-    await flushMicrotasks()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('clears the notice when another Session comes on screen', async () => {
     const b = await bench(listFails())
     await failExplicitClick(b)
-    expect(screen.queryByRole('alert')).not.toBeNull()
+    await vi.waitFor(() => { expect(screen.getByRole('alert')).toBeTruthy() })
     act(() => { b.mounted.set(b.second) })
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -183,7 +222,7 @@ describe('explicit preview failure notice', () => {
   it('clears the notice when the plugin disposes', async () => {
     const b = await bench(listFails())
     await failExplicitClick(b)
-    expect(screen.queryByRole('alert')).not.toBeNull()
+    await vi.waitFor(() => { expect(screen.getByRole('alert')).toBeTruthy() })
     await b.owner.dispose()
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -195,16 +234,18 @@ describe('preview failures that stay silent', () => {
     const list = vi.fn<ListFn>(() => gate.promise)
     const b = await bench(list)
     b.source.warm!(b.session)
+    // Join the prewarmed fetch from a candidate poll: its settlement proves the
+    // prewarm path finished, and a prewarm must never report.
+    const joined = b.source.candidates(b.session, req(''))
     await vi.waitFor(() => { expect(list).toHaveBeenCalledOnce() })
     gate.reject(new Error('offline'))
-    await flushMicrotasks()
+    await expect(joined).rejects.toThrow('offline')
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('ignores failed candidate discovery', async () => {
     const b = await bench(listFails())
     await expect(b.source.candidates(b.session, req(''))).rejects.toThrow('offline')
-    await flushMicrotasks()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
@@ -219,7 +260,6 @@ describe('preview failures that stay silent', () => {
     b.runtime.ctx.emit('connection/reset')
     gate.resolve({ ok: true, value: { skills: ROWS } })
     await expect(completion).rejects.toThrow()
-    await flushMicrotasks()
     expect(log).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -227,16 +267,31 @@ describe('preview failures that stay silent', () => {
   it('ignores a failed click whose Session is no longer on screen', async () => {
     const b = await bench(listFails())
     b.mounted.set(b.second)
-    await failExplicitClick(b)
+    const log = await failExplicitClick(b)
+    expect(log).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('ignores a failure that settles after its Session left the screen', async () => {
+    const gate = Promise.withResolvers<ListResult>()
+    const list = vi.fn<ListFn>(() => gate.promise)
+    const b = await bench(list)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    b.source.openReference!(b.session, { ref: '/review' })
+    const joined = b.source.candidates(b.session, req(''))
+    await vi.waitFor(() => { expect(list).toHaveBeenCalledOnce() })
+    act(() => { b.mounted.set(b.second) })
+    gate.reject(new Error('offline'))
+    await expect(joined).rejects.toThrow('offline')
+    expect(log).toHaveBeenCalledOnce()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('ignores a skill without a file path', async () => {
-    const list = vi.fn(listOk())
-    const b = await bench(list)
+    const b = await bench(listOk())
     expect(b.source.openReference!(b.session, { ref: '/virtual' })).toBe(true)
-    await vi.waitFor(() => { expect(list).toHaveBeenCalledOnce() })
-    await flushMicrotasks()
+    // Awaiting the joined candidate poll proves the shared fetch resolved.
+    await expect(b.source.candidates(b.session, req(''))).resolves.toHaveLength(2)
     expect(screen.queryByRole('alert')).toBeNull()
     expect(b.openResourceIn).not.toHaveBeenCalled()
   })

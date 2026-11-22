@@ -39,6 +39,9 @@
       "path": "../ui-tool"
     },
     {
+      "path": "../ui-layout"
+    },
+    {
       "path": "../ui-primitives"
     },
     {

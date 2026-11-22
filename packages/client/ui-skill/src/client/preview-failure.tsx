@@ -1,7 +1,8 @@
 /**
  * Frame-wide retryable notice for a failed explicit skill preview. The host
- * lives in the root `shell.overlay` slot, so it outlives the Session panel
- * whose click produced it; the apply closure owns the notice state.
+ * lives in the root `shell.overlay` slot, so it outlives the Chat panel whose
+ * click produced it; switching Sessions dismisses it, and the apply closure
+ * owns the notice state.
  */
 import { IconWarningOutlineRegular, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
