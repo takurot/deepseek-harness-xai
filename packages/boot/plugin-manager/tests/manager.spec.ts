@@ -20,7 +20,6 @@ import PluginManager, { type Config, type PluginChange, type PluginInstallLogChu
 import type { PluginEntryId, PluginOperation } from '../src/types.ts'
 import Hmr from '@deepseek-ai/dsh-hmr'
 import Timer from '@deepseek-ai/cordis-plugin-timer'
-import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import { Group } from '@deepseek-ai/cordis-plugin-loader'
 import * as operations from '../src/operations.ts'
 import * as githubConnection from '../src/github-connection.ts'
@@ -63,13 +62,14 @@ async function fixture(reload: 'live' | 'startup' = 'live', overlay = false, pre
   writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
   writeFileSync(join(dir, 'cordis.yml'), '[]\n')
   prepareFiles?.(dir)
-  const overlays: PatchOptions[] = overlay ? [{ id: 'managed', disabled: true }] : []
+  const overlayPath = join(home, 'overlay.patch.yml')
+  writeFileSync(overlayPath, JSON.stringify(overlay ? [{ id: 'managed', disabled: true }] : []))
   const profile: ProfileContext = {
     name: 'test',
     ...(packageManager === undefined ? {} : { packageManager }),
     startedBundles: loadProfileDirectory('test', dir, anchor).layers.map(layer => layer.packageName),
     dir, patchPath: join(dir, 'cordis.patch.yml'), installAnchor: anchor, cwd: home, home,
-    overlays, telemetryDisabledEnv: undefined,
+    overlayPaths: [overlayPath], telemetryDisabledEnv: undefined,
   }
   const ctx = await boot('test', join(dir, 'cordis.yml'), readProfilePatches('test', profile), (ctx) => {
     owner = ctx
@@ -89,7 +89,7 @@ async function fixture(reload: 'live' | 'startup' = 'live', overlay = false, pre
     stopHmr = () => owner.dispose()
     await ctx.hmr.runExclusive(async () => {})
   }
-  return { ctx, dir, manager: ctx.pluginManager, bundle, profile, stopHmr, overlays, connection }
+  return { ctx, dir, manager: ctx.pluginManager, bundle, profile, stopHmr, overlayPath, connection }
 }
 
 it.each(['live', 'startup'] as const)('refuses an unsupported bundle before saving or applying it with %s reload', async (reload) => {
@@ -717,6 +717,15 @@ it('retains installed dependencies when toggling a bundle and appends it when re
   expect((await manager.listPlugins()).some(row => row.patchId === 'managed')).toBe(false)
   await manager.setBundleEnabled('extra', true)
   expect(readProfileManifest('test', dir).dsh?.profile?.bundles).toEqual(['core', 'third', 'extra'])
+})
+
+it('lists plugins from current overlay files in a startup-only profile', async () => {
+  const { manager, overlayPath } = await fixture('startup')
+  const id = (await manager.listPlugins()).find(row => row.patchId === 'managed')!.entryId
+  rmSync(overlayPath)
+  await expect(manager.listPlugins()).rejects.toThrow(`failed to read overlay ${overlayPath}`)
+  writeFileSync(overlayPath, '[]\n')
+  expect((await manager.listPlugins()).some(row => row.entryId === id)).toBe(true)
 })
 
 it('reports an overlay overriding a saved plugin toggle', async () => {
@@ -1454,9 +1463,9 @@ it('omits installation-owned plain packages from the bundle inventory', async ()
 })
 
 it('does not delete a bundle retained by a higher-priority overlay', async () => {
-  const { ctx, manager, overlays, dir } = await fixture()
+  const { ctx, manager, overlayPath, dir } = await fixture()
   const entry = [...ctx.loader.entries()].find(row => row.id === 'include:managed')!
-  overlays.push({ insert: [{ ...entry.options }] })
+  writeFileSync(overlayPath, JSON.stringify([{ insert: [{ ...entry.options }] }]))
   const remove = vi.spyOn(operations, 'runProfilePnpm')
   onTestFinished(() => { remove.mockRestore() })
   expect(await manager.removeBundle('extra')).toMatchObject({ changed: true, application: 'failed', error: { code: 'bundle-in-use' } })
