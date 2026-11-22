@@ -70,7 +70,7 @@ A malformed comma- or whitespace-joined charset declaration containing a UTF-8 l
 
 ### Failures and recovery
 
-Failures throw `WebError` with a machine-routable code: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_REDIRECT_BLOCKED`, `WEB_UNSUPPORTED_CONTENT_TYPE`, `WEB_PDF_UNREADABLE`, `WEB_PDF_UNAVAILABLE`, `WEB_ABORTED`, or `WEB_PROVIDER_ERROR`. `WEB_UNSUPPORTED_CONTENT_TYPE` covers unsupported media types, unsupported charset declarations, and invalid UTF-8 during malformed-declaration recovery. `WEB_PDF_UNREADABLE` covers a corrupt, encrypted, or unsupported PDF; a PDF extraction Worker failure is `WEB_PROVIDER_ERROR`. `WEB_PDF_UNAVAILABLE` reports a build that omits the extraction engine: the packaged Python runtime wheel does, and its message names the Node or desktop distribution as the deployment that supports PDFs. A response with excessive content encodings and an incomplete body fails as `WEB_PROVIDER_ERROR` without terminating the host process. Direct callers can route on the code; the model-facing `web_fetch` tool surfaces the failure text to the model under its own error wrapper.
+Failures throw `WebError` with a machine-routable code: `WEB_INVALID_URL`, `WEB_BLOCKED_URL`, `WEB_FETCH_TOO_LARGE`, `WEB_FETCH_TIMEOUT`, `WEB_REDIRECT_BLOCKED`, `WEB_UNSUPPORTED_CONTENT_TYPE`, `WEB_PDF_UNREADABLE`, `WEB_PDF_UNAVAILABLE`, `WEB_ABORTED`, or `WEB_PROVIDER_ERROR`. `WEB_UNSUPPORTED_CONTENT_TYPE` covers unsupported media types, unsupported charset declarations, and invalid UTF-8 during malformed-declaration recovery. `WEB_PDF_UNREADABLE` covers a corrupt, encrypted, or unsupported PDF; a PDF extraction Worker failure is `WEB_PROVIDER_ERROR`. `WEB_PDF_UNAVAILABLE` reports a build that omits the extraction engine: the packaged Python runtime wheel does, and its message names the Node or desktop distribution as the deployment that supports PDFs. A network failure before or during the response is classified by its system error code as `WEB_FETCH_DNS_FAILED`, `WEB_FETCH_CONNECTION_REFUSED`, `WEB_FETCH_CONNECTION_TIMEOUT`, `WEB_FETCH_CERTIFICATE_INVALID`, `WEB_FETCH_CONNECTION_INTERRUPTED`, or `WEB_FETCH_NETWORK_UNREACHABLE`; a missing, unrecognized, or mixed code yields `WEB_FETCH_NETWORK_ERROR`. Its message states the class, the system code when known, and the underlying error, for example `web fetch failed: could not resolve the host name (ENOTFOUND): getaddrinfo ENOTFOUND host`. The detail lists at most four connection attempts, counts the rest, and keeps at most 500 characters. A response with excessive content encodings and an incomplete body is a transport failure classified as `WEB_FETCH_NETWORK_ERROR`; the structured failure does not terminate the host process. Direct callers can route on the code; the model-facing `web_fetch` tool surfaces the failure text to the model under its own error wrapper.
 
 -----
 
@@ -95,6 +95,7 @@ The package is built on one separation and one layered timeout:
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: config schema, limit validation, provider registration |
 | [`src/provider.ts`](src/provider.ts) | The `HttpFetchProvider`: transport, redirect following, capped reads, charset decoding, PDF extraction |
+| [`src/transport-failure.ts`](src/transport-failure.ts) | Transport failure classes: system error code to `WEB_FETCH_*` code, summary, and bounded detail |
 | [`src/pdf-extract.ts`](src/pdf-extract.ts) | Bounded PDF.js page text extraction and its page/character accounting |
 | [`src/pdf-thread.ts`](src/pdf-thread.ts) | Worker Thread lifecycle for extraction, terminating on every outcome |
 | [`src/worker.ts`](src/worker.ts) | Worker entry: validates the request and reports text or a document failure |
@@ -125,7 +126,7 @@ Read these pages when the package-level contract is not enough. They move from t
 <a id="model-experience"></a>
 ## Model Experience
 
-Indirectly, through `dsh-tool-web`, which renders this provider's `maxBodyChars`-bounded decoded text, markdown-shaped HTML, or PDF page text (`[Page N of <total>]` markers, the page-cut notice, and the no-text/OCR notice) under its fetch-result wrapper while redirects, headers, and transport limits remain hidden.
+Indirectly, through `dsh-tool-web`, which renders this provider's `maxBodyChars`-bounded decoded text, markdown-shaped HTML, or PDF page text (`[Page N of <total>]` markers, the page-cut notice, and the no-text/OCR notice) under its fetch-result wrapper while redirects, headers, and transport limits remain hidden. A network failure reaches the model as its classified message.
 
 #### KV Cache effect
 

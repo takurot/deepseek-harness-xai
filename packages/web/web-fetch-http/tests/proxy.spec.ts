@@ -64,8 +64,8 @@ afterEach(async () => {
  * Install the policy of a user who exported one proxy for both schemes; the fixture disposes it
  * after every case.
  */
-async function installProxy(): Promise<() => Promise<void>> {
-  const env = { get: (name: string) => (name === 'HTTP_PROXY' || name === 'HTTPS_PROXY' ? { value: proxyUrl } : undefined) }
+async function installProxy(url = proxyUrl): Promise<() => Promise<void>> {
+  const env = { get: (name: string) => (name === 'HTTP_PROXY' || name === 'HTTPS_PROXY' ? { value: url } : undefined) }
   return await installProxyFromEnvironment(env, () => undefined)
 }
 
@@ -108,5 +108,22 @@ describe('fetching through a proxy', () => {
     await expect(new HttpFetchProvider(limits).fetch({ url: 'ftp://example.com/x' }))
       .rejects.toThrow(expect.objectContaining({ code: 'WEB_INVALID_URL' }))
     expect(proxied).toEqual([])
+  })
+
+  it('names a proxy transport failure without the proxy credentials', async () => {
+    proxy.removeAllListeners('request')
+    proxy.on('request', (request) => { request.socket.end() })
+    disposeProxy = await installProxy(proxyUrl.replace('http://', 'http://proxy-user:proxy-secret@'))
+
+    const failure = new HttpFetchProvider(limits).fetch({ url: proxyTarget })
+
+    await expect(failure).rejects.toThrow(expect.objectContaining({
+      code: 'WEB_FETCH_CONNECTION_INTERRUPTED',
+      message: 'web fetch failed: the connection was interrupted (UND_ERR_SOCKET): other side closed',
+    }))
+    await failure.catch((error: unknown) => {
+      expect((error as Error).message).not.toContain('proxy-user')
+      expect((error as Error).message).not.toContain('proxy-secret')
+    })
   })
 })
