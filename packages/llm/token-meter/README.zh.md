@@ -146,6 +146,7 @@ token-meter 通过必需的 `ctx.sessionProjections` 服务注册三个客户端
 - **提供方用量只在规范 envelope 完全相同时可复用**——工具、提供方、模型或调用配置变化会刻意回退到完整启发式估算；系统提示词变更在下一次成功调用之前按带符号的表面增量计量。
 - **系统提示词改写不带影子价**——循环替换 system 节点时没有紧邻的计量事件，因此 `contextPressure.projectedTokens` 以零增量折叠该替换，直到下一个用量样本；`contextBreakdown.systemTokens` 与 `measure()` 会立即按新提示词重新计价。
 - **构成检查点保留当前 surface**——精确的 system/message 分类需要位置条目；检查点大小和 surface 事件折叠成本为 O(当前保留 surface)。
+- **CJK 扩展 J 仍按其他文字密度计价**——扩展 G（U+30000–U+3134A）与扩展 H（U+31350–U+323AF）按 CJK 密度计价，而 CJK 扩展 J（U+323B0–U+33479）仍按每 token 两字符计价。
 
 <a id="dev-note"></a>
 ### 开发备注

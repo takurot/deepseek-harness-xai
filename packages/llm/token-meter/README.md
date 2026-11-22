@@ -146,6 +146,7 @@ These limits define where the measurement stops and future work begins. They are
 - **Provider usage is only reusable for an identical canonical envelope** — tools, provider, model, or call-config changes deliberately fall back to full heuristic estimation; system-prompt changes are signed surface deltas until the next successful call.
 - **A system-prompt rewrite carries no shadow price** — the loop replaces a system node without an adjacent metering event, so `contextPressure.projectedTokens` folds that replacement at zero delta until the next usage sample; `contextBreakdown.systemTokens` and `measure()` reprice the new prompt immediately.
 - **Composition checkpoints retain the current surface** — exact system/message classification needs positional entries; checkpoint size and surface-event folding are O(current retained surface).
+- **CJK Extension J stays at the other-script density** — Extension G (U+30000–U+3134A) and Extension H (U+31350–U+323AF) price as CJK, while CJK Extension J (U+323B0–U+33479) still prices at two characters per token.
 
 <a id="dev-note"></a>
 ### Dev Note

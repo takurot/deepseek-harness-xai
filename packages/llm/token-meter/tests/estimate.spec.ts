@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 
-import { estimateContent, estimateSystemMessage, estimateText, estimateToolsTokens } from '../src/estimate.ts'
-import { createSystemMessage } from '@deepseek-ai/dsh-llm'
+import { estimateContent, estimateMessage, estimateSystemMessage, estimateText, estimateToolsTokens } from '../src/estimate.ts'
+import { createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 
 describe('estimateText', () => {
   it('prices ASCII at four characters per token, rounded up', () => {
@@ -19,6 +19,34 @@ describe('estimateText', () => {
     expect(estimateText('，。')).toBe(2)
     expect(estimateText('豈')).toBe(1)
     expect(estimateText('𠀀')).toBe(1)
+  })
+
+  it('prices two Extension G ideographs at two tokens', () => {
+    expect(estimateText('\u{30000}\u{30001}')).toBe(2)
+    expect(estimateText('\u{30000}\u{3134a}')).toBe(2)
+    expect(estimateText('\u{30000}\u{30000}')).toBe(2)
+    expect(estimateText('\u{3134a}\u{3134a}')).toBe(2)
+  })
+
+  it('prices two Extension H ideographs at two tokens', () => {
+    expect(estimateText('\u{31350}\u{31351}')).toBe(2)
+    expect(estimateText('\u{323ae}\u{323af}')).toBe(2)
+    expect(estimateText('\u{31350}\u{31350}')).toBe(2)
+    expect(estimateText('\u{323af}\u{323af}')).toBe(2)
+  })
+
+  it('prices a mixed Extension G and H string at one token per ideograph', () => {
+    expect(estimateText('\u{30000}\u{31350}')).toBe(2)
+    expect(estimateText('ab\u{30000}\u{31350}')).toBe(3)
+    expect(estimateText('a日\u{20000}\u{30000}\u{31350}😀')).toBe(5)
+  })
+
+  it('keeps the densities of ASCII, basic CJK, plane-2 CJK, emoji, and higher planes', () => {
+    expect(estimateText('abcdefgh')).toBe(2)
+    expect(estimateText('日本')).toBe(2)
+    expect(estimateText('\u{20000}\u{20001}')).toBe(2)
+    expect(estimateText('😀😀😀😀')).toBe(2)
+    expect(estimateText('\u{f0000}\u{f0001}')).toBe(1)
   })
 
   it('prices other non-ASCII scripts at two characters per token', () => {
@@ -56,5 +84,17 @@ describe('estimate callers use script-aware pricing', () => {
     const tools = [{ name: 'x', description: '日本語', parameters: { type: 'object' } }]
     expect(estimateToolsTokens({ config: {} as never, tools }))
       .toBe(estimateText(JSON.stringify(tools)) + 4)
+  })
+
+  it('applies the Extension G and H density through estimateMessage', () => {
+    const text = (value: string) => createUserMessage({
+      content: [{ type: 'text', text: value }],
+      source: { kind: 'user' },
+    })
+    // text density + BLOCK_OVERHEAD (4) + ROLE_OVERHEAD (4)
+    expect(estimateMessage(text('\u{30000}\u{30001}'))).toBe(10)
+    expect(estimateMessage(text('\u{31350}\u{31351}'))).toBe(10)
+    // The Issue's reproduction: 100 Ext G ideographs priced through a message.
+    expect(estimateMessage(text('\u{30000}'.repeat(100)))).toBe(108)
   })
 })
