@@ -594,6 +594,39 @@ describe('SidebarRightController — a tab\'s own actions', () => {
     expect(titles()).toContain('a.txt')
   })
 
+  it('expands the named Session behind the on-screen one, and no-ops once its adoption is released', () => {
+    const { controller, adopt, unadopt, show, instance, layout, titles } = harness()
+    const other = createSidebarRightStore(() => ({ kind: 'guide', title: 'seed' })).create(OTHER)
+    const releaseOther = adopt(OTHER, other)
+    other.actions.open(OTHER)
+    show(OTHER)
+    const otherSurface = other.getSnapshot().bySession[OTHER]
+    // A is not drawn, but the open belongs to A: its stored layout expands.
+    controller.openResourceIn(SESSION, A_TXT)
+    expect(layout().expanded).toBe(true)
+    expect(titles()).toContain('a.txt')
+    expect(other.getSnapshot().bySession[OTHER]).toBe(otherSurface)
+    // The runtime released A's store generation: nothing to write to.
+    unadopt()
+    const released = instance.getSnapshot().bySession
+    controller.openResourceIn(SESSION, B_TXT)
+    expect(instance.getSnapshot().bySession).toBe(released)
+    releaseOther()
+  })
+
+  it('does nothing for a Session whose store was never adopted', () => {
+    const { controller, adopt, show } = harness()
+    const other = createSidebarRightStore(() => ({ kind: 'guide', title: 'seed' })).create(OTHER)
+    show(OTHER)
+    controller.openResourceIn(OTHER, A_TXT)
+    expect(other.getSnapshot().bySession[OTHER]).toBeUndefined()
+    // Adopting the same store makes the open land; releasing it stops the opens again.
+    const release = adopt(OTHER, other)
+    controller.openResourceIn(OTHER, A_TXT)
+    expect(Object.values(other.getSnapshot().bySession[OTHER]!.layout.tabs).map(tab => tab.title)).toContain('a.txt')
+    release()
+  })
+
   it('land in the session the tab is in through its own adopted store, after another session came on screen', () => {
     const { controller, adopt, show, publish, layout, expand } = harness()
     expand()
