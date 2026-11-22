@@ -23,7 +23,7 @@ const OTHER_QUARTER_TOKENS = 2
  * Whether a code point is priced at the CJK density: CJK radicals through
  * unified ideographs (which include CJK punctuation and kana), Hangul
  * syllables, compatibility ideographs, fullwidth forms, and the
- * supplementary ideographic planes.
+ * supplementary ideographic planes through U+323AF (CJK Extensions G and H).
  * @param codePoint - Unicode code point to classify.
  * @returns true when the code point is CJK.
  */
@@ -32,7 +32,7 @@ function isCjk(codePoint: number): boolean {
     || (codePoint >= 0xac00 && codePoint <= 0xd7af)
     || (codePoint >= 0xf900 && codePoint <= 0xfaff)
     || (codePoint >= 0xff00 && codePoint <= 0xffef)
-    || (codePoint >= 0x20000 && codePoint <= 0x2ffff)
+    || (codePoint >= 0x20000 && codePoint <= 0x323af)
 }
 
 /**
