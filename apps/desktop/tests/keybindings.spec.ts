@@ -38,7 +38,7 @@ it('persists into the supplied userData, reloads null bindings, and retains orig
 it.each([
   ['an ordinary edit', { type: 'set', id: 'test.toggle' as ShortcutCommandId, binding: { code: 'KeyC', modifiers: ['control'] as const } }],
   ['Restore All', { type: 'reset-all' }],
-] as const)('retains externally replaced future-version bytes when %s starts without a prior read', async (_label, edit) => {
+] as const)('retains externally replaced future-version bytes when %s starts without rereading after the replacement', async (_label, edit) => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-keybindings-'))
   onTestFinished(async () => { await rm(root, { recursive: true, force: true }) })
   let state!: ShortcutConfigSnapshot

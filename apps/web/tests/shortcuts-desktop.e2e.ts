@@ -24,7 +24,7 @@ const expected = fileURLToPath(new URL('./expected/shortcuts-desktop', import.me
 const seed = fileURLToPath(new URL('../../../snapshots/web/seeded-history/session.v3.jsonl', import.meta.url))
 const mode = webSnapshotMode()
 
-it.each([
+it.skipIf(process.platform === 'win32' || process.getuid?.() === 0).each([
   { platform: 'macos', marker: 'darwin', primary: 'Meta' },
   { platform: 'windows', marker: 'win32', primary: 'Control' },
 ] as const)('records, persists and prioritizes $platform Desktop single keys and chords over recorded history', async ({ platform, marker, primary }) => {
