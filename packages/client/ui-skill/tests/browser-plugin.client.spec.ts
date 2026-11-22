@@ -22,6 +22,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { InputTriggerService } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import { RemoteError, TestRemote, TestSessions } from '@deepseek-ai/dsh-client-test-runtime'
+import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SessionFixture } from '@deepseek-ai/dsh-client-test-runtime'
 import type { InjectParams } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteFailure } from '@deepseek-ai/dsh-api-remotes/client'
@@ -56,6 +57,7 @@ function providePresentation(ctx: Context): PresentationCapture {
     children: {
       'tool.call.toolview': { kind: 'keyed', scope: 'session' },
       'conversation.user.text.node': { kind: 'keyed', scope: 'session', inline: true },
+      'shell.overlay': { kind: 'list', scope: 'root' },
     },
   } as never, () => null)
   const capture: PresentationCapture = {
@@ -88,7 +90,8 @@ async function bench(
 ) {
   const ctx = new Context()
   const openResourceIn = vi.fn()
-  ctx.provide('sidebarRight', options.sidebarRight?.(ctx) ?? { openResourceIn })
+  const mounted = createSnapshotStore<SessionId | undefined>(undefined)
+  ctx.provide('sidebarRight', options.sidebarRight?.(ctx) ?? { mounted, openResourceIn })
   let captured: InputTriggerSource | undefined
   ctx.provide('inputTriggers', { registerSource: (src: InputTriggerSource) => { captured = src; return () => {} } })
   const sessions = new TestSessions(async (action) => { await action() }, ctx)
@@ -156,7 +159,7 @@ function realSidebar(ctx: Context) {
     surface,
     openResource,
     openResourceIn,
-    sidebarRight: { openResource, openResourceIn },
+    sidebarRight: { mounted: controller.mounted, openResource, openResourceIn },
   }
 }
 
@@ -193,7 +196,7 @@ describe('apply', () => {
   it('registers the dedicated skill row and its locale dictionaries', async () => {
     const ctx = new Context()
     onTestFinished(async () => { await ctx.fiber.dispose() })
-    ctx.provide('sidebarRight', { openResourceIn: vi.fn() })
+    ctx.provide('sidebarRight', { mounted: createSnapshotStore<SessionId | undefined>(undefined), openResourceIn: vi.fn() })
     ctx.provide('inputTriggers', { registerSource: () => () => {} })
     ctx.provide('sessions', { subagentAddress: () => undefined })
     new TestRemote(ctx, { skills: { list: listOk(CATALOG) } })
@@ -215,6 +218,8 @@ describe('apply', () => {
           'row.instructions': '说明',
           'row.inspect': '查看',
           'menu.userOnly': '仅用户',
+          'preview.failure': '无法打开技能预览。',
+          'preview.retry': '重试',
         },
         en: {
           'row.title': 'Skill',
@@ -225,6 +230,8 @@ describe('apply', () => {
           'row.instructions': 'Instructions',
           'row.inspect': 'Inspect',
           'menu.userOnly': 'user-only',
+          'preview.failure': 'Could not open the skill preview.',
+          'preview.retry': 'Retry',
         },
         ja: {
           'row.title': 'スキル',
@@ -235,6 +242,8 @@ describe('apply', () => {
           'row.instructions': '手順',
           'row.inspect': '詳細を確認',
           'menu.userOnly': 'ユーザー専用',
+          'preview.failure': 'スキルのプレビューを開けませんでした。',
+          'preview.retry': '再試行',
         },
       },
     }])
@@ -243,7 +252,7 @@ describe('apply', () => {
   it('registers the "/" skill source; disposal frees the name (HMR safety)', async () => {
     const ctx = new Context()
     onTestFinished(async () => { await ctx.fiber.dispose() })
-    ctx.provide('sidebarRight', { openResourceIn: vi.fn() })
+    ctx.provide('sidebarRight', { mounted: createSnapshotStore<SessionId | undefined>(undefined), openResourceIn: vi.fn() })
     // InputTriggerService itself injects 'sessions'; the stub unblocks its fiber.
     ctx.provide('sessions', {})
     await ctx.plugin(InputTriggerService).await()
@@ -264,6 +273,7 @@ describe('apply', () => {
     await fiber.dispose()
     expect(() => inputTriggers.registerSource(rival)).not.toThrow()
     expect(presentation.slots.entries('tool.call.toolview')).toHaveLength(0)
+    expect(presentation.slots.entries('shell.overlay')).toHaveLength(0)
     expect(presentation.localeDisposed).toBe(true)
   })
 })

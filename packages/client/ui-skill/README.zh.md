@@ -29,7 +29,7 @@ kind: "package-reference"
 
 ### source 提供什么
 
-普通会话的候选来自 `skills/list` Remote；宿主提供每一个用户可调用的 skill，`modelInvocable: false` 的条目（即 `disable-model-invocation` skill，此路径是其唯一入口）会以当前语言把仅限用户标记作为描述前缀带上。结果经 `/` 菜单共享的名字排序器（ui-primitives 的 `rankByName`）排名：查询作为不区分大小写的有序子序列匹配 skill 名，前缀命中排最前，同分保持宿主顺序（[排名决策](../../../.agents/notes/archived/feature/2026-08-04-web-slash-command-fuzzy-discovery.md)）。`skills/list` 调用失败时会被记录并静默丢弃该菜单组——菜单只显示 pending／ready 状态。
+普通会话的候选来自 `skills/list` Remote；宿主提供每一个用户可调用的 skill，`modelInvocable: false` 的条目（即 `disable-model-invocation` skill，此路径是其唯一入口）会以当前语言把仅限用户标记作为描述前缀带上。结果经 `/` 菜单共享的名字排序器（ui-primitives 的 `rankByName`）排名：查询作为不区分大小写的有序子序列匹配 skill 名，前缀命中排最前，同分保持宿主顺序（[排名决策](../../../.agents/notes/archived/feature/2026-08-04-web-slash-command-fuzzy-discovery.md)）。菜单候选的 `skills/list` 调用失败时会被记录并静默丢弃该菜单组——菜单只显示 pending／ready 状态；用户显式点击引用时的同一失败改为可重试的整框通知。
 
 ### skill 工具行
 
@@ -37,7 +37,7 @@ kind: "package-reference"
 
 收起的行显示 skill 图标、`Skill` 标题与请求加载的 skill 名称，并与普通工具行使用相同的 secondary 字号轴、行高、行高度和图标缩放。所有生命周期状态都保留普通 skill 图标；运行中的调用以同一道高光从左到右扫过标题、分隔符与 skill 名称，失败时以错误首行替换名称，中断则保留明确状态文本。已结算的行展开为一个尺寸受限的 `Instructions` 卡片，其中原样呈现持久化的工具输出；可用时还会提供标准轨迹的 `Inspect` 入口，展开卡片保留自身排版。该行的名称、生命周期与正文只派生自 ui-tool 提供的冻结调用／结果切片，绝不读取当前目录，因此即使已安装的 skill 或其描述发生变化，回放仍保持稳定。 文字和图标默认使用 tertiary 色，悬停使用 secondary 色；错误和中断文字保留各自的语义色。
 
-鼠标移入 `/name` 时，背景覆盖整个引用。点击已知 skill 会在右侧栏打开提供方给出的 `SKILL.md` 路径，同时保留文本的可编辑性。缓存未就绪时，点击复用该 Session 的目录请求，完成后在引用所在消息的 Session 中打开——即使此时屏幕上是另一个 Session——并保留点击时的 Session 地址；该 Session 已不再保留时什么都不打开。切换预设、插件管理操作、重置连接和插件释放会取消待处理的预览；后续点击重新获取当前目录。没有文件路径的 skill 仍可调用，但没有文件预览。
+鼠标移入 `/name` 时，背景覆盖整个引用。点击已知 skill 会在右侧栏打开提供方给出的 `SKILL.md` 路径，同时保留文本的可编辑性。缓存未就绪时，点击复用该 Session 的目录请求，完成后在引用所在消息的 Session 中打开——即使此时屏幕上是另一个 Session——并保留点击时的 Session 地址；该 Session 已不再保留时什么都不打开。切换预设、插件管理操作、重置连接和插件释放会取消待处理的预览；后续点击重新获取当前目录。没有文件路径的 skill 仍可调用，但没有文件预览。显式点击的拉取失败时，只要该 Session 仍在屏幕上，就会显示带「重试」操作的整框通知；连接恢复后重试会重新拉取当前目录并只打开一次预览，打开成功或切换 Session 会关闭该通知。预热、菜单候选拉取、取消以及没有文件路径的 skill 都不会触发通知。
 
 -----
 
@@ -59,7 +59,7 @@ source 不实现任何裁决钩子，也没有引用 codec：pick 落下字面�
 
 `/client` 导出接口只有插件主体（`apply`／`inject`）；source 对象是注册 effect 的内部实现。工具行把 `skill` wire 名称注册进 ui-tool 的 keyed `tool.call.toolview` slot。
 
-对于已发送文本，插件注册使用调用方已确认 `skillNames`、返回原文中下一个候选的 UserText 匹配器，并拥有 `conversation.user.text.node` 中的 `skill` 条目。renderer 从自身绑定 Session 的 Injection 接收 `openSkill`，委托本 source 的预览操作，而非 Chat owner props。不可交互的预览仍为标签。[UserText](../ui-conversation/README.zh.md#sent-user-text) 拥有求值与节点分发。
+对于已发送文本，插件注册使用调用方已确认 `skillNames`、返回原文中下一个候选的 UserText 匹配器，并拥有 `conversation.user.text.node` 中的 `skill` 条目。renderer 从自身绑定 Session 的 Injection 接收 `openSkill`，委托本 source 的预览操作，而非 Chat owner props。不可交互的预览仍为标签。预览失败通知是根作用域的 `shell.overlay` 条目，状态保存在插件闭包中，因此能在 Session 面板变化后继续存在；source 只在目标 Session 仍是 `ctx.sidebarRight.mounted` 的显式点击失败时写入它。[UserText](../ui-conversation/README.zh.md#sent-user-text) 拥有求值与节点分发。
 
 </details>
 
