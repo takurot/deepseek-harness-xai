@@ -38,6 +38,20 @@ it('syncs same-origin updates, rejects stale drafts, and releases the storage li
   } finally { adapter.dispose() }
 })
 
+it('reports a concurrently replaced invalid document as unreadable before stale', async () => {
+  let latest!: ShortcutConfigSnapshot
+  const adapter = webShortcutStorage(window, 'windows', (value) => { latest = value })
+  try {
+    const initial = await adapter.get(definitions)
+    localStorage.setItem(SHORTCUT_STORAGE_KEY, '{')
+    const result = await adapter.edit({ type: 'reset-all' }, initial.revision)
+    expect(result.status).toBe('unreadable')
+    expect(result.snapshot).toMatchObject({ status: 'unreadable', error: 'invalid' })
+    expect(latest).toMatchObject({ status: 'unreadable', error: 'invalid' })
+    expect(localStorage.getItem(SHORTCUT_STORAGE_KEY)).toBe('{')
+  } finally { adapter.dispose() }
+})
+
 it('retains drafts after quota failure and refuses to replace future data', async () => {
   let latest!: ShortcutConfigSnapshot
   const adapter = webShortcutStorage(window, 'windows', (value) => { latest = value })

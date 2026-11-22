@@ -1,5 +1,5 @@
 /** Real application composition and Desktop persistence with a substituted Electron preload transport. */
-import { mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -382,20 +382,18 @@ it.each([
             .toEqual([42])
         }
         await compareOrRefreshGolden(join(expected, 'fixed-conflict.expected.md'), await dialog.getByRole('group').ariaSnapshot(), mode)
-        const preferencePath = join(userData, 'keybindings.json')
-        const savedPreferencePath = join(userData, 'keybindings.saved.json')
-        await rename(preferencePath, savedPreferencePath)
+        // Keep the stored document readable and deny only the directory write:
+        // the adapter then reports a write failure without a concurrent read failure.
+        const userDataMode = (await stat(userData)).mode
+        await chmod(userData, 0o500)
         try {
-          // A directory prevents atomic file replacement on every supported filesystem.
-          await mkdir(preferencePath)
           await page.keyboard.press('j')
           await dialog.getByText('Could not save. Your previous shortcuts and current draft are preserved. Please retry.', { exact: true }).waitFor()
           expect(snapshot.document).toEqual(accepted)
           expect(await recorder.getAttribute('aria-invalid')).toBe('true')
           expect(await recorder.evaluate(node => node === document.activeElement)).toBe(true)
         } finally {
-          await rm(preferencePath, { recursive: true, force: true })
-          await rename(savedPreferencePath, preferencePath)
+          await chmod(userData, userDataMode)
         }
         await page.keyboard.down('b')
         await page.keyboard.down('a')

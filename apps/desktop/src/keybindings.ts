@@ -23,5 +23,5 @@ export function desktopKeybindings(userData: string, platform: ShortcutPlatform,
       }
     },
     write: raw => writeFileAtomic(path, raw, { mode: 0o600, dirMode: 0o700 }),
-  }, 'desktop', platform, false, publish)
+  }, 'desktop', platform, true, publish)
 }

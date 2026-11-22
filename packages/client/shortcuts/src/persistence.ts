@@ -89,8 +89,9 @@ export class ShortcutPersistence {
       if (this.rereadBeforeWrite) await this.read()
       const result = (status: ShortcutSaveResult['status']): ShortcutSaveResult => ({ status, snapshot: this.snapshot })
       if (!this.active || this.definitions === null || this.snapshot.status === 'loading') return result('not-ready')
-      if (revision !== this.snapshot.revision) return result('stale')
+      // An unreadable reread names the read failure even though its accepted revision also changed.
       if (this.snapshot.status === 'unreadable') return result('unreadable')
+      if (revision !== this.snapshot.revision) return result('stale')
       if ((edit.type === 'set' || edit.type === 'reset') && !this.definitions.some(row => row.id === edit.id && row.fixed === undefined)) return result('not-ready')
       const document = editShortcutDocument(this.snapshot.document, edit, this.runtime, this.platform)
       const rows = effectiveShortcuts(this.definitions, document, this.runtime, this.platform)
