@@ -12,5 +12,7 @@ it.skipIf(!existsSync(bundle) && process.env.DSH_EXAMPLE_MODE !== 'lib')('return
   expect(run.error, run.stderr).toBeUndefined()
   expect(run.signal, run.stderr).toBeNull()
   expect(run.status, run.stderr).toBe(0)
-  expect(run.stdout.trim()).toBe('{"code":"WEB_PROVIDER_ERROR"}')
+  // The premature close is a transport failure with no classifiable system code, so it
+  // surfaces as a structured WebError and the fixture exits 0 instead of terminating the host.
+  expect(run.stdout.trim()).toBe('{"code":"WEB_FETCH_NETWORK_ERROR"}')
 })
