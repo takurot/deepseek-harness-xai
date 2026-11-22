@@ -62,7 +62,7 @@ it.each([
   expect(await readFile(path, 'utf8')).toBe(original)
 })
 
-it('retains externally replaced invalid bytes without a prior read', async () => {
+it('retains externally replaced invalid bytes when Restore All starts without rereading after the replacement', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-keybindings-'))
   onTestFinished(async () => { await rm(root, { recursive: true, force: true }) })
   let state!: ShortcutConfigSnapshot
