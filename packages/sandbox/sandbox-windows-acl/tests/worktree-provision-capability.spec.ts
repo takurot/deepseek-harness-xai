@@ -94,7 +94,7 @@ function runnerDiagnostics(stderr: string): { startup?: string; cleanup: string[
       startup ??= `${runnerPrefix} ${runnerDetail(detail)}`
     }
   }
-  return { startup, cleanup }
+  return startup === undefined ? { cleanup } : { startup, cleanup }
 }
 
 type RunnerOutcome = Pick<SpawnSyncReturns<string>, 'error' | 'signal' | 'status' | 'stderr'>
