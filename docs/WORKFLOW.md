@@ -128,6 +128,8 @@ Write the description with [dsh-pr-description](../.agents/skills/dsh-pr-descrip
 
 [Fork CI](../.github/workflows/fork-ci.yml) runs on pull requests and master pushes. The `all checks passed` result requires every Fork CI job to succeed, including `node 24 / static`, `node 24 / typecheck and lint`, `node 24 / dependency audit`, `node 24 / coverage`, `node 24 / snapshots and artifacts`, `node 24.9 / compatibility`, and `node 26 / compatibility`. Check the separate CI Python and Node Addon System workflows when the PR triggers them.
 
+Fork CI also requires `windows x64 / worktree ACL capability`. This fork-only job checks true file and directory symlinks and denies a write through a link to a directory outside the workspace. It runs on native Windows x64 with Node 24 and no API key. A skipped test does not count as a pass. This job does not replace the upstream Windows workflow or check other Node versions.
+
 Use the run ID from the check's Actions link. Read the failed steps before rerunning failed jobs.
 
 ```sh

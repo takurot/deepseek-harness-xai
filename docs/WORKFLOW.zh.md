@@ -128,6 +128,8 @@ gh pr create --repo takurot/deepseek-harness-xai --base master --head <branch> -
 
 [Fork CI](../.github/workflows/fork-ci.yml) 在 pull request 和 master 推送时运行。作业名称为 `node 24 / static`、`node 24 / typecheck and lint`, `node 24 / dependency audit`、`node 24 / coverage`、`node 24 / snapshots and artifacts`、`node 24.9 / compatibility` 和 `node 26 / compatibility`。`all checks passed` 要求所有 Fork CI 作业成功。如果 PR 触发了独立的 CI Python 和 Node Addon System 工作流，请查看各自的结果。
 
+Fork CI 还要求 `windows x64 / worktree ACL capability` 作业成功。此 fork 专用作业检查真正的文件和目录符号链接，并验证通过链接写入工作区外的目录会被拒绝。它使用原生 Windows x64 和 Node 24，不需要 API 密钥。跳过测试不算通过。此作业不替代上游 Windows 工作流，也不检查其他 Node 版本。
+
 从检查的 Actions 链接中获取运行 ID。重新运行失败作业前，先查看失败步骤。
 
 ```sh
