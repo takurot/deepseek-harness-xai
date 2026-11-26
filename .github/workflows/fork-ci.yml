@@ -305,7 +305,7 @@ jobs:
 
   worktree-windows-native:
     name: windows x64 / worktree ACL capability
-    runs-on: windows-2025
+    runs-on: windows-2022
     timeout-minutes: 12
     defaults:
       run:

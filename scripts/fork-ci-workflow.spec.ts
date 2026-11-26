@@ -6,10 +6,12 @@ import { describe, expect, it } from 'vitest'
 interface Job {
   'runs-on'?: unknown
   needs?: string[]
+  defaults?: { run?: { shell?: string } }
   strategy?: { matrix?: { node?: string[] }; 'fail-fast'?: boolean; 'max-parallel'?: number }
   if?: string
   steps?: Array<{
     run?: string
+    shell?: string
     if?: string
     'continue-on-error'?: boolean
     uses?: string
@@ -40,9 +42,14 @@ function job(name: string): Job {
 }
 
 describe('Fork CI workflow', () => {
-  it('runs every job on a GitHub-hosted runner', () => {
+  it('runs the worktree ACL check on native Windows and all other jobs on Ubuntu', () => {
+    const windows = job('worktree-windows-native')
+    expect(windows.defaults?.run?.shell).toBe('pwsh')
+    for (const step of windows.steps ?? []) {
+      if (step.run !== undefined) expect(step.shell ?? windows.defaults?.run?.shell).toBe('pwsh')
+    }
     for (const [name, entry] of Object.entries(workflow.jobs)) {
-      expect(entry['runs-on'], name).toBe('ubuntu-latest')
+      expect(entry['runs-on'], name).toBe(name === 'worktree-windows-native' ? 'windows-2022' : 'ubuntu-latest')
     }
   })
 

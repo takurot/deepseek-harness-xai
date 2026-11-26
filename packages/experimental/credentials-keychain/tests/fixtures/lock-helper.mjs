@@ -5,7 +5,9 @@ import { setTimeout as wait } from 'node:timers/promises'
 const [target, marker, release] = process.argv.slice(2)
 const chunks = []
 for await (const chunk of process.stdin) chunks.push(chunk)
-await writeFile(marker, JSON.stringify({ pid: process.pid }))
+const pendingMarker = marker + '.tmp'
+await writeFile(pendingMarker, JSON.stringify({ pid: process.pid }), { flag: 'wx' })
+await rename(pendingMarker, marker)
 for (;;) {
   try { await readFile(release); break } catch (error) {
     if (error.code !== 'ENOENT') throw error

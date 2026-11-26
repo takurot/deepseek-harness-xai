@@ -108,7 +108,7 @@ function assertRunner(result: RunnerOutcome, restricted: string, diagnostic = ru
 
 function verifyRunnerDiagnostic(status: number, line: string, expected: RegExp): void {
   const result: RunnerOutcome = { status, signal: null, stderr: line }
-  const check = () => assertRunner(result, 'fixture')
+  const check = () => { assertRunner(result, 'fixture') }
   expect(check).toThrow(expected)
   expect(check).not.toThrow(/fixture-private|S-1-5-21-9|ENV_FIXTURE|unrelated stderr/u)
 }
