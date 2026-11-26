@@ -1,0 +1,77 @@
+name: Worktree Windows preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full commit SHA of the reviewed release candidate
+        required: true
+        type: string
+permissions:
+  contents: read
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  worktree-windows-native:
+    name: windows x64 / worktree ACL capability
+    runs-on: windows-2022
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      EXPECTED_SHA: ${{ inputs.commit_sha }}
+    steps:
+      - name: Validate candidate SHA
+        run: |
+          if ($env:EXPECTED_SHA -cnotmatch '\A[0-9a-fA-F]{40}\z') { throw "commit_sha must be a full 40-digit hexadecimal commit SHA" }
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Verify candidate checkout
+        run: |
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:EXPECTED_SHA.ToLowerInvariant()) { throw "Unexpected checkout SHA: $head" }
+          Write-Host "Checkout: $head; PowerShell: $($PSVersionTable.PSVersion)"
+      - uses: pnpm/action-setup@v5.0.0
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+          cache: pnpm
+      - name: Verify native runtime
+        run: |
+          node -e 'const assert = require("node:assert/strict"); assert.equal(process.platform, "win32"); assert.equal(process.arch, "x64"); assert.equal(process.versions.node.split(".")[0], "24"); console.log(process.platform, process.arch, process.version)'
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+      - name: Require the selected Windows ACL capability test to pass
+        run: |
+          $env:TEMP = $env:RUNNER_TEMP
+          $env:TMP = $env:RUNNER_TEMP
+          $spec = 'packages/sandbox/sandbox-windows-acl/tests/worktree-provision-capability.spec.ts'
+          $report = Join-Path $env:RUNNER_TEMP ("worktree-acl-" + [guid]::NewGuid() + ".json")
+          pnpm exec vitest run --maxWorkers=1 $spec --reporter=default --reporter=json "--outputFile.json=$report"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          const assert = require('node:assert/strict')
+          const { readFileSync } = require('node:fs')
+          const { resolve } = require('node:path')
+          const [spec, reportPath] = process.argv.slice(2)
+          const report = JSON.parse(readFileSync(reportPath, 'utf8'))
+          assert.equal(report.success, true)
+          assert.equal(report.numTotalTests, 1, 'Expected one capability test')
+          assert.equal(report.numPassedTests, 1, 'The capability test must run and pass')
+          assert.equal(report.testResults.length, 1)
+          const [suite] = report.testResults
+          assert.equal(resolve(suite.name), resolve(spec))
+          assert.equal(suite.assertionResults.length, 1)
+          const [test] = suite.assertionResults
+          assert.equal(test.title, 'creates true file and directory symlinks and denies a linked outside write')
+          assert.equal(test.status, 'passed')
+          console.log(test.title)
+          '@ | node - $spec $report

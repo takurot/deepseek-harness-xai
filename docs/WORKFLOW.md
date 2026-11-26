@@ -128,7 +128,11 @@ Write the description with [dsh-pr-description](../.agents/skills/dsh-pr-descrip
 
 [Fork CI](../.github/workflows/fork-ci.yml) runs on pull requests and master pushes. The `all checks passed` result requires every Fork CI job to succeed, including `node 24 / static`, `node 24 / typecheck and lint`, `node 24 / dependency audit`, `node 24 / coverage`, `node 24 / snapshots and artifacts`, `node 24.9 / compatibility`, and `node 26 / compatibility`. Check the separate CI Python and Node Addon System workflows when the PR triggers them.
 
-Fork CI also requires `windows x64 / worktree ACL capability`. This fork-only job checks true file and directory symlinks and denies a write through a link to a directory outside the workspace. It runs on native Windows x64 with Node 24 and no API key. A skipped test does not count as a pass. This job does not replace the upstream Windows workflow or check other Node versions.
+Before shipping Issue #116, the release owner must obtain a successful [Worktree Windows preflight](../.github/workflows/worktree-windows-preflight.yml) for the exact release candidate. This keyless check runs on native Windows x64 with Node 24. It requires the restricted ACL test to create true file and directory symlinks and deny a write through a link to a directory outside the workspace. It does not replace the upstream Windows workflow or check other Node versions.
+
+Once the workflow is available on the default branch, use Actions → Worktree Windows preflight → Run workflow. Select the trusted `master` workflow definition and enter the full 40-digit hexadecimal commit SHA of the reviewed release candidate from this repository as `commit_sha`. The workflow definition revision and the candidate checkout SHA are separate.
+
+Record the run ID and attempt, and verify the trusted workflow definition, the logged checkout SHA, and that the one named ACL test ran and passed. A missing, skipped, or failed test, a different definition or candidate, or a green Fork CI result does not satisfy this requirement. Run the preflight again if the candidate SHA changes. The release owner checks this requirement manually; it is not part of the Fork CI verdict or an automatic release check.
 
 Use the run ID from the check's Actions link. Read the failed steps before rerunning failed jobs.
 

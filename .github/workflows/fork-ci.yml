@@ -303,66 +303,10 @@ jobs:
           path: temp/dependency-audit/
           if-no-files-found: error
 
-  worktree-windows-native:
-    name: windows x64 / worktree ACL capability
-    runs-on: windows-2022
-    timeout-minutes: 12
-    defaults:
-      run:
-        shell: pwsh
-    env:
-      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - uses: pnpm/action-setup@v5.0.0
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.run_attempt }}
-      - uses: actions/setup-node@v7.0.0
-        with:
-          node-version: ${{ env.PRIMARY_NODE_VERSION }}
-          cache: pnpm
-      - name: Verify checkout and native runtime
-        run: |
-          $head = git rev-parse HEAD
-          if ($LASTEXITCODE -ne 0 -or $head -cne $env:EXPECTED_SHA) { throw "Unexpected checkout SHA: $head" }
-          Write-Host "Checkout: $head; PowerShell: $($PSVersionTable.PSVersion)"
-          node -e 'const assert = require("node:assert/strict"); assert.equal(process.platform, "win32"); assert.equal(process.arch, "x64"); assert.equal(process.versions.node.split(".")[0], "24"); console.log(process.platform, process.arch, process.version)'
-      - name: Install (immutable)
-        run: pnpm install --frozen-lockfile
-      - name: Require the selected Windows ACL capability test to pass
-        run: |
-          $env:TEMP = $env:RUNNER_TEMP
-          $env:TMP = $env:RUNNER_TEMP
-          $spec = 'packages/sandbox/sandbox-windows-acl/tests/worktree-provision-capability.spec.ts'
-          $report = Join-Path $env:RUNNER_TEMP ("worktree-acl-" + [guid]::NewGuid() + ".json")
-          pnpm exec vitest run --maxWorkers=1 $spec --reporter=default --reporter=json "--outputFile.json=$report"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          @'
-          const assert = require('node:assert/strict')
-          const { readFileSync } = require('node:fs')
-          const { resolve } = require('node:path')
-          const [spec, reportPath] = process.argv.slice(2)
-          const report = JSON.parse(readFileSync(reportPath, 'utf8'))
-          assert.equal(report.success, true)
-          assert.equal(report.numTotalTests, 1, 'Expected one capability test')
-          assert.equal(report.numPassedTests, 1, 'The capability test must run and pass')
-          assert.equal(report.testResults.length, 1)
-          const [suite] = report.testResults
-          assert.equal(resolve(suite.name), resolve(spec))
-          assert.equal(suite.assertionResults.length, 1)
-          const [test] = suite.assertionResults
-          assert.equal(test.title, 'creates true file and directory symlinks and denies a linked outside write')
-          assert.equal(test.status, 'passed')
-          console.log(test.title)
-          '@ | node - $spec $report
-
   all-checks-passed:
     name: all checks passed
     runs-on: ubuntu-latest
-    needs: [static, lint, dependency-audit, coverage, consumers, node-compat, worktree-windows-native]
+    needs: [static, lint, dependency-audit, coverage, consumers, node-compat]
     if: ${{ !cancelled() }}
     steps:
       - name: Fail if any needed job did not succeed
