@@ -73,7 +73,7 @@ async function start(root: string, locks: string, options: { service?: string; w
   return worker
 }
 
-async function file(path: string): Promise<string> {
+async function readPublishedMarker(path: string): Promise<string> {
   for (;;) {
     try { return await readFile(path, 'utf8') } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -120,7 +120,7 @@ describe.skipIf(process.platform === 'win32')('cross-process Keychain records', 
     const { root, locks } = await store()
     const first = await start(root, locks, { pause: 'helper' })
     first.send({ action: 'increment', id: 'orphan', key: 'oauth/one' })
-    const marker = JSON.parse(await file(join(root, 'helper-ready'))) as { pid: number }
+    const marker = JSON.parse(await readPublishedMarker(join(root, 'helper-ready'))) as { pid: number }
     cleanups.push(async () => {
       try { process.kill(marker.pid, 'SIGKILL') } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error

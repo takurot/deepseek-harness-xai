@@ -128,6 +128,12 @@ gh pr create --repo takurot/deepseek-harness-xai --base master --head <branch> -
 
 [Fork CI](../.github/workflows/fork-ci.yml) 在 pull request 和 master 推送时运行。作业名称为 `node 24 / static`、`node 24 / typecheck and lint`, `node 24 / dependency audit`、`node 24 / coverage`、`node 24 / snapshots and artifacts`、`node 24.9 / compatibility` 和 `node 26 / compatibility`。`all checks passed` 要求所有 Fork CI 作业成功。如果 PR 触发了独立的 CI Python 和 Node Addon System 工作流，请查看各自的结果。
 
+发布 Issue #116 的功能之前，发布负责人必须在确切的发布候选提交上成功运行 [Worktree Windows 预检](../.github/workflows/worktree-windows-preflight.yml)。此检查不需要 API 密钥，在原生 Windows x64 上使用 Node 24 运行。受限 ACL 测试必须成功创建真正的文件与目录符号链接，并拒绝通过链接写入工作区外的目录。它不替代上游 Windows 工作流，也不检查其他 Node 版本。
+
+此工作流在默认分支可用后，打开 Actions → Worktree Windows preflight → Run workflow。选择可信的 `master` 工作流定义，将本仓库内经审查的发布候选提交的完整 40 位十六进制 SHA 填入 `commit_sha`。工作流定义的修订版本与实际检出的候选提交 SHA 是两项独立记录。
+
+记录运行 ID 和尝试次数，核对可信的工作流定义、日志中的检出 SHA，并确认唯一指定的 ACL 测试已实际运行且通过。未运行、跳过或失败的测试、不同的工作流定义或候选提交，以及通过的 Fork CI，均不能满足此要求。候选提交的 SHA 变更后须重新运行预检。此要求由发布负责人手动核对，不计入 Fork CI 结论，也不是自动发布检查。
+
 从检查的 Actions 链接中获取运行 ID。重新运行失败作业前，先查看失败步骤。
 
 ```sh
