@@ -44,6 +44,48 @@ describe('createLayoutStore', () => {
     expect(store.getSnapshot().layoutInfo.sidebar).toBe(420)
   })
 
+  it.each([
+    [0, 0],
+    [300, 300],
+    [9999, 420],
+    [-5, 264],
+  ])('restores sidebar preference %i as %i px', (saved, restored) => {
+    const { store, actions } = createLayoutStore().create()
+    actions.restoreFrame(saved, null)
+    expect(store.getSnapshot().layoutInfo.sidebar).toBe(restored)
+  })
+
+  it.each([
+    [1920, 320, 320],
+    [1920, null, null],
+    [1920, 10000, 1344],
+    [375, 10000, 300],
+  ])('restores right-panel preference in a %i px frame from %j to %j', (viewport, saved, restored) => {
+    const { store, actions } = createLayoutStore().create()
+    actions.openRightbar(false, true)
+    actions.setViewportWidth(viewport)
+    actions.restoreFrame(280, saved)
+    expect(store.getSnapshot().layoutInfo.rightbar).toBe(restored)
+  })
+
+  it('restores geometry while retaining presentation and clearing the instant transition', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.setViewportWidth(900)
+    actions.openRightbar(true, true)
+    actions.toggleSidebar()
+    actions.openRightbar(true, false)
+    const before = store.getSnapshot().layoutInfo
+    expect(before).toMatchObject({ narrowExpanded: true, rightbarInstant: true })
+
+    actions.restoreFrame(300, 320)
+    expect(store.getSnapshot().layoutInfo).toEqual({
+      ...before,
+      sidebar: 300,
+      rightbar: 320,
+      rightbarInstant: false,
+    })
+  })
+
   it('toggles the wide sidebar between closed and default width', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setSidebar(400)

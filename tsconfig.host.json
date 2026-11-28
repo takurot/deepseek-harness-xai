@@ -600,6 +600,7 @@
     { "path": "./apps/cli" },
     { "path": "./apps/plugin-market-generator" },
     { "path": "./apps/desktop-host" },
-    { "path": "./apps/desktop/tsconfig.host.json" }
+    { "path": "./apps/desktop/tsconfig.host.json" },
+    { "path": "./packages/experimental/client-ui-layout-persistence/tsconfig.host.json" }
   ]
 }

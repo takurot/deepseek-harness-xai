@@ -148,6 +148,34 @@ describe('ui-layout client apply', () => {
     expect(pending.aborted).toBe(true)
   })
 
+  it('publishes the default, restored, and dragged frame geometry from the root store', async () => {
+    const { ctx, slots } = await bench()
+    await ctx.plugin({ inject: [...inject], apply }).await()
+    const layout = ctx.get('layout')
+    if (layout === undefined) throw new Error('layout service is unavailable')
+    const geometry = layout.frameGeometry
+    const initial = geometry.getSnapshot()
+    expect(initial).toEqual({ sidebar: 280, rightbar: null })
+    expect(geometry.getSnapshot()).toBe(initial)
+
+    const listener = vi.fn(() => geometry.getSnapshot())
+    const unsubscribe = geometry.subscribe(listener)
+    try {
+      layout.restoreFrameGeometry({ sidebar: 0, rightbar: 320 })
+      const restored = geometry.getSnapshot()
+      expect(restored).toEqual({ sidebar: 0, rightbar: 320 })
+      expect(listener).toHaveReturnedWith(restored)
+
+      const handle = slots.entries('root')[0]!.store as ReturnType<typeof createLayoutStore>
+      const instance = handle.create()
+      expect(instance.getSnapshot().layoutInfo).toMatchObject(restored)
+      instance.actions.setViewportWidth(1600)
+      expect(geometry.getSnapshot()).toBe(restored)
+      instance.actions.setSidebar(300)
+      expect(listener).toHaveLastReturnedWith({ sidebar: 300, rightbar: 320 })
+    } finally { unsubscribe() }
+  })
+
   it('theme presenter applies the initial snapshot, follows theme/change, and unwinds on dispose', async () => {
     const { ctx } = await bench()
     const fiber = ctx.plugin({ inject: [...inject], apply })
