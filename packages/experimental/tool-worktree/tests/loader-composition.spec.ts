@@ -1,13 +1,13 @@
 import { executeToolFixture } from '@deepseek-ai/dsh-tool-testkit'
 import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Context, LoggerLevel } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
@@ -37,7 +37,8 @@ afterEach(async () => {
 })
 
 describe('worktree tool through real Loader composition', () => {
-  it('creates and enters a new checkout, reports canonical fields, and unregisters on disposal', async () => {
+  it.each([undefined, 0, 7])('creates and enters a new checkout (setup exit code: %s)', async (exitCode) => {
+    const configured = exitCode !== undefined
     root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-worktree-loader-')))
     const repository = join(root, 'repo')
     await mkdir(repository)
@@ -70,10 +71,15 @@ describe('worktree tool through real Loader composition', () => {
       ['@deepseek-ai/dsh-experimental-tool-worktree', ToolWorktree],
       ['@deepseek-ai/dsh-agent-loop', AgentLoop],
     ])
+    const sentinel = 'loader-environment-fixture'
+    const command = [process.execPath, '-e', `const fs = require('node:fs'); if (fs.readFileSync('file.txt', 'utf8').trim() !== 'committed' || !process.env.DSH_SETUP_FIXTURE) process.exit(2); fs.appendFileSync('setup.marker', process.argv[1] + '\\n'); const check = setInterval(() => { if (fs.existsSync('release')) { clearInterval(check); console.log('prepared'); process.exitCode = ${exitCode ?? 0}; } }, 10);`, 'literal ; argument']
     const config = [...modules.keys()].flatMap(name => [
       `- name: 'cordis:${name}'`,
       ...name === '@deepseek-ai/dsh-sandbox-policy' ? ['  config:', '    mode: danger-full-access'] : [],
       ...name === '@deepseek-ai/dsh-agent-loop' ? ['  config:', '    agents: []'] : [],
+      ...configured && name === '@deepseek-ai/dsh-experimental-worktree' ? [
+        '  config:', `    setupCommand: ${JSON.stringify(command)}`, `    setupEnv: { DSH_SETUP_FIXTURE: ${JSON.stringify(sentinel)} }`,
+      ] : [],
     ]).join('\n') + '\n'
     const configPath = join(root, 'cordis.yml')
     await writeFile(configPath, config)
@@ -85,17 +91,58 @@ describe('worktree tool through real Loader composition', () => {
     await context.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
     await context.loader.await()
 
+    const notices: unknown[][] = []
+    context.logger.exporter({ levels: { default: LoggerLevel.INFO }, export: ({ type, args }) => {
+      if (type === 'info' && args[0] === 'Running worktree setup') notices.push(args)
+    } })
     const agent = await context.agentLoop.create(SessionId('worktree-loader'), {}, { cwd: repository })
-    const invoke = (name: string, agentValue = agent) => executeToolFixture(context!, {
-      name: 'create_worktree', callId: ToolCallId(name), arguments: { name }, agent: agentValue, signal: new AbortController().signal,
-    })
-    const result = await invoke('new-checkout')
     const path = join(repository, '.agents/worktrees/new-checkout')
+    const controller = new AbortController()
+    let settled = false
+    let ready = false
+    const pending = executeToolFixture(context, {
+      name: 'create_worktree', callId: ToolCallId('new-checkout'), arguments: { name: 'new-checkout' }, agent, signal: controller.signal,
+    }).finally(() => { settled = true })
+    try {
+      if (configured) {
+        await vi.waitFor(() => access(join(path, 'setup.marker')), { timeout: 5_000 })
+        ready = true
+        expect(settled).toBe(false)
+        expect(notices).toEqual([['Running worktree setup']])
+      }
+    } finally {
+      try {
+        if (ready && !settled) await writeFile(join(path, 'release'), '')
+      } finally {
+        if (!ready && configured) controller.abort()
+        await pending
+      }
+    }
+    const result = await pending
+    expect(notices).toHaveLength(configured ? 1 : 0)
     expect(result.isError).not.toBe(true)
-    expect(result.value).toEqual({ path, branch: 'new-checkout', baseCommit, repositoryRoot: repository })
+    expect(result.value).toEqual({ path, branch: 'new-checkout', baseCommit, repositoryRoot: repository,
+      ...configured ? { provision: { command, status: 'exited', exitCode, signal: null, output: 'prepared\n', truncated: false } } : {},
+    })
+    if (configured) expect(await readFile(join(path, 'setup.marker'), 'utf8')).toBe('literal ; argument\n')
     expect(result.content).toEqual([{ type: 'text', text: JSON.stringify(result.value) }])
+    expect(JSON.stringify(result.content)).not.toContain(sentinel)
     expect(context.workingDirectory.get(agent.session)).toBe(path)
     expect(await readFile(join(path, 'file.txt'), 'utf8')).toBe('committed\n')
+
+    await context.workingDirectory.set(agent, repository)
+    const refused = await executeToolFixture(context, {
+      name: 'create_worktree', callId: ToolCallId('forbidden-command'),
+      arguments: { name: 'forbidden-command', setupCommand: [process.execPath] }, agent, signal: controller.signal,
+    })
+    expect(refused.isError).toBe(true)
+    expect(await git('branch', '--list', 'forbidden-command')).toMatchObject({ stdout: '' })
+    const skipped = await executeToolFixture(context, {
+      name: 'create_worktree', callId: ToolCallId('skipped'), arguments: { name: 'skipped', setup: false }, agent, signal: controller.signal,
+    })
+    expect(skipped.isError).not.toBe(true)
+    expect(skipped.value).not.toHaveProperty('provision')
+    expect(notices).toHaveLength(configured ? 1 : 0)
 
     const failure = await executeToolFixture(context, {
       name: 'create_worktree', callId: ToolCallId('no-agent'), arguments: {}, signal: new AbortController().signal,

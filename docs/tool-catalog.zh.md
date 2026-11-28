@@ -2528,8 +2528,13 @@ todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为
     "from": {
       "type": "string",
       "description": "Local commit, branch, or tag to start from. Defaults to HEAD; no fetch is performed."
+    },
+    "setup": {
+      "type": "boolean",
+      "description": "Run the configured setup command. Defaults to true; false skips only the command."
     }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 

@@ -56,12 +56,21 @@ describe('creating and entering retained worktrees', () => {
     ctx = await harness(root)
     const agent = testAgent(ctx, root)
     const phases: string[] = []
+    const spawn = vi.spyOn(ctx.subprocess, 'spawn')
+    const resolve = vi.spyOn(ctx.fs, 'resolve')
+    const lstat = vi.spyOn(ctx.fs, 'lstat')
 
     const result = await ctx.worktrees.create(agent, { name: 'staged' }, undefined, (phase) => {
       phases.push(`${phase}:${String(ctx?.workingDirectory.get(agent.session) === root)}`)
     })
 
     expect(phases).toEqual(['prepare:true', 'checkout:true'])
+    expect(spawn.mock.calls.map(([spec]) => {
+      const args = spec.argv.slice(1)
+      return args[0] === '--input-type=module' ? 'allocate' : args[4] === '--work-tree' ? args[6] : args[4]
+    })).toEqual(['check-ref-format', 'rev-parse', 'rev-parse', 'show-ref', 'allocate', 'worktree', 'config', 'reset'])
+    expect(resolve.mock.calls.map(([input]) => input)).toEqual([root, root, '.agents/worktrees', 'staged', result.path])
+    expect(lstat.mock.calls.map(([input]) => input)).toEqual([result.path])
     expect(ctx.workingDirectory.get(agent.session)).toBe(result.path)
   })
 

@@ -9,12 +9,15 @@ import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { PREPARE_DIRECTORY } from './directory.ts'
+import { checkShares, provisionFiles, validateFileProvisioning, WorktreeFileProvisionError } from './file-provisioning.ts'
+import type { FileProvisioningConfig } from './file-provisioning.ts'
 import { generatedWorktreeName } from './name.ts'
 import { runCommand } from './process.ts'
-import type { ProcessConfig } from './process.ts'
+import { runSetup } from './setup.ts'
 import type { CreatedWorktree, CreateWorktreePhase, CreateWorktreeRequest, RestoredWorktree, RestoreWorktreeRequest } from './types.ts'
 
-export type { CreatedWorktree, CreateWorktreePhase, CreateWorktreeRequest, RestoredWorktree, RestoreWorktreeRequest } from './types.ts'
+export type { CreatedWorktree, CreateWorktreePhase, CreateWorktreeRequest, RestoredWorktree, RestoreWorktreeRequest, WorktreeProvision } from './types.ts'
+export { WorktreeFileProvisionError } from './file-provisioning.ts'
 export { generatedWorktreeName } from './name.ts'
 
 /** Worktree location, generated names, executables, and subprocess resource limits. */
@@ -31,15 +34,28 @@ export interface Config {
   timeoutMs?: number
   /** Subprocess termination grace in milliseconds. */
   graceMs?: number
-  /** Maximum captured bytes per subprocess output stream. */
+  /** Maximum captured bytes per Git stream, or total across both setup streams. */
   maxOutputBytes?: number
+  /** Trusted noninteractive shell command or literal argv to run after checkout. */
+  setupCommand?: string | string[]
+  /** Setup deadline in milliseconds, including command startup. */
+  setupTimeoutMs?: number
+  /** Environment overrides applied to the setup process only. */
+  setupEnv?: Record<string, string>
+  /** Existing outside directories to link by basename. */
+  shareDirectories?: string[]
+  /** Source-checkout-relative Git glob pathspecs for ignored regular files. */
+  copyIgnored?: string[]
+  /** Provision selected ignored files by exclusive copy or source symlink. */
+  copyMode?: 'copy' | 'symlink'
 }
 
-type ResolvedConfig = Required<Config> & ProcessConfig
+type ResolvedConfig = Required<Omit<Config, 'setupCommand'>> & FileProvisioningConfig & { setupCommand?: string | [string, ...string[]] }
 
 interface WorktreeSpec {
   branch: string
   revision: string
+  setup: boolean
 }
 
 /** Runs one confined Git command; output with an exit code outside `allowedExitCodes` throws. */
@@ -69,6 +85,12 @@ export class WorktreeService extends Service {
     timeoutMs: z.number().default(60_000),
     graceMs: z.number().default(3_000),
     maxOutputBytes: z.number().default(65_536),
+    setupCommand: z.union([z.string(), z.array(z.string())]),
+    setupTimeoutMs: z.number().default(120_000),
+    setupEnv: z.dict(z.string()).default({}),
+    shareDirectories: z.array(z.string()).default([]),
+    copyIgnored: z.array(z.string()).default([]),
+    copyMode: z.union([z.const('copy'), z.const('symlink')]).default('copy'),
   })
 
   private readonly config: ResolvedConfig
@@ -85,12 +107,21 @@ export class WorktreeService extends Service {
     for (const key of ['gitCommand', 'nodeCommand'] as const) {
       if (this.config[key].trim().length === 0) throw new Error(`worktree: ${key} must not be empty`)
     }
-    for (const key of ['timeoutMs', 'graceMs', 'maxOutputBytes'] as const) {
+    for (const key of ['timeoutMs', 'graceMs', 'maxOutputBytes', 'setupTimeoutMs'] as const) {
       const value = this.config[key]
       if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMER_DELAY_MS) {
         throw new Error(`worktree: ${key} must be a positive integer no greater than ${MAX_TIMER_DELAY_MS}`)
       }
     }
+    const command = this.config.setupCommand
+    if (typeof command === 'string' ? command.trim().length === 0 || command.includes('\0')
+      : command !== undefined && (!command[0].trim() || command.some(arg => arg.includes('\0')))) {
+      throw new Error('worktree: setupCommand must be nonempty shell text or argv with a nonempty executable and no NUL bytes')
+    }
+    for (const [key, value] of Object.entries(this.config.setupEnv)) {
+      if (key.length === 0 || /[=\0]/.test(key) || value.includes('\0')) throw new Error('worktree: invalid setupEnv entry')
+    }
+    validateFileProvisioning(this.config)
     ctx.effect(() => async () => {
       this.lifetime.abort(new Error('worktree service disposed'))
       await Promise.allSettled(this.pending)
@@ -99,16 +130,17 @@ export class WorktreeService extends Service {
 
   /**
    * Create a fresh branch and checkout at a pinned local revision, then enter it.
-   * Existing branches or checkout paths fail. Uncommitted files stay in the source checkout.
+   * Existing branches or checkout paths fail. Only configured ignored files are provisioned.
    * Checkout disables configured clean, smudge, and process filters without changing Git config.
    * Repository-local replacement refs still apply; baseCommit reports the resolved object name.
-   * The new checkout becomes current only after Git setup succeeds. Failures may retain newly
-   * allocated Git/filesystem artifacts; no branch or checkout is removed automatically.
+   * Publishes the new directory after checkout and configured provisioning. A command failure is
+   * returned with the retained checkout. Cancellation or file provisioning failure rejects without
+   * publishing the directory and may leave a branch and partial checkout.
    * @param agent - caller whose current directory selects the source repository and file policy.
-   * @param request - optional new name and local revision; defaults are generated name and HEAD.
+   * @param request - optional name, revision, and setup opt-out; defaults are generated name, HEAD, and enabled setup.
    * @param signal - cancellation of lookup, creation, and working-directory publication.
    * @param onPhase - receives each stage before it begins; it must not throw.
-   * @returns canonical checkout path, branch name, pinned commit, and source repository root.
+   * @returns checkout identity, any file counts, and any setup outcome.
    */
   async create(
     agent: Agent,
@@ -133,7 +165,7 @@ export class WorktreeService extends Service {
    * `baseCommit`. Only the missing target's unlocked registration is removed, and an
    * existing directory fails. Changes that were never committed are not
    * recovered. Checkout disables configured clean, smudge, and process filters,
-   * as creation does. The calling Session's working directory does not change.
+   * as creation does. Restoration does not provision files, run setup, or change the Session directory.
    * Failures may retain newly allocated Git/filesystem artifacts.
    * @param agent - caller whose sandbox policy confines the commands.
    * @param request - recorded directory, branch, base commit, and source repository root.
@@ -145,7 +177,7 @@ export class WorktreeService extends Service {
     agent: Agent,
     request: RestoreWorktreeRequest,
     signal?: AbortSignal,
-    onPhase?: (phase: CreateWorktreePhase) => void,
+    onPhase?: (phase: Exclude<CreateWorktreePhase, 'provision'>) => void,
   ): Promise<RestoredWorktree> {
     const operationSignal = signal === undefined ? this.lifetime.signal : AbortSignal.any([this.lifetime.signal, signal])
     operationSignal.throwIfAborted()
@@ -163,12 +195,12 @@ export class WorktreeService extends Service {
     if (!relativePath(branch) || branch.startsWith('-')) throw new Error('worktree name must be a relative Git branch name')
     const revision = request.from ?? 'HEAD'
     if (revision.length === 0) throw new Error('worktree from must name a local commit, branch, or tag')
-    return { branch, revision }
+    return { branch, revision, setup: request.setup !== false }
   }
 
   private async createCheckout(
     agent: Agent,
-    { branch, revision }: WorktreeSpec,
+    { branch, revision, setup }: WorktreeSpec,
     signal: AbortSignal,
     onPhase: ((phase: CreateWorktreePhase) => void) | undefined,
   ): Promise<CreatedWorktree> {
@@ -189,15 +221,37 @@ export class WorktreeService extends Service {
     const destination = await this.ctx.fs.resolve(branch, { cwd: poolPath, signal })
     const path = this.ctx.fs.processPath(destination)
     if (await this.ctx.fs.lstat(path, undefined, signal) !== undefined) throw new Error(`worktree path already exists: ${path}`)
+    const files = this.config.shareDirectories.length > 0 || this.config.copyIgnored.length > 0
+      ? { ctx: this.ctx, config: this.config, policy, source: repositoryRoot, checkout: path, signal } : undefined
+    if (files !== undefined && this.config.shareDirectories.length > 0) await checkShares(files)
     try {
       await this.prepareDirectory(policy, repositoryRoot, poolPath, path, signal)
       await run(repositoryRoot, ['--work-tree', repositoryRoot, 'worktree', 'add', '--no-checkout', '-b', branch, '--', path, baseCommit])
       const overrides = await filterOverrides(run, path)
       onPhase?.('checkout')
       await run(path, ['--work-tree', path, 'reset', '--hard', '--no-recurse-submodules', baseCommit], undefined, overrides)
+      const provisionedFiles = files === undefined ? undefined : await provisionFiles(files)
+      const command = setup ? this.config.setupCommand : undefined
+      let provision
+      if (command !== undefined) {
+        onPhase?.('provision')
+        provision = await runSetup(
+          this.ctx,
+          { ...this.config, timeoutMs: this.config.setupTimeoutMs },
+          policy,
+          path,
+          command,
+          this.config.setupEnv,
+          signal,
+        )
+      }
       const canonicalPath = await this.ctx.workingDirectory.set(agent, path, signal)
-      return { path: canonicalPath, branch, baseCommit, repositoryRoot }
+      return {
+        path: canonicalPath, branch, baseCommit, repositoryRoot, ...provisionedFiles,
+        ...provision === undefined ? {} : { provision },
+      }
     } catch (error) {
+      if (error instanceof WorktreeFileProvisionError) throw error
       throw new Error(`Could not finish worktree ${branch} at ${path}. Any created checkout and branch are retained. ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
   }
@@ -206,7 +260,7 @@ export class WorktreeService extends Service {
     agent: Agent,
     { path, branch, baseCommit, repositoryRoot }: RestoreWorktreeRequest,
     signal: AbortSignal,
-    onPhase: ((phase: CreateWorktreePhase) => void) | undefined,
+    onPhase: ((phase: Exclude<CreateWorktreePhase, 'provision'>) => void) | undefined,
   ): Promise<RestoredWorktree> {
     onPhase?.('prepare')
     const policy = this.ctx.sandboxPolicy.resolve({ session: agent.session })
