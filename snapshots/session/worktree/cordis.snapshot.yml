@@ -18,5 +18,7 @@
 - insert:
     - id: worktree
       name: '@deepseek-ai/dsh-experimental-worktree'
+      config:
+        setupCommand: [node, -e, "require('node:fs').writeFileSync('setup.marker', 'configured setup ran\\n'); console.log('configured setup complete')"]
     - id: tool-worktree
       name: '@deepseek-ai/dsh-experimental-tool-worktree'

@@ -1,7 +1,9 @@
 import { access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, LoggerLevel } from '@deepseek-ai/cordis'
+import WorktreeService from '@deepseek-ai/dsh-experimental-worktree'
+import type { Config as WorktreeConfig } from '@deepseek-ai/dsh-experimental-worktree'
 import type { AgentCancelCause } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-experimental-forge-session'
 import SessionStore, { appendPluginRecord, SessionId } from '@deepseek-ai/dsh-session'
@@ -228,9 +230,13 @@ interface Creating extends Runtime {
  * @param options - branch prefix, `dsh-` when omitted, and whether the worktree service is mounted, as it is when omitted.
  * @returns the composition.
  */
-async function creating(cwd: string, options: { readonly prefix?: string; readonly worktrees?: boolean } = {}): Promise<Creating> {
-  const base = await runtime(cwd, { worktrees: options.worktrees ?? true })
+async function creating(
+  cwd: string,
+  options: { readonly prefix?: string; readonly worktrees?: boolean; readonly config?: WorktreeConfig } = {},
+): Promise<Creating> {
+  const base = await runtime(cwd, { worktrees: options.config === undefined && (options.worktrees ?? true) })
   cleanups.push(() => base.ctx.fiber.dispose())
+  if (options.config !== undefined) await base.ctx.plugin(WorktreeService, options.config)
   const states = await base.ctx.sessionProjections.register(forgeWorktreeProjection)
   const changes: (ForgeWorktreeCreation | null)[] = []
   const recorded: (ForgeSessionWorktree | null)[] = []
@@ -294,6 +300,31 @@ describe('creating a requested worktree', () => {
     expect(opened.recorded).toEqual([null, null, null, worktreeOf(opened)])
     expect(worktreeOf(opened)).not.toBeNull()
     expect(opened.creations.of(opened.session)).toBeNull()
+  })
+
+  it('keeps a failed setup checkout, warns without setup data, and preserves Forge phases and records', async () => {
+    const repo = await project()
+    const opened = await creating(repo, { config: {
+      setupCommand: [process.execPath, '-e', 'console.log("setup-output-sentinel"); process.exitCode = 8'],
+      setupEnv: { DSH_SETUP_FIXTURE: 'setup-environment-sentinel' },
+    } })
+    const warnings: unknown[][] = []
+    opened.ctx.logger.exporter({ levels: { default: LoggerLevel.WARN }, export: ({ type, args }) => {
+      if (type === 'warn' && String(args[0]).startsWith('Worktree setup did not finish successfully')) warnings.push(args)
+    } })
+    request(opened, null)
+    const result = await opened.creations.create(opened.agent, null, signal, false)
+    expect(result.provision).toMatchObject({ exitCode: 8 })
+    expect(warnings).toHaveLength(1)
+    expect(String(warnings[0]?.[0])).toContain(result.path)
+    expect(JSON.stringify(warnings)).not.toContain('sentinel')
+    expect(opened.changes.map(value => value?.phase)).toEqual(['prepare', 'prepare', 'checkout', undefined])
+    const { path, branch, baseCommit, repositoryRoot } = result
+    expect(worktreeOf(opened)).toEqual({ path, branch, baseCommit, repositoryRoot, from: null })
+    expect(opened.records).toEqual([{ action: 'request', from: null }, {
+      action: 'created', worktree: { path, branch, baseCommit, repositoryRoot, from: null },
+    }])
+    expect(await git(path, 'branch', '--show-current')).toBe(branch)
   })
 
   it('starts the branch from the given base branch', async () => {

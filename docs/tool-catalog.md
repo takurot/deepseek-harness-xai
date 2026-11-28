@@ -2522,8 +2522,13 @@ Create a new Git branch and worktree from a local commit, branch, or tag, then c
     "from": {
       "type": "string",
       "description": "Local commit, branch, or tag to start from. Defaults to HEAD; no fetch is performed."
+    },
+    "setup": {
+      "type": "boolean",
+      "description": "Run the configured setup command. Defaults to true; false skips only the command."
     }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 

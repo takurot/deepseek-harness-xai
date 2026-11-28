@@ -6,15 +6,15 @@
 
 ## 创建与保留
 
-调用方 Session 的当前目录决定源仓库。创建操作在分配检出目录前，将请求的本地提交、分支或标签固定为具体提交；省略时选择 `HEAD`。每个名称必须对应新分支与未使用的检出路径。操作既不获取缺失对象，也不复制源检出目录中的暂存、未暂存、未跟踪或被忽略文件。
+调用方 Session 的当前目录决定源仓库。创建操作在分配检出目录前固定所选本地提交、分支或标签；默认使用 `HEAD`。名称必须对应新分支与未使用的检出路径。创建不会获取缺失对象；默认不复制源检出目录中的未提交文件。
 
-默认目标为 `<current checkout root>/.agents/worktrees/<name>`。`repositoryRoot` 是调用方当前检出目录的顶层目录；因此，链接检出目录会在自身内部保存工作树父目录。仅当服务的分配操作创建了配置指定的父目录时，服务才会写入内容为 `*` 加换行符的 `.gitignore`。已有文件与忽略规则保持不变。调用方 Session 的现有沙箱策略必须允许写入目标目录与共享 Git 管理目录。Git 初始化成功后才改变工作目录。
+默认目标为 `<current checkout root>/.agents/worktrees/<name>`。`repositoryRoot` 是调用方当前检出目录的顶层目录；因此，链接检出目录会在自身内部保存工作树父目录。仅当服务的分配操作创建了配置指定的父目录时，服务才会写入内容为 `*` 加换行符的 `.gitignore`。已有文件与忽略规则保持不变。调用方 Session 的现有沙箱策略必须允许写入目标目录与共享 Git 管理目录。检出完成后，服务先准备配置中选取的文件，再运行配置命令，最后改变工作目录。
 
 通过 `working_directory({ cd: path })` 离开时，会保留检出目录与分支。取消或失败也可能留下部分产物；错误会指出它们的位置。服务销毁时会中止待完成操作并等待它们结束。[包 README](../../packages/experimental/worktree/README.zh.md)拥有配置与 Git 要求。
 
 ## 请求与结果
 
-请求只选择新名称与本地版本。结果标识创建的检出目录与确切提交；它不会改变 Session 的原始项目或写权限。可选的回调会在创建的每个阶段开始之前收到该阶段。恢复会在记录的目录重新检出已删除的检出目录：从它的分支检出；分支也已删除时，从它的基准提交检出。
+`onPhase` 在阶段开始前通知调用方，不得抛出异常。`prepare` 校验并分配检出目录，`checkout` 写入受 Git 跟踪的内容。只有实际尝试配置命令时，创建才发出 `provision` 通知。非零退出或超时写入 `WorktreeProvision`，而不是作为检出错误。文件准备失败抛出 `WorktreeFileProvisionError`，并指出是否保留了检出目录。恢复只发出 `prepare` 和 `checkout`，不进行准备工作。
 
 ```ts type-equiv
 /** A new checkout from a locally available Git commit, branch, or tag. */
@@ -23,6 +23,8 @@ interface CreateWorktreeRequest {
   name?: string
   /** Local revision to resolve before creation; omission selects HEAD. */
   from?: string
+  /** Run the configured setup command unless explicitly false. File provisioning still applies. */
+  setup?: boolean
 }
 ```
 
@@ -37,17 +39,18 @@ interface CreatedWorktree {
   baseCommit: string
   /** Canonical root of the source checkout. */
   repositoryRoot: string
+  /** Setup exit facts, present only when a configured command was attempted. */
+  provision?: WorktreeProvision
+  /** Number of links created; absent when no shared directories are configured. */
+  sharedDirectories?: number
+  /** Number of ignored regular files provisioned; absent when no globs are configured. */
+  copiedIgnored?: number
 }
 ```
 
 ```ts type-equiv
-/**
- * Stage of one creation or restoration, reported before it begins: `prepare`
- * validates the request, allocates the checkout directory, and creates the
- * branch, which a restoration creates again only when it is gone; `checkout`
- * writes the files and, for a creation, enters the checkout.
- */
-type CreateWorktreePhase = 'prepare' | 'checkout'
+/** Creation stages: validate and allocate, write tracked files, then attempt any configured setup. */
+type CreateWorktreePhase = 'prepare' | 'checkout' | 'provision'
 ```
 
 ```ts type-equiv
@@ -91,16 +94,17 @@ Creates retained Git worktrees under the mounted filesystem and sandbox provider
 ```ts cordis-catalog
 /**
  * Create a fresh branch and checkout at a pinned local revision, then enter it.
- * Existing branches or checkout paths fail. Uncommitted files stay in the source checkout.
+ * Existing branches or checkout paths fail. Only configured ignored files are provisioned.
  * Checkout disables configured clean, smudge, and process filters without changing Git config.
  * Repository-local replacement refs still apply; baseCommit reports the resolved object name.
- * The new checkout becomes current only after Git setup succeeds. Failures may retain newly
- * allocated Git/filesystem artifacts; no branch or checkout is removed automatically.
+ * Publishes the new directory after checkout and configured provisioning. A command failure is
+ * returned with the retained checkout. Cancellation or file provisioning failure rejects without
+ * publishing the directory and may leave a branch and partial checkout.
  * @param agent - caller whose current directory selects the source repository and file policy.
- * @param request - optional new name and local revision; defaults are generated name and HEAD.
+ * @param request - optional name, revision, and setup opt-out; defaults are generated name, HEAD, and enabled setup.
  * @param signal - cancellation of lookup, creation, and working-directory publication.
  * @param onPhase - receives each stage before it begins; it must not throw.
- * @returns canonical checkout path, branch name, pinned commit, and source repository root.
+ * @returns checkout identity, any file counts, and any setup outcome.
  */
 async create( agent: Agent, request: CreateWorktreeRequest = {}, signal?: AbortSignal, onPhase?: (phase: CreateWorktreePhase) => void, ): Promise<CreatedWorktree>
 
@@ -110,7 +114,7 @@ async create( agent: Agent, request: CreateWorktreeRequest = {}, signal?: AbortS
  * `baseCommit`. Only the missing target's unlocked registration is removed, and an
  * existing directory fails. Changes that were never committed are not
  * recovered. Checkout disables configured clean, smudge, and process filters,
- * as creation does. The calling Session's working directory does not change.
+ * as creation does. Restoration does not provision files, run setup, or change the Session directory.
  * Failures may retain newly allocated Git/filesystem artifacts.
  * @param agent - caller whose sandbox policy confines the commands.
  * @param request - recorded directory, branch, base commit, and source repository root.
@@ -118,7 +122,7 @@ async create( agent: Agent, request: CreateWorktreeRequest = {}, signal?: AbortS
  * @param onPhase - receives each stage before it begins; it must not throw.
  * @returns the directory and whether the branch was created again.
  */
-async restore( agent: Agent, request: RestoreWorktreeRequest, signal?: AbortSignal, onPhase?: (phase: CreateWorktreePhase) => void, ): Promise<RestoredWorktree>
+async restore( agent: Agent, request: RestoreWorktreeRequest, signal?: AbortSignal, onPhase?: (phase: Exclude<CreateWorktreePhase, 'provision'>) => void, ): Promise<RestoredWorktree>
 ```
 
 Types: [Agent](core.zh.md)

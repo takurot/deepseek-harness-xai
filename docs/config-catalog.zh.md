@@ -1533,7 +1533,7 @@ export type PaidTranslationProvider = 'deepseek-account' | 'deepseek-official'
 ## `@deepseek-ai/dsh-experimental-worktree`
 
 - `inject`: `workingDirectory` · `fs` · `subprocess` · `sandbox` · `sandboxPolicy`
-- `source`: [`packages/experimental/worktree/src/index.ts:21`](../packages/experimental/worktree/src/index.ts)
+- `source`: [`packages/experimental/worktree/src/index.ts:24`](../packages/experimental/worktree/src/index.ts)
 
 ```ts config-catalog
 /** Worktree location, generated names, executables, and subprocess resource limits. */
@@ -1550,8 +1550,20 @@ export interface Config {
   timeoutMs?: number
   /** Subprocess termination grace in milliseconds. */
   graceMs?: number
-  /** Maximum captured bytes per subprocess output stream. */
+  /** Maximum captured bytes per Git stream, or total across both setup streams. */
   maxOutputBytes?: number
+  /** Trusted noninteractive shell command or literal argv to run after checkout. */
+  setupCommand?: string | string[]
+  /** Setup deadline in milliseconds, including command startup. */
+  setupTimeoutMs?: number
+  /** Environment overrides applied to the setup process only. */
+  setupEnv?: Record<string, string>
+  /** Existing outside directories to link by basename. */
+  shareDirectories?: string[]
+  /** Source-checkout-relative Git glob pathspecs for ignored regular files. */
+  copyIgnored?: string[]
+  /** Provision selected ignored files by exclusive copy or source symlink. */
+  copyMode?: 'copy' | 'symlink'
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-worktree -->

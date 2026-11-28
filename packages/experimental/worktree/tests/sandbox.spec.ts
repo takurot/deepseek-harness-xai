@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -72,6 +72,29 @@ describe.skipIf(!sandboxUsable)('worktree standing sandbox policy', () => {
     expect(ctx.workingDirectory.get(agent.session)).toBe(checkout)
     expect(confine.mock.calls.length).toBeGreaterThan(0)
     expect(confine.mock.calls.every(call => call[1].mode === 'workspace-write' && call[1].workspaceRoot === root)).toBe(true)
+  })
+
+  it('creates a shared link without letting setup write to the external target', async () => {
+    root = await repository(process.cwd())
+    const shared = await mkdtemp(join(process.cwd(), 'dsh-worktree-external-'))
+    try {
+      const leaf = shared.split('/').at(-1)!
+      const target = join(shared, 'marker')
+      await writeFile(target, 'retained')
+      const script = `if (!process.env.DSH_SETUP_FIXTURE) process.exit(8); require('node:fs').writeFileSync(${JSON.stringify(`${leaf}/marker`)}, 'replaced')`
+      ctx = await harness(root, {
+        shareDirectories: [shared], setupCommand: [process.execPath, '-e', script], setupEnv: { DSH_SETUP_FIXTURE: 'confined-target-only' },
+      }, 'workspace-write')
+      const confine = vi.spyOn(ctx.sandbox, 'confine')
+      const created = await ctx.worktrees.create(testAgent(ctx, root), { name: 'shared' })
+      expect(created).toMatchObject({ sharedDirectories: 1, provision: { status: 'exited', exitCode: 1 } })
+      expect(await readFile(join(created.path, leaf, 'marker'), 'utf8')).toBe('retained')
+      expect(await readFile(target, 'utf8')).toBe('retained')
+      expect(confine.mock.calls.every(([, policy]) =>
+        policy.workspaceRoot === root && !policy.additionalWritableRoots?.includes(shared))).toBe(true)
+    } finally {
+      await rm(shared, { recursive: true, force: true })
+    }
   })
 
   it('does not widen a linked-checkout grant to the shared Git administration directory', async () => {

@@ -4,7 +4,7 @@ import { isAbsolute, relative, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { generatedWorktreeName } from '@deepseek-ai/dsh-experimental-worktree'
-import type { CreatedWorktree, CreateWorktreePhase } from '@deepseek-ai/dsh-experimental-worktree'
+import type { CreatedWorktree } from '@deepseek-ai/dsh-experimental-worktree'
 import { appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition, ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
@@ -132,7 +132,7 @@ export class CreationFailure extends Error {
    * @param reason - the worktree service's failure text.
    * @param cause - the worktree service's error.
    */
-  constructor(readonly branch: string, readonly phase: CreateWorktreePhase, readonly reason: string, cause: unknown) {
+  constructor(readonly branch: string, readonly phase: ForgeWorktreeFailure['phase'], readonly reason: string, cause: unknown) {
     super(`The requested worktree ${branch} could not be created`, { cause })
     this.name = 'CreationFailure'
   }
@@ -413,6 +413,7 @@ export class WorktreeCreations {
       let created: CreatedWorktree
       try {
         created = await worktrees.create(agent, { name: status.branch, ...from === null ? {} : { from } }, signal, (phase) => {
+          if (phase === 'provision') return // The checkout phase covers setup on the existing Forge wire.
           status = { ...status, phase }
           this.live.set(session, status)
           this.changed(session)
@@ -426,6 +427,10 @@ export class WorktreeCreations {
         path: created.path, branch: created.branch, from, baseCommit: created.baseCommit, repositoryRoot: created.repositoryRoot,
       }
       appendPluginRecord(session, WORKTREE_RECORD, { action: 'created', worktree })
+      const provision = created.provision
+      if (provision !== undefined && (provision.status !== 'exited' || provision.exitCode !== 0)) {
+        this.ctx.logger.warn(`Worktree setup did not finish successfully at ${created.path}. The checkout was retained; inspect it before continuing.`)
+      }
       return created
     } finally {
       // After the record, so a follower never sees the creation end without its result.

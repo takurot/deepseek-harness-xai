@@ -2,7 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-experimental-worktree'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, ToolArgsError } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-worktree'
@@ -14,13 +14,15 @@ export const inject = ['tools', 'worktrees']
  * @param ctx - tool registry and worktree runtime.
  */
 export function apply(ctx: Context): void {
-  ctx.tools.register(defineTool({
+  const parameters = {
+    name: { type: 'string', description: 'New branch name, also used as the checkout directory: a few lowercase words joined by hyphens that describe the task, such as fix-login-retry. Omit to generate a unique name.' },
+    from: { type: 'string', description: 'Local commit, branch, or tag to start from. Defaults to HEAD; no fetch is performed.' },
+    setup: { type: 'boolean', description: 'Run the configured setup command. Defaults to true; false skips only the command.' },
+  } as const
+  const tool = defineTool({
     name: 'create_worktree',
     description: 'Create a new Git branch and worktree from a local commit, branch, or tag, then change this session\'s working directory to it. Uncommitted files stay in the source checkout. Existing names fail. Use working_directory with cd to leave; the checkout and branch remain.',
-    parameters: {
-      name: { type: 'string', description: 'New branch name, also used as the checkout directory: a few lowercase words joined by hyphens that describe the task, such as fix-login-retry. Omit to generate a unique name.' },
-      from: { type: 'string', description: 'Local commit, branch, or tag to start from. Defaults to HEAD; no fetch is performed.' },
-    },
+    parameters,
     output: {
       schema: {
         type: 'object',
@@ -30,14 +32,40 @@ export function apply(ctx: Context): void {
           branch: { type: 'string', required: true },
           baseCommit: { type: 'string', required: true },
           repositoryRoot: { type: 'string', required: true },
+          sharedDirectories: { type: 'integer' },
+          copiedIgnored: { type: 'integer' },
+          provision: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              command: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], required: true },
+              status: { type: 'string', enum: ['exited', 'timed-out', 'unavailable'], required: true },
+              exitCode: { oneOf: [{ type: 'integer' }, { type: 'null' }], required: true },
+              signal: { oneOf: [{ type: 'string' }, { type: 'null' }], required: true },
+              output: { type: 'string', required: true },
+              truncated: { type: 'boolean', required: true },
+            },
+          },
         },
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },
     async execute(args, exec) {
+      // The tool helper's parameter objects are open by default.
+      if (Object.keys(args).some(key => !Object.hasOwn(parameters, key))) {
+        throw new ToolArgsError(['create_worktree accepts only name, from, and setup'])
+      }
       if (exec.agent === undefined) throw new Error('create_worktree requires a calling agent')
-      return ctx.worktrees.create(exec.agent, args, exec.signal)
+      return ctx.worktrees.create(exec.agent, args, exec.signal, (phase) => {
+        if (phase !== 'provision') return
+        try {
+          ctx.logger.info('Running worktree setup')
+        } catch (error) {
+          void error // An exporter failure cannot interrupt checkout creation.
+        }
+      })
     },
     presentCall: args => ({ card: 'generic', title: 'create_worktree', rawInput: args }),
-  }))
+  })
+  ctx.tools.register({ ...tool, parameters: { ...tool.parameters, additionalProperties: false } })
 }

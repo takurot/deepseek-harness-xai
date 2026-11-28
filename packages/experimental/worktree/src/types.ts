@@ -6,6 +6,24 @@ export interface CreateWorktreeRequest {
   name?: string
   /** Local revision to resolve before creation; omission selects HEAD. */
   from?: string
+  /** Run the configured setup command unless explicitly false. File provisioning still applies. */
+  setup?: boolean
+}
+
+/** Observed outcome of the configured post-checkout command. */
+export interface WorktreeProvision {
+  /** Configured shell command or literal argv; excludes environment overrides. */
+  command: string | string[]
+  /** A direct exit, a deadline, or no observable exit because command execution failed. */
+  status: 'exited' | 'timed-out' | 'unavailable'
+  /** Observed direct exit code, or null when none is available. */
+  exitCode: number | null
+  /** Observed direct termination signal, or null when none is available. */
+  signal: string | null
+  /** Bounded UTF-8 output, stdout followed by stderr without an inserted delimiter. */
+  output: string
+  /** Whether the output exceeded its byte budget. */
+  truncated: boolean
 }
 
 /** Committed Git baseline and the calling Session's resulting working directory. */
@@ -18,15 +36,16 @@ export interface CreatedWorktree {
   baseCommit: string
   /** Canonical root of the source checkout. */
   repositoryRoot: string
+  /** Setup exit facts, present only when a configured command was attempted. */
+  provision?: WorktreeProvision
+  /** Number of links created; absent when no shared directories are configured. */
+  sharedDirectories?: number
+  /** Number of ignored regular files provisioned; absent when no globs are configured. */
+  copiedIgnored?: number
 }
 
-/**
- * Stage of one creation or restoration, reported before it begins: `prepare`
- * validates the request, allocates the checkout directory, and creates the
- * branch, which a restoration creates again only when it is gone; `checkout`
- * writes the files and, for a creation, enters the checkout.
- */
-export type CreateWorktreePhase = 'prepare' | 'checkout'
+/** Creation stages: validate and allocate, write tracked files, then attempt any configured setup. */
+export type CreateWorktreePhase = 'prepare' | 'checkout' | 'provision'
 
 /** A removed checkout to check out again at its recorded directory. */
 export interface RestoreWorktreeRequest {
