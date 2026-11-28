@@ -226,7 +226,7 @@ describe('frame layout persistence', () => {
     await vi.advanceTimersByTimeAsync(300)
     expect(setItem).toHaveBeenCalledTimes(2)
     expect(warn).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(localStorage.getItem(FRAME_LAYOUT_STORAGE_KEY)!).sidebar).toBe(310)
+    expect(JSON.parse(localStorage.getItem(FRAME_LAYOUT_STORAGE_KEY)!)).toMatchObject({ sidebar: 310 })
   })
 
   it('does not throw when storage disappears before a save', async () => {
@@ -252,7 +252,7 @@ describe('frame layout persistence', () => {
     expect(restoreFrameGeometry).not.toHaveBeenCalled()
     geometry.set({ sidebar: 320, rightbar: 400 })
     await vi.advanceTimersByTimeAsync(300)
-    expect(JSON.parse(localStorage.getItem(FRAME_LAYOUT_STORAGE_KEY)!).sidebar).toBe(320)
+    expect(JSON.parse(localStorage.getItem(FRAME_LAYOUT_STORAGE_KEY)!)).toMatchObject({ sidebar: 320 })
   })
 
   it('releases its subscriptions and timer on dispose', async () => {

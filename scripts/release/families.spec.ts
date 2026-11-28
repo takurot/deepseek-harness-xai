@@ -63,6 +63,7 @@ describe('release families', () => {
       '@deepseek-ai/dsh-experimental-client-ui-cot-translation',
       '@deepseek-ai/dsh-client-ui-creation-recommendations',
       '@deepseek-ai/dsh-experimental-client-ui-forge',
+      '@deepseek-ai/dsh-experimental-client-ui-layout-persistence',
       '@deepseek-ai/dsh-client-ui-plugin-recommendations',
       '@deepseek-ai/dsh-experimental-client-ui-stats',
       '@deepseek-ai/dsh-experimental-client-ui-voice-input',
