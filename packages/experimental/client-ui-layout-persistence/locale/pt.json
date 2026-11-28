@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Persistência do layout",
+    "description": "Lembra a largura da barra lateral e do painel direito após recarregar."
+  }
+}

@@ -62,8 +62,13 @@ type LayoutActions = {
   toggleSidebar: (draft: LayoutState) => void
   setViewportWidth: (draft: LayoutState, width: number) => void
   setRightbar: (draft: LayoutState, px: number) => void
+  restoreFrame: (draft: LayoutState, sidebar: number, rightbar: number | null) => void
   openRightbar: (draft: LayoutState, track: boolean, fullscreen: boolean) => void
   closeRightbar: (draft: LayoutState) => void
+}
+
+function clampRightbar(px: number, viewportWidth: number): number {
+  return clampWidth(px, RIGHTBAR_MIN, Math.max(RIGHTBAR_MIN, viewportWidth * RIGHTBAR_MAX_RATIO))
 }
 
 /**
@@ -124,7 +129,13 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
       },
       setRightbar: (d, px: number) => {
         d.layoutInfo.rightbarInstant = false
-        d.layoutInfo.rightbar = clampWidth(px, RIGHTBAR_MIN, Math.max(RIGHTBAR_MIN, d.layoutInfo.viewportWidth * RIGHTBAR_MAX_RATIO))
+        d.layoutInfo.rightbar = clampRightbar(px, d.layoutInfo.viewportWidth)
+      },
+      restoreFrame: (d, sidebar: number, rightbar: number | null) => {
+        const info = d.layoutInfo
+        info.sidebar = sidebar === 0 ? 0 : clampWidth(sidebar, SIDEBAR_MIN, SIDEBAR_MAX)
+        info.rightbar = rightbar === null ? null : clampRightbar(rightbar, info.viewportWidth)
+        info.rightbarInstant = false
       },
       openRightbar: (d, track: boolean, fullscreen: boolean) => {
         if (!d.layoutInfo.rightbarShown || d.layoutInfo.rightbarTrack !== track || d.layoutInfo.rightbarFullscreen !== fullscreen) {

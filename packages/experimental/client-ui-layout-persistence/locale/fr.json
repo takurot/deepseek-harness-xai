@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Mémorisation de la disposition",
+    "description": "Conserve la largeur de la barre latérale et du panneau droit après rechargement."
+  }
+}

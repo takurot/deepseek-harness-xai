@@ -21,6 +21,14 @@ export interface PanelInfo {
   readonly activePanelId: MainPanelId | null
 }
 
+/** Frame-owned panel geometry that survives reload. */
+export interface FrameGeometry {
+  /** Sidebar width preference in px; 0 means closed. */
+  readonly sidebar: number
+  /** Right panel width preference in px; null before its first opening. */
+  readonly rightbar: number | null
+}
+
 /** The layout store's bound action set (framework-baked, draft params peeled). */
 export type PanelActions = BoundActions<ReturnType<typeof createLayoutStore>>
 
@@ -28,6 +36,15 @@ export type PanelActions = BoundActions<ReturnType<typeof createLayoutStore>>
 export interface ILayout {
   /** Selected central panel from the same root store used by `usePanelInfo`. */
   readonly panelInfo: HostObservable<PanelInfo>
+  /** Frame-owned panel preferences. The occupant (ui-sidebar-right) owns expanded and fullscreen state. */
+  readonly frameGeometry: HostObservable<FrameGeometry>
+  /**
+   * Adopt saved frame geometry, clamped exactly like a user drag.
+   * @param geometry - sidebar preference (0 = closed; otherwise clamped to the
+   *   sidebar drag range) and right-panel width preference (null or clamped to
+   *   the right-panel drag range for the current frame width).
+   */
+  restoreFrameGeometry(geometry: FrameGeometry): void
   /**
    * Select a global central panel without changing the current Session.
    * @param panelId - registered main key, or null to show the Conversation.
@@ -61,12 +78,19 @@ export class LayoutController implements ILayout {
    * @param panels - actions of the instance shared with the root entry.
    * @param hasMainPanel - checks the live main-slot registry for a panel id.
    * @param panelInfo - root store's shared central-panel selection source.
+   * @param frameGeometry - root store's shared frame geometry source.
    */
   constructor(
     private readonly panels: PanelActions,
     private readonly hasMainPanel: (id: MainPanelId) => boolean,
     readonly panelInfo: HostObservable<PanelInfo>,
+    readonly frameGeometry: HostObservable<FrameGeometry>,
   ) {}
+
+  /** Adopt saved frame geometry using the store's drag width ranges. */
+  restoreFrameGeometry(geometry: FrameGeometry): void {
+    this.panels.restoreFrame(geometry.sidebar, geometry.rightbar)
+  }
 
   /** Select a global panel or return to the Conversation. */
   selectPanel(panelId: MainPanelId | null): void {

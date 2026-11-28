@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Frame layout persistence",
+    "description": "Remember the sidebar and right-panel widths across reloads."
+  }
+}

@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package provides the Web GUI's three-column AppFrame, edge-column widths, and `ctx.layout` presentation control. The right column concedes space before the center; its occupant renders fullscreen while the frame retains the wide-screen track underneath. The theme presenter owns color scheme, alias tokens, font sizes, font lists, and document metadata. Layout state resets on reload.
+This package provides the Web GUI's three-column AppFrame, edge-column widths, and `ctx.layout` presentation control. The right column concedes space before the center; its occupant renders fullscreen while the frame retains the wide-screen track underneath. The theme presenter owns color scheme, alias tokens, font sizes, font lists, and document metadata. By default, layout state resets on reload.
 
 ## Table of Contents
 
@@ -97,7 +97,7 @@ None; this package neither assembles nor sends a provider request.
 
 These limits define the current layout behavior. They are current package constraints, not a general window-manager comparison or a task backlog.
 
-- **Panel geometry is transient** — reload restores the sidebar default and the right panel hidden; each dragged width is one frame-wide preference, not a per-Session fact.
+- **Frame geometry** — read the sidebar and right-panel width preferences through `ctx.layout.frameGeometry` and restore them with `ctx.layout.restoreFrameGeometry`. The right panel's occupant owns its expanded state. The experimental `client-ui-layout-persistence` plugin provides opt-in persistence.
 - **Extremely narrow windows** — after the right panel closes, the center may still fall below 400px; browser drawers reserve no sidebar width below 768px.
 - **Track and panel travel on one shared curve only while animating** — during a discrete open/close the frame sets `data-animating` and its track transition and the occupant's slide read the same duration and easing variables; an occupant that used its own would detach the panel's edge from the conversation's while squeezing. Drags and instant presentation switches run transition-free, so the curve does not cover them.
 - **No scroll anchoring during squeeze reflow** — layout changes may move the reader's viewport.

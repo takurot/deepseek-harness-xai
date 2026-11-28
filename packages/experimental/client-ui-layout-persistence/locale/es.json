@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Persistencia del diseño",
+    "description": "Recuerda el ancho de la barra lateral y del panel derecho tras recargar."
+  }
+}

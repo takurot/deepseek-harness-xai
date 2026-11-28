@@ -1,0 +1,40 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/client-ui-layout-persistence/README.md
+/:
+  en: 2a9b21bb6e25c18b
+  zh: c8e0057f717c958b
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence:
+  en: 1728cd397710deab
+  zh: fa8a55db915c8809
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/summary:
+  en: a1c9636a5d51e026
+  zh: cb0ab991e77a7bd9
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/table-of-contents:
+  en: b563e4ec4727d0de
+  zh: 9d2511d866b583f2
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/use-this-package:
+  en: ee47b9be8f085748
+  zh: 15e0ffb9895c5456
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/use-this-package/minimal-configuration:
+  en: 8fefbc00444e3c89
+  zh: 72a005d09029f219
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/understand-the-implementation:
+  en: a39b5086a2eb8dbe
+  zh: 0b36d24556ba9619
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/further-exploration:
+  en: f0c054b8cc568042
+  zh: 0d119030649eb7c3
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/model-experience:
+  en: b94106b6ffa9924d
+  zh: b968fc734fbda2a3
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/model-experience/kv-cache-effect:
+  en: 7605bb868f93b4a8
+  zh: 2669e96b7853d0b0
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/known-limitations-and-deferred-work:
+  en: f4b874bcc3032a6f
+  zh: 54cb326c5a295c93
+/deepseek-ai-dsh-experimental-client-ui-layout-persistence/known-limitations-and-deferred-work/dev-note:
+  en: 3185ad07fe37950e
+  zh: c7e9da9663b0e5c7
